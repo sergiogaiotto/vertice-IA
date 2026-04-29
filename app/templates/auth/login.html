@@ -1,0 +1,86 @@
+{% extends "base.html" %}
+{% block title %}Vértice — Login{% endblock %}
+
+{% block fullpage %}
+<div class="min-h-screen flex" style="background: linear-gradient(135deg, #FAFAF9 0%, #F5F5F4 50%, #FEE2E2 100%);">
+
+  <!-- Painel esquerdo: branding -->
+  <div class="hidden lg:flex flex-1 flex-col justify-between p-10 text-neutral-700 relative overflow-hidden">
+    <div class="flex items-center gap-2.5">
+      <span class="w-9 h-9 rounded-md bg-brand-600 flex items-center justify-center shadow-sm">
+        <svg width="18" height="18" viewBox="0 0 12 12"><path d="M2 2 L6 10 L10 2" stroke="white" stroke-width="2" fill="none" stroke-linecap="round" stroke-linejoin="round"/></svg>
+      </span>
+      <span class="font-medium text-lg tracking-tight text-neutral-900">Vértice</span>
+    </div>
+
+    <div class="max-w-md">
+      <h1 class="text-3xl font-medium text-neutral-900 leading-tight mb-3" style="letter-spacing: -0.02em;">
+        Plataforma de building blocks de IA
+      </h1>
+      <p class="text-sm text-neutral-600 leading-relaxed">
+        Construa, versione e governe agentes inteligentes com arquitetura
+        modular, observabilidade nativa e human-in-the-loop por padrão.
+      </p>
+      <div class="mt-6 flex items-center gap-2 text-[11px] text-neutral-500">
+        <span class="dot dot-success"></span>
+        OPA · LangFuse · OTel ativos
+      </div>
+    </div>
+
+    <div class="text-[10px] text-neutral-400">
+      v1.0.0 · {{ request.url.hostname }}
+    </div>
+
+    <!-- decoração radial -->
+    <div class="absolute -top-32 -right-32 w-96 h-96 rounded-full bg-brand-100 opacity-30 blur-3xl pointer-events-none"></div>
+    <div class="absolute -bottom-32 -left-20 w-80 h-80 rounded-full bg-ai-50 opacity-50 blur-3xl pointer-events-none"></div>
+  </div>
+
+  <!-- Painel direito: formulário -->
+  <div class="w-full lg:w-[440px] flex items-center justify-center p-6 bg-white lg:border-l lg:border-neutral-100">
+    <div class="w-full max-w-sm">
+
+      <!-- branding mobile -->
+      <div class="flex items-center gap-2 mb-8 lg:hidden">
+        <span class="w-7 h-7 rounded-md bg-brand-600 flex items-center justify-center">
+          <svg width="14" height="14" viewBox="0 0 12 12"><path d="M2 2 L6 10 L10 2" stroke="white" stroke-width="1.8" fill="none" stroke-linecap="round" stroke-linejoin="round"/></svg>
+        </span>
+        <span class="font-medium tracking-tight">Vértice</span>
+      </div>
+
+      <h2 class="text-xl font-medium text-neutral-900 mb-1" style="letter-spacing: -0.02em;">Entrar</h2>
+      <p class="text-[13px] text-neutral-500 mb-6">acesse a plataforma com suas credenciais</p>
+
+      {% if error %}
+      <div class="mb-4 px-3 py-2.5 bg-risk-50 text-risk-700 text-[12px] rounded-md border border-risk-400/30 flex items-start gap-2">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" class="shrink-0 mt-0.5">
+          <circle cx="12" cy="12" r="9" stroke="currentColor" stroke-width="1.6"/>
+          <path d="M12 7 V13 M12 16 V17" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/>
+        </svg>
+        <span>{{ error }}</span>
+      </div>
+      {% endif %}
+
+      <form method="post" action="/login" class="space-y-4">
+        <div>
+          <label class="field-label">usuário</label>
+          <input name="username" autofocus required
+                 class="w-full h-10 px-3 border border-neutral-200 rounded-md text-sm" />
+        </div>
+        <div>
+          <label class="field-label">senha</label>
+          <input type="password" name="password" required
+                 class="w-full h-10 px-3 border border-neutral-200 rounded-md text-sm" />
+        </div>
+        <button type="submit" class="btn btn-primary w-full h-10 text-sm">
+          Entrar →
+        </button>
+      </form>
+
+      <p class="mt-8 text-[10.5px] text-neutral-400 text-center">
+        ao entrar, suas ações são registradas para fins de auditoria
+      </p>
+    </div>
+  </div>
+</div>
+{% endblock %}

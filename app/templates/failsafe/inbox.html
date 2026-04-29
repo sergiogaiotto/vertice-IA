@@ -1,0 +1,41 @@
+{% extends "base.html" %}
+{% block title %}Failsafe — Vértice{% endblock %}
+
+{% block content %}
+<div class="px-6 py-5 pb-12 max-w-3xl">
+  <h1 class="text-lg font-medium mb-1">Failsafe — inbox</h1>
+  <p class="text-xs text-neutral-500 mb-5">Ações que requerem aprovação humana antes da execução.</p>
+
+  <div class="bg-white border border-neutral-200 rounded-lg divide-y divide-neutral-100">
+    {% for a in pending %}
+    <div class="p-4 flex items-start gap-3">
+      <div class="w-8 h-8 rounded-full bg-risk-50 text-risk-800 flex items-center justify-center text-xs font-medium shrink-0">
+        !
+      </div>
+      <div class="flex-1 min-w-0">
+        <div class="flex items-center gap-2">
+          <span class="text-sm font-medium">{{ a.description }}</span>
+          <span class="text-[10px] px-1.5 py-0.5 bg-neutral-100 text-neutral-500 rounded">{{ a.module_name }}</span>
+        </div>
+        <p class="text-xs text-neutral-500 mt-0.5">
+          confiança {{ "%.0f"|format(a.confidence * 100) }}% · solicitada {{ a.created_at.strftime('%d/%m %H:%M') }}
+        </p>
+        {% if a.payload %}
+        <details class="mt-2"><summary class="text-[11px] text-neutral-400 cursor-pointer">payload</summary>
+          <pre class="text-[11px] bg-neutral-50 p-2 rounded mt-1 overflow-x-auto">{{ a.payload | tojson(indent=2) }}</pre>
+        </details>
+        {% endif %}
+      </div>
+      <div class="flex gap-2 shrink-0">
+        <button hx-post="/api/failsafe/{{ a.id }}/decide" hx-headers='{"Content-Type":"application/json"}' hx-vals='{"approve":false}' hx-ext="json-enc" hx-on::after-request="window.location.reload()"
+                class="text-xs px-3 py-1 border border-risk-400 text-risk-800 rounded hover:bg-risk-50">recusar</button>
+        <button hx-post="/api/failsafe/{{ a.id }}/decide" hx-headers='{"Content-Type":"application/json"}' hx-vals='{"approve":true}' hx-ext="json-enc" hx-on::after-request="window.location.reload()"
+                class="text-xs px-3 py-1 bg-brand-600 hover:bg-brand-800 text-white rounded font-medium">aprovar</button>
+      </div>
+    </div>
+    {% else %}
+    <div class="p-10 text-center text-sm text-neutral-400">Sem ações pendentes.</div>
+    {% endfor %}
+  </div>
+</div>
+{% endblock %}

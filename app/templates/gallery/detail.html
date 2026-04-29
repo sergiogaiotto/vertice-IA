@@ -1,0 +1,356 @@
+{% extends "base.html" %}
+{% block title %}Apresentação — Vértice{% endblock %}
+
+{% block content %}
+<div x-data="presentationDetail('{{ presentation_id }}')" x-init="init()" class="px-6 py-5 pb-12 max-w-full">
+
+  <div x-show="!loaded" class="text-center py-20 text-neutral-400">carregando…</div>
+
+  <template x-if="p">
+    <div class="max-w-7xl mx-auto">
+
+      <!-- Header com ações -->
+      <div class="flex items-center gap-2 mb-4">
+        <a href="/gallery" class="text-xs text-neutral-500 hover:text-brand-700">← galeria</a>
+        <div class="flex-1"></div>
+        <button @click="editing = !editing" class="text-xs px-3 py-1.5 border border-neutral-200 rounded-md hover:bg-neutral-50">
+          <span x-text="editing ? '✓ concluir edição' : '✎ editar'"></span>
+        </button>
+        <button @click="download('docx')" :disabled="downloading" class="btn btn-secondary btn-sm">
+          <span x-text="downloading === 'docx' ? 'gerando...' : '↓ DOCX'"></span>
+        </button>
+        <button @click="download('pptx')" :disabled="downloading" class="btn btn-secondary btn-sm">
+          <span x-text="downloading === 'pptx' ? 'gerando...' : '↓ PPTX'"></span>
+        </button>
+        <button @click="del()" class="text-xs px-2 py-1.5 text-risk-600 hover:bg-risk-50 rounded-md">excluir</button>
+      </div>
+
+      <!-- CAPA elegante -->
+      <div class="bg-gradient-to-br from-white via-brand-50/30 to-brand-100/20 border border-neutral-100 rounded-xl p-10 md:p-14 mb-6 shadow-sm relative overflow-hidden">
+        <div class="absolute top-0 left-0 w-1.5 h-full bg-brand-600"></div>
+        <div class="absolute -top-32 -right-32 w-72 h-72 rounded-full bg-brand-200 opacity-20 blur-3xl"></div>
+        <div class="absolute -bottom-32 -left-20 w-60 h-60 rounded-full bg-ai-50 opacity-30 blur-3xl"></div>
+
+        <div class="relative">
+          <div class="flex items-center gap-2 mb-6">
+            <span class="text-[10px] font-bold tracking-[0.2em] text-brand-800 uppercase">VÉRTICE</span>
+            <span class="text-[10px] text-neutral-300">·</span>
+            <span class="text-[10px] tracking-[0.2em] text-neutral-500 uppercase">APRESENTAÇÃO EXECUTIVA</span>
+          </div>
+
+          <input x-show="editing" x-model="p.title" placeholder="Título"
+                 class="text-3xl md:text-4xl font-medium text-neutral-900 bg-white/60 w-full px-3 py-2 rounded border border-brand-200 outline-none mb-3" />
+          <h1 x-show="!editing" class="text-3xl md:text-4xl font-medium text-neutral-900 mb-3 leading-tight" style="letter-spacing:-0.02em" x-text="p.title"></h1>
+
+          <input x-show="editing" x-model="p.subtitle" placeholder="Subtítulo / contexto"
+                 class="text-base text-neutral-600 bg-white/60 w-full px-3 py-1.5 rounded border border-brand-200 outline-none" />
+          <p x-show="!editing && p.subtitle" class="text-base text-neutral-600 mb-2" x-text="p.subtitle"></p>
+
+          <div class="flex items-center gap-3 mt-8 text-[11px] text-neutral-500">
+            <span x-text="formatDate(p.created_at)"></span>
+            <span x-show="p.feature" class="text-neutral-300">·</span>
+            <span x-show="p.feature" x-text="p.feature"></span>
+            <span x-show="p.case_number" class="text-neutral-300">·</span>
+            <span x-show="p.case_number" x-text="`caso ${p.case_number}`"></span>
+            <span class="text-neutral-300">·</span>
+            <span x-text="`por ${p.created_by_user || '—'}`"></span>
+          </div>
+        </div>
+      </div>
+
+      <!-- INSIGHTS -->
+      <div x-show="(p.insights || []).length > 0" class="mb-6">
+        <h2 class="text-[10px] uppercase tracking-[0.2em] text-brand-800 font-bold mb-3">INSIGHTS PRINCIPAIS</h2>
+        <div class="grid grid-cols-1 md:grid-cols-2 gap-3">
+          <template x-for="(ins, i) in p.insights" :key="i">
+            <div class="bg-white border border-neutral-100 rounded-lg p-4 hover:shadow-sm transition relative group">
+              <select x-show="editing" x-model="ins.type" class="text-[10px] uppercase font-bold text-brand-800 bg-transparent border-none outline-none cursor-pointer">
+                <option>OPORTUNIDADE</option>
+                <option>RISCO</option>
+                <option>DESTAQUE</option>
+                <option>ATENÇÃO</option>
+                <option>RECOMENDAÇÃO</option>
+                <option>INSIGHT</option>
+              </select>
+              <div x-show="!editing" class="text-[10px] uppercase font-bold text-brand-800 tracking-wider" x-text="ins.type"></div>
+              <textarea x-show="editing" x-model="ins.content" rows="3"
+                        class="w-full text-[13px] text-neutral-800 bg-transparent border-none outline-none focus:bg-neutral-25 rounded p-1 mt-1 resize-none"></textarea>
+              <p x-show="!editing" class="text-[13px] text-neutral-800 mt-1.5 leading-relaxed" x-text="ins.content"></p>
+              <button x-show="editing" @click="p.insights.splice(i, 1)"
+                      class="absolute top-2 right-2 w-6 h-6 text-neutral-300 hover:bg-risk-50 hover:text-risk-600 rounded opacity-0 group-hover:opacity-100">×</button>
+            </div>
+          </template>
+        </div>
+        <button x-show="editing" @click="p.insights.push({type:'INSIGHT', content:''})"
+                class="mt-2 text-[11px] text-brand-700 hover:underline">+ adicionar insight</button>
+      </div>
+
+      <!-- VISUAIS (gráficos e diagramas) -->
+      <div x-show="(p.visuals || []).length > 0" class="mb-6">
+        <h2 class="text-[10px] uppercase tracking-[0.2em] text-brand-800 font-bold mb-3">VISUAIS</h2>
+        <div class="grid grid-cols-1 md:grid-cols-2 gap-3">
+          <template x-for="(vis, i) in p.visuals" :key="i">
+            <figure class="bg-white border border-neutral-100 rounded-lg overflow-hidden hover:shadow-sm transition group">
+              <div class="bg-neutral-25 px-3 py-2 flex items-center gap-2 border-b border-neutral-100">
+                <span class="pill" :class="vis.type === 'GRÁFICO' ? 'pill-success' : 'pill-ai'" style="padding:1px 6px;font-size:9px;" x-text="vis.type"></span>
+                <span class="text-xs font-medium text-neutral-700 truncate flex-1" x-text="vis.title"></span>
+                <a :href="vis.image_b64" :download="`${vis.title.toLowerCase().replace(/[^a-z0-9_]+/g, '_')}.png`"
+                   class="text-[10px] text-brand-700 hover:underline opacity-0 group-hover:opacity-100"
+                   title="baixar PNG">↓</a>
+              </div>
+              <div class="bg-white p-4 flex items-center justify-center" style="min-height: 200px;">
+                <img :src="vis.image_b64" :alt="vis.title" class="max-w-full max-h-[400px] object-contain" />
+              </div>
+              <figcaption x-show="vis.caption" class="bg-neutral-25 px-3 py-1.5 text-[10px] text-neutral-500 italic border-t border-neutral-100" x-text="vis.caption"></figcaption>
+            </figure>
+          </template>
+        </div>
+      </div>
+
+      <!-- SEÇÕES -->
+      <template x-for="(sec, i) in p.sections" :key="i">
+        <div class="bg-white border border-neutral-100 rounded-lg p-6 md:p-8 mb-3 relative">
+          <div class="text-[10px] uppercase tracking-wider text-brand-800 font-medium mb-2" x-text="sec.title"></div>
+          <input x-show="editing" x-model="sec.title" placeholder="Título"
+                 class="w-full text-2xl font-medium text-neutral-900 bg-transparent border-b border-brand-200 outline-none mb-3 px-1 py-0.5" />
+          <h2 x-show="!editing" class="text-2xl font-medium text-neutral-900 mb-4" style="letter-spacing:-0.015em" x-text="sec.title"></h2>
+
+          <textarea x-show="editing" x-model="sec.body" rows="10"
+                    class="w-full text-[13px] font-mono text-neutral-700 bg-neutral-25 border border-neutral-100 rounded p-3 outline-none resize-y min-h-[200px]"></textarea>
+          <div x-show="!editing" class="prose-vertice" x-html="renderMarkdown(sec.body)"></div>
+
+          <template x-if="editing">
+            <div class="absolute top-3 right-3 flex gap-1">
+              <button @click="moveSec(i, -1)" :disabled="i === 0" class="text-xs w-6 h-6 hover:bg-neutral-100 rounded text-neutral-500 disabled:opacity-30">↑</button>
+              <button @click="moveSec(i, +1)" :disabled="i === p.sections.length - 1" class="text-xs w-6 h-6 hover:bg-neutral-100 rounded text-neutral-500 disabled:opacity-30">↓</button>
+              <button @click="p.sections.splice(i, 1)" class="text-xs w-6 h-6 hover:bg-risk-50 text-risk-600 rounded">×</button>
+            </div>
+          </template>
+        </div>
+      </template>
+
+      <button x-show="editing" @click="p.sections.push({title:'Nova seção', body:'## Subtítulo\n\nConteúdo em **markdown**...'})"
+              class="text-xs text-brand-700 hover:underline mb-6">+ adicionar seção</button>
+
+      <!-- Botão salvar (só no modo editing) -->
+      <div x-show="editing" class="sticky bottom-12 bg-white border border-brand-400/40 rounded-lg p-3 shadow-lg flex items-center justify-between mb-6">
+        <span class="text-xs text-neutral-600">edições não salvas</span>
+        <div class="flex gap-2">
+          <button @click="editing = false; reload()" class="text-sm px-3 py-1.5 text-neutral-600 hover:bg-neutral-100 rounded-md">descartar</button>
+          <button @click="save()" :disabled="saving"
+                  class="text-sm px-3 py-1.5 bg-brand-600 hover:bg-brand-800 text-white rounded-md font-medium flex items-center gap-2">
+            <span x-show="saving" class="w-3 h-3 border-2 border-white/40 border-t-white rounded-full animate-spin"></span>
+            <span x-text="saving ? 'salvando...' : 'salvar alterações'"></span>
+          </button>
+        </div>
+      </div>
+
+      <!-- CHAT lateral fixo -->
+      <div class="fixed bottom-12 right-6 z-30">
+        <button x-show="!chatOpen" @click="chatOpen = true"
+                class="bg-brand-600 hover:bg-brand-800 text-white rounded-full shadow-lg p-3 flex items-center gap-2">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none">
+            <path d="M21 12 C21 16.4 16.97 20 12 20 C10.5 20 9.1 19.7 7.86 19.2 L3 20 L4.1 16 C3.4 14.83 3 13.5 3 12 C3 7.6 7.03 4 12 4 C16.97 4 21 7.6 21 12 Z" stroke="currentColor" stroke-width="1.6"/>
+          </svg>
+          <span class="text-xs font-medium">conversar sobre</span>
+        </button>
+
+        <div x-show="chatOpen" class="bg-white border border-neutral-200 rounded-lg shadow-2xl w-[380px] max-w-[92vw] flex flex-col" style="height: 480px;">
+          <header class="px-3 py-2 border-b border-neutral-100 flex items-center gap-2 bg-brand-50">
+            <span class="dot dot-success"></span>
+            <span class="text-xs font-medium">Chat sobre apresentação</span>
+            <button @click="chatOpen = false" class="ml-auto text-neutral-400 hover:text-neutral-700">×</button>
+          </header>
+          <div class="flex-1 overflow-y-auto p-3 space-y-2" :id="`chat-msgs-${p.id}`">
+            <template x-for="(msg, i) in (p.chat_history || [])" :key="i">
+              <div class="text-[11px] leading-relaxed">
+                <div x-show="msg.role === 'user'" class="bg-brand-50 text-brand-900 rounded-lg px-2.5 py-1.5 ml-6 text-right">
+                  <div class="text-[9px] uppercase font-bold text-brand-700 mb-0.5">VOCÊ</div>
+                  <span x-text="msg.content"></span>
+                </div>
+                <div x-show="msg.role === 'assistant'" class="bg-neutral-50 text-neutral-800 rounded-lg px-2.5 py-1.5 mr-6">
+                  <div class="text-[9px] uppercase font-bold text-neutral-500 mb-0.5">ASSISTENTE</div>
+                  <div class="prose-vertice prose-vertice-sm" x-html="renderMarkdown(msg.content)"></div>
+                </div>
+              </div>
+            </template>
+            <div x-show="chatLoading" class="text-[11px] text-neutral-400 italic flex items-center gap-2">
+              <span class="w-3 h-3 border-2 border-neutral-200 border-t-brand-600 rounded-full animate-spin"></span>
+              pensando...
+            </div>
+            <div x-show="!chatLoading && (p.chat_history || []).length === 0" class="text-[11px] text-neutral-400 italic text-center py-6">
+              pergunte algo sobre essa apresentação · histórico fica salvo
+            </div>
+          </div>
+          <div class="border-t border-neutral-100 p-2 flex gap-1.5">
+            <input type="text" x-model="chatDraft" @keydown.enter.prevent="sendChat()" :disabled="chatLoading"
+                   placeholder="pergunte sobre os insights..."
+                   class="flex-1 h-8 px-2 text-xs border border-neutral-200 rounded outline-none focus:border-brand-600" />
+            <button @click="sendChat()" :disabled="chatLoading || !chatDraft.trim()"
+                    class="text-xs px-3 py-1 bg-brand-600 hover:bg-brand-800 text-white rounded font-medium disabled:opacity-50">enviar</button>
+          </div>
+        </div>
+      </div>
+    </div>
+  </template>
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+<script>
+function presentationDetail(id) {
+  return {
+    id,
+    p: null,
+    loaded: false,
+    editing: false,
+    saving: false,
+    chatOpen: false,
+    chatDraft: '',
+    chatLoading: false,
+    downloading: null,    // null | 'docx' | 'pptx'
+
+    async init() { await this.reload(); },
+
+    async reload() {
+      try {
+        this.p = await window.api('GET', `/api/presentations/${this.id}`);
+        this.loaded = true;
+      } catch (e) {
+        toast('Apresentação não encontrada.', 'error');
+        setTimeout(() => window.location.href = '/gallery', 1200);
+      }
+    },
+
+    moveSec(i, delta) {
+      const arr = this.p.sections;
+      const j = i + delta;
+      if (j < 0 || j >= arr.length) return;
+      [arr[i], arr[j]] = [arr[j], arr[i]];
+    },
+
+    async save() {
+      if (!this.p) return;
+      this.saving = true;
+      try {
+        await window.api('PATCH', `/api/presentations/${this.id}`, {
+          title: this.p.title,
+          subtitle: this.p.subtitle,
+          insights: this.p.insights,
+          sections: this.p.sections,
+          visuals: this.p.visuals || [],
+        });
+        toast('Alterações salvas.', 'success');
+        this.editing = false;
+      } catch (e) { toast(e.message, 'error'); }
+      finally { this.saving = false; }
+    },
+
+    async del() {
+      if (!confirm(`Excluir definitivamente "${this.p.title}"?`)) return;
+      try {
+        await window.api('DELETE', `/api/presentations/${this.id}`);
+        toast('Apresentação excluída.', 'success');
+        setTimeout(() => window.location.href = '/gallery', 800);
+      } catch (e) { toast(e.message, 'error'); }
+    },
+
+    /**
+     * Download de DOCX/PPTX via fetch com tratamento de erro.
+     * NUNCA usa <a href> direto pra arquivos que podem falhar — abre nova aba
+     * com erro JSON cru (péssima UX). Em vez disso: fetch → blob → save-as,
+     * com toast/alert em caso de falha mostrando a mensagem real.
+     */
+    async download(format) {
+      if (this.downloading) return;
+      this.downloading = format;
+      try {
+        const resp = await fetch(`/api/presentations/${this.id}/download.${format}`, {
+          credentials: 'same-origin',
+        });
+        if (!resp.ok) {
+          // tenta extrair mensagem de erro da resposta JSON
+          let errMsg = `HTTP ${resp.status}`;
+          try {
+            const data = await resp.json();
+            if (data.detail) errMsg = data.detail;
+          } catch (_) {}
+          alert(`Falha ao gerar ${format.toUpperCase()}:\n\n${errMsg}`);
+          return;
+        }
+        // sucesso: cria blob e dispara download nativo (não navega de página)
+        const blob = await resp.blob();
+        const url = URL.createObjectURL(blob);
+        const safeTitle = (this.p.title || 'apresentacao').toLowerCase()
+          .replace(/[^a-z0-9_]+/g, '_').substring(0, 40);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = `${safeTitle}.${format}`;
+        document.body.appendChild(a);
+        a.click();
+        a.remove();
+        setTimeout(() => URL.revokeObjectURL(url), 5000);
+        toast(`${format.toUpperCase()} baixado.`, 'success');
+      } catch (e) {
+        alert(`Erro de rede ao baixar ${format.toUpperCase()}:\n\n${e.message || e}`);
+      } finally {
+        this.downloading = null;
+      }
+    },
+
+    async sendChat() {
+      const text = this.chatDraft.trim();
+      if (!text) return;
+      this.p.chat_history = this.p.chat_history || [];
+      this.p.chat_history.push({ role: 'user', content: text });
+      this.chatDraft = '';
+      this.chatLoading = true;
+      this.$nextTick(() => {
+        const el = document.getElementById(`chat-msgs-${this.p.id}`);
+        if (el) el.scrollTop = el.scrollHeight;
+      });
+      try {
+        const r = await window.api('POST', `/api/presentations/${this.id}/chat`, {
+          message: text,
+          history: this.p.chat_history.slice(0, -1),
+        });
+        this.p.chat_history.push({ role: 'assistant', content: r.answer });
+      } catch (e) {
+        this.p.chat_history.pop();
+        toast(e.message, 'error');
+      } finally {
+        this.chatLoading = false;
+        this.$nextTick(() => {
+          const el = document.getElementById(`chat-msgs-${this.p.id}`);
+          if (el) el.scrollTop = el.scrollHeight;
+        });
+      }
+    },
+
+    renderMarkdown(text) {
+      if (!text) return '';
+      if (typeof marked === 'undefined') return `<pre style="white-space:pre-wrap;">${(text||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;')}</pre>`;
+      try { return marked.parse(String(text), { breaks: true, gfm: true }); }
+      catch { return String(text); }
+    },
+
+    formatDate(iso) {
+      if (!iso) return '';
+      return new Date(iso).toLocaleString('pt-BR', { day: '2-digit', month: 'long', year: 'numeric' });
+    },
+  };
+}
+</script>
+
+<style>
+.prose-vertice h2 { font-size: 1.1rem; font-weight: 500; margin: 1.2rem 0 0.6rem; color: #DC2626; border-bottom: 1px solid #E7E5E4; padding-bottom: 0.3rem; }
+.prose-vertice h3 { font-size: 0.95rem; font-weight: 500; margin: 1rem 0 0.4rem; color: #1C1917; }
+.prose-vertice p { font-size: 0.9rem; line-height: 1.7; color: #292524; margin-bottom: 0.7rem; }
+.prose-vertice ul, .prose-vertice ol { font-size: 0.9rem; line-height: 1.7; color: #292524; padding-left: 1.4rem; margin-bottom: 0.7rem; }
+.prose-vertice li { margin-bottom: 0.2rem; }
+.prose-vertice strong { font-weight: 500; color: #DC2626; }
+.prose-vertice blockquote { border-left: 3px solid #DC2626; padding-left: 0.8rem; color: #57534E; font-style: italic; margin: 0.6rem 0; }
+.prose-vertice code { background: #FEE2E2; padding: 0.05rem 0.35rem; border-radius: 3px; font-size: 0.85em; color: #DC2626; }
+.prose-vertice-sm h2 { font-size: 0.9rem; }
+.prose-vertice-sm p, .prose-vertice-sm ul, .prose-vertice-sm ol { font-size: 0.78rem; line-height: 1.55; }
+</style>
+{% endblock %}

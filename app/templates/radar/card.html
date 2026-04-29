@@ -1,0 +1,49 @@
+<div class="bg-white rounded-lg border border-neutral-200 p-3 hover:border-neutral-300 transition group relative">
+  <div class="flex items-center justify-between mb-2">
+    <div class="flex items-center gap-2">
+      {% if card.output_type.value == 'UMA_PALAVRA' %}
+        <span class="w-1.5 h-1.5 rounded-full bg-ai-600"></span>
+      {% elif card.output_type.value == 'SCORE' %}
+        <span class="w-1.5 h-1.5 rounded-full bg-risk-600"></span>
+      {% elif card.output_type.value == 'TERMOS' %}
+        <span class="w-1.5 h-1.5 rounded-full bg-blue-500"></span>
+      {% else %}
+        <span class="w-1.5 h-1.5 rounded-full bg-brand-600"></span>
+      {% endif %}
+      <span class="text-xs font-medium">{{ card.name }}</span>
+    </div>
+    <div class="flex items-center gap-1">
+      <span class="text-[9px] text-neutral-400 uppercase px-1.5 py-0.5 bg-neutral-100 rounded">{{ card.output_type.value }}</span>
+      <button hx-delete="/api/radar/cards/{{ card.id }}" hx-confirm="Remover este card?" hx-on::after-request="window.location.reload()"
+              class="text-neutral-300 hover:text-risk-600 opacity-0 group-hover:opacity-100 text-xs px-1">×</button>
+    </div>
+  </div>
+
+  {% if card.output_type.value == 'UMA_PALAVRA' %}
+    <div class="text-2xl font-medium text-ai-800 leading-tight">{{ card.result }}</div>
+  {% elif card.output_type.value == 'SCORE' %}
+    <div class="flex items-baseline gap-1.5">
+      <span class="text-2xl font-medium text-risk-600">{{ card.result }}</span>
+      <span class="text-[11px] text-neutral-400">/ 100</span>
+    </div>
+    <div class="h-1 bg-neutral-100 rounded-full mt-2 overflow-hidden">
+      <div class="h-full bg-risk-400" style="width: {{ card.result }}%"></div>
+    </div>
+  {% elif card.output_type.value == 'TERMOS' %}
+    <div class="flex flex-wrap gap-1.5">
+      {% for term in card.result.split(',') %}
+      <span class="text-[11px] px-2 py-0.5 bg-blue-50 text-blue-800 rounded-full">{{ term.strip() }}</span>
+      {% endfor %}
+    </div>
+  {% else %}
+    <p class="text-xs text-neutral-600 leading-relaxed">{{ card.result }}</p>
+  {% endif %}
+
+  <div class="flex items-center gap-2 mt-3 text-[10px] text-neutral-400">
+    <span>{{ card.model_used }}</span>
+    <span>·</span>
+    <span>{{ card.tokens_input + card.tokens_output }} tok</span>
+    <span>·</span>
+    <span>R$ {{ "%.4f"|format(card.cost_estimated) }}</span>
+  </div>
+</div>
