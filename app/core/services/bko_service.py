@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import io
 import json
+import hashlib
 from datetime import datetime
 from typing import Iterable
 
@@ -126,8 +127,14 @@ class BkoService:
         updated = 0
         skipped = 0
         failed: list[dict] = []
+        seen_content_hashes: set[str] = set()
         for filename, content in files:
             try:
+                content_hash = hashlib.sha256(content).hexdigest()
+                if content_hash in seen_content_hashes:
+                    skipped += 1
+                    continue
+                seen_content_hashes.add(content_hash)
                 r = await self.ingest_transcript_json(content)
                 if r["outcome"] == "imported":
                     imported += 1
