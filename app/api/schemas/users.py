@@ -9,6 +9,11 @@ class CreateUserRequest(BaseModel):
     username: str
     password: str
     roles: list[str] = []
+    full_name: str = ""
+    email: str = ""
+    phone: str = ""
+    department: str = ""
+    title: str = ""
 
 
 class UpdateRolesRequest(BaseModel):
@@ -31,6 +36,11 @@ class ResetPasswordResponse(BaseModel):
 class UserDetail(BaseModel):
     id: str
     username: str
+    full_name: str
+    email: str
+    phone: str
+    department: str
+    title: str
     roles: list[str]
     is_active: bool
     initials: str

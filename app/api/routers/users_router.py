@@ -43,6 +43,11 @@ def _to_detail(u: User) -> UserDetail:
     return UserDetail(
         id=str(u.id),
         username=u.username,
+        full_name=u.full_name,
+        email=u.email,
+        phone=u.phone,
+        department=u.department,
+        title=u.title,
         roles=u.roles,
         is_active=u.is_active,
         initials=_initials(u.username),
@@ -51,7 +56,7 @@ def _to_detail(u: User) -> UserDetail:
 
 
 def _require_admin(user: User) -> None:
-    if "admin" not in user.roles:
+    if "admin" not in user.roles and "root" not in user.roles:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="apenas admin")
 
 
@@ -85,7 +90,16 @@ async def create_user(
 ):
     _require_admin(user)
     try:
-        u = await svc.create(body.username, body.password, body.roles or None)
+        u = await svc.create(
+            body.username,
+            body.password,
+            body.roles or None,
+            full_name=body.full_name,
+            email=body.email,
+            phone=body.phone,
+            department=body.department,
+            title=body.title,
+        )
     except ValueError as e:
         raise HTTPException(400, str(e))
     return _to_detail(u)
@@ -136,7 +150,7 @@ async def change_password(
     user: User = Depends(require_user),
 ):
     # usuário pode trocar a própria senha; admin pode trocar de qualquer um
-    if str(user.id) != str(user_id) and "admin" not in user.roles:
+    if str(user.id) != str(user_id) and "admin" not in user.roles and "root" not in user.roles:
         raise HTTPException(403, "permissão negada")
     await svc.change_password(user_id, body.new_password)
     return {"ok": True}

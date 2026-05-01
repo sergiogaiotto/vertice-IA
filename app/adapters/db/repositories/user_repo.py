@@ -22,7 +22,7 @@ class SqliteUserRepository(UserRepository):
     async def get_by_username(self, username: str) -> User | None:
         async with connect() as db:
             cur = await db.execute(
-                "SELECT id, username, hashed_password, salt, is_active FROM users WHERE username = ?",
+                "SELECT id, username, full_name, email, phone, department, title, hashed_password, salt, is_active FROM users WHERE username = ?",
                 (username,),
             )
             row = await cur.fetchone()
@@ -32,16 +32,21 @@ class SqliteUserRepository(UserRepository):
             return User(
                 id=UUID(row[0]),
                 username=row[1],
-                hashed_password=row[2],
-                salt=row[3],
-                is_active=bool(row[4]),
+                full_name=row[2] or "",
+                email=row[3] or "",
+                phone=row[4] or "",
+                department=row[5] or "",
+                title=row[6] or "",
+                hashed_password=row[7],
+                salt=row[8],
+                is_active=bool(row[9]),
                 roles=roles,
             )
 
     async def get_by_id(self, user_id: UUID) -> User | None:
         async with connect() as db:
             cur = await db.execute(
-                "SELECT id, username, hashed_password, salt, is_active FROM users WHERE id = ?",
+                "SELECT id, username, full_name, email, phone, department, title, hashed_password, salt, is_active FROM users WHERE id = ?",
                 (str(user_id),),
             )
             row = await cur.fetchone()
@@ -51,17 +56,22 @@ class SqliteUserRepository(UserRepository):
             return User(
                 id=UUID(row[0]),
                 username=row[1],
-                hashed_password=row[2],
-                salt=row[3],
-                is_active=bool(row[4]),
+                full_name=row[2] or "",
+                email=row[3] or "",
+                phone=row[4] or "",
+                department=row[5] or "",
+                title=row[6] or "",
+                hashed_password=row[7],
+                salt=row[8],
+                is_active=bool(row[9]),
                 roles=roles,
             )
 
     async def create(self, user: User) -> User:
         async with connect() as db:
             await db.execute(
-                "INSERT INTO users (id, username, hashed_password, salt, is_active) VALUES (?, ?, ?, ?, ?)",
-                (str(user.id), user.username, user.hashed_password, user.salt, int(user.is_active)),
+                "INSERT INTO users (id, username, full_name, email, phone, department, title, hashed_password, salt, is_active) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                (str(user.id), user.username, user.full_name, user.email, user.phone, user.department, user.title, user.hashed_password, user.salt, int(user.is_active)),
             )
             for role_name in user.roles:
                 cur = await db.execute("SELECT id FROM roles WHERE name = ?", (role_name,))
@@ -77,7 +87,7 @@ class SqliteUserRepository(UserRepository):
     async def list_all(self) -> list[User]:
         async with connect() as db:
             cur = await db.execute(
-                "SELECT id, username, hashed_password, salt, is_active FROM users ORDER BY username"
+                "SELECT id, username, full_name, email, phone, department, title, hashed_password, salt, is_active FROM users ORDER BY username"
             )
             rows = await cur.fetchall()
             users: list[User] = []
@@ -87,9 +97,14 @@ class SqliteUserRepository(UserRepository):
                     User(
                         id=UUID(row[0]),
                         username=row[1],
-                        hashed_password=row[2],
-                        salt=row[3],
-                        is_active=bool(row[4]),
+                        full_name=row[2] or "",
+                        email=row[3] or "",
+                        phone=row[4] or "",
+                        department=row[5] or "",
+                        title=row[6] or "",
+                        hashed_password=row[7],
+                        salt=row[8],
+                        is_active=bool(row[9]),
                         roles=roles,
                     )
                 )
@@ -128,3 +143,10 @@ class SqliteUserRepository(UserRepository):
         async with connect() as db:
             await db.execute("DELETE FROM users WHERE id = ?", (str(user_id),))
             await db.commit()
+
+
+    async def count_users(self) -> int:
+        async with connect() as db:
+            cur = await db.execute("SELECT COUNT(*) FROM users")
+            row = await cur.fetchone()
+            return int(row[0] if row else 0)

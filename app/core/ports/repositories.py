@@ -46,6 +46,9 @@ class UserRepository(ABC):
     @abstractmethod
     async def delete(self, user_id: UUID) -> None: ...
 
+    @abstractmethod
+    async def count_users(self) -> int: ...
+
 
 class ModuleRepository(ABC):
     @abstractmethod

@@ -6,6 +6,11 @@
 CREATE TABLE IF NOT EXISTS users (
     id TEXT PRIMARY KEY,                       -- UUID
     username TEXT UNIQUE NOT NULL,
+    full_name TEXT DEFAULT '',
+    email TEXT DEFAULT '',
+    phone TEXT DEFAULT '',
+    department TEXT DEFAULT '',
+    title TEXT DEFAULT '',
     hashed_password TEXT NOT NULL,
     salt TEXT NOT NULL,
     is_active INTEGER NOT NULL DEFAULT 1,
