@@ -22,7 +22,17 @@ class UserAdminService:
     async def get(self, user_id: UUID) -> User | None:
         return await self.users.get_by_id(user_id)
 
-    async def create(self, username: str, password: str, roles: list[str] | None = None) -> User:
+    async def create(
+        self,
+        username: str,
+        password: str,
+        roles: list[str] | None = None,
+        full_name: str = "",
+        email: str = "",
+        phone: str = "",
+        department: str = "",
+        title: str = "",
+    ) -> User:
         existing = await self.users.get_by_username(username)
         if existing:
             raise ValueError(f"usuário '{username}' já existe")
@@ -32,6 +42,11 @@ class UserAdminService:
             username=username,
             hashed_password=_hash(password, salt),
             salt=salt,
+            full_name=full_name,
+            email=email,
+            phone=phone,
+            department=department,
+            title=title,
             is_active=True,
             roles=roles or ["analista_n3"],
         )

@@ -18,6 +18,11 @@ class User:
     username: str
     hashed_password: str
     salt: str
+    full_name: str = ""
+    email: str = ""
+    phone: str = ""
+    department: str = ""
+    title: str = ""
     is_active: bool = True
     roles: list[str] = field(default_factory=list)
 

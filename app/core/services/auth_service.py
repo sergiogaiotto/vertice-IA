@@ -40,6 +40,14 @@ class AuthService:
         )
         return await self.users.create(user)
 
+    async def has_any_user(self) -> bool:
+        return (await self.users.count_users()) > 0
+
+    async def bootstrap_root(self, username: str, password: str) -> User:
+        if await self.has_any_user():
+            raise ValueError("bootstrap inicial indisponível")
+        return await self.register(username=username, password=password, roles=["root", "admin"])
+
     async def authenticate(self, username: str, password: str) -> User | None:
         user = await self.users.get_by_username(username)
         if not user or not user.is_active:

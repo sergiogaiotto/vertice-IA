@@ -9,7 +9,6 @@ import aiosqlite
 
 from app.config import get_settings
 from app.core.domain.entities import Module, ModuleStatus, new_uuid
-from app.core.services.auth_service import _hash, make_salt
 
 settings = get_settings()
 
@@ -97,25 +96,13 @@ async def init_db() -> None:
         await db.execute("CREATE INDEX IF NOT EXISTS idx_finops_environment ON finops_ledger(environment)")
         await db.commit()
 
-        # bootstrap admin
-        cur = await db.execute(
-            "SELECT id FROM users WHERE username = ?", (settings.admin_bootstrap_user,)
-        )
-        row = await cur.fetchone()
-        if not row:
-            uid = str(new_uuid())
-            salt = make_salt()
-            await db.execute(
-                "INSERT INTO users (id, username, hashed_password, salt, is_active) "
-                "VALUES (?, ?, ?, ?, 1)",
-                (uid, settings.admin_bootstrap_user, _hash(settings.admin_bootstrap_password, salt), salt),
-            )
-            cur = await db.execute("SELECT id FROM roles WHERE name = ?", ("admin",))
-            r = await cur.fetchone()
-            if r:
-                await db.execute(
-                    "INSERT OR IGNORE INTO user_roles (user_id, role_id) VALUES (?, ?)", (uid, r[0])
-                )
+        # migração idempotente: campos padrão do cadastro de usuário
+        cur = await db.execute("PRAGMA table_info(users)")
+        user_cols = {row[1] for row in await cur.fetchall()}
+        for col in ["full_name", "email", "phone", "department", "title"]:
+            if col not in user_cols:
+                await db.execute(f"ALTER TABLE users ADD COLUMN {col} TEXT DEFAULT ''")
+        await db.commit()
 
         # bootstrap módulos default
         defaults = [

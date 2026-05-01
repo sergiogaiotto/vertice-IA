@@ -48,8 +48,8 @@
         <span class="font-medium tracking-tight">Vértice</span>
       </div>
 
-      <h2 class="text-xl font-medium text-neutral-900 mb-1" style="letter-spacing: -0.02em;">Entrar</h2>
-      <p class="text-[13px] text-neutral-500 mb-6">acesse a plataforma com suas credenciais</p>
+      <h2 class="text-xl font-medium text-neutral-900 mb-1" style="letter-spacing: -0.02em;">{% if setup_mode %}Configuração inicial{% else %}Entrar{% endif %}</h2>
+      <p class="text-[13px] text-neutral-500 mb-6">{% if setup_mode %}Primeiro acesso: este login criará automaticamente o usuário Root com acesso total.{% else %}acesse a plataforma com suas credenciais{% endif %}</p>
 
       {% if error %}
       <div class="mb-4 px-3 py-2.5 bg-risk-50 text-risk-700 text-[12px] rounded-md border border-risk-400/30 flex items-start gap-2">

@@ -100,6 +100,29 @@
           <label class="block text-xs text-neutral-500 mb-1">senha</label>
           <input x-model="form.password" type="password" class="w-full h-9 px-3 border border-neutral-200 rounded-md text-sm" />
         </div>
+        <div class="grid grid-cols-2 gap-3">
+          <div>
+            <label class="block text-xs text-neutral-500 mb-1">nome completo</label>
+            <input x-model="form.full_name" class="w-full h-9 px-3 border border-neutral-200 rounded-md text-sm" />
+          </div>
+          <div>
+            <label class="block text-xs text-neutral-500 mb-1">cargo</label>
+            <input x-model="form.title" class="w-full h-9 px-3 border border-neutral-200 rounded-md text-sm" />
+          </div>
+          <div>
+            <label class="block text-xs text-neutral-500 mb-1">e-mail</label>
+            <input x-model="form.email" class="w-full h-9 px-3 border border-neutral-200 rounded-md text-sm" />
+          </div>
+          <div>
+            <label class="block text-xs text-neutral-500 mb-1">telefone</label>
+            <input x-model="form.phone" class="w-full h-9 px-3 border border-neutral-200 rounded-md text-sm" />
+          </div>
+        </div>
+        <div>
+          <label class="block text-xs text-neutral-500 mb-1">departamento</label>
+          <input x-model="form.department" class="w-full h-9 px-3 border border-neutral-200 rounded-md text-sm" />
+        </div>
+
         <div>
           <label class="block text-xs text-neutral-500 mb-1">papéis</label>
           <div class="flex flex-wrap gap-1.5">
@@ -163,11 +186,11 @@ function usersApp() {
         Array.from(u.username).reduce((a,c)=>a+c.charCodeAt(0),0) % 7
       ]
     })),
-    availableRoles: ['admin', 'supervisor', 'analista_n3', 'finops'],
+    availableRoles: ['root', 'admin', 'supervisor', 'analista_n3', 'finops'],
     filter: '',
     openNew: false,
     editing: null,
-    form: { username: '', password: '', roles: ['analista_n3'] },
+    form: { username: '', password: '', full_name: '', email: '', phone: '', department: '', title: '', roles: ['analista_n3'] },
 
     filtered() {
       const q = this.filter.toLowerCase();
@@ -197,7 +220,7 @@ function usersApp() {
         this.users.push(created);
         toast(`Usuário ${created.username} criado.`, 'success');
         this.openNew = false;
-        this.form = { username: '', password: '', roles: ['analista_n3'] };
+        this.form = { username: '', password: '', full_name: '', email: '', phone: '', department: '', title: '', roles: ['analista_n3'] };
       } catch (e) { toast(e.message, 'error'); }
     },
 

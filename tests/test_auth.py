@@ -12,7 +12,7 @@ async def test_register_and_authenticate():
     await init_db()
     auth = AuthService(SqliteUserRepository())
 
-    # admin é criado pelo init_db
+    await auth.bootstrap_root("admin", "vertice2026")
     user = await auth.authenticate("admin", "vertice2026")
     assert user is not None
     assert user.username == "admin"
@@ -23,6 +23,7 @@ async def test_register_and_authenticate():
 async def test_wrong_password_fails():
     await init_db()
     auth = AuthService(SqliteUserRepository())
+    await auth.bootstrap_root("admin", "vertice2026")
     user = await auth.authenticate("admin", "errada")
     assert user is None
 
@@ -31,6 +32,7 @@ async def test_wrong_password_fails():
 async def test_token_roundtrip():
     await init_db()
     auth = AuthService(SqliteUserRepository())
+    await auth.bootstrap_root("admin", "vertice2026")
     user = await auth.authenticate("admin", "vertice2026")
     token = auth.issue_token(user)
     assert token

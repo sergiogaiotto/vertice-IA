@@ -132,8 +132,9 @@ async def cockpit(
 
 
 @router.get("/login", response_class=HTMLResponse)
-async def login_page(request: Request):
-    return templates.TemplateResponse("auth/login.html", {"request": request, "error": None})
+async def login_page(request: Request, auth: AuthService = Depends(get_auth_service)):
+    setup_mode = not await auth.has_any_user()
+    return templates.TemplateResponse("auth/login.html", {"request": request, "error": None, "setup_mode": setup_mode})
 
 
 @router.post("/login", response_class=HTMLResponse)
@@ -143,11 +144,22 @@ async def login_submit(
     password: str = Form(...),
     auth: AuthService = Depends(get_auth_service),
 ):
+    if not await auth.has_any_user():
+        try:
+            user = await auth.bootstrap_root(username, password)
+        except ValueError:
+            user = None
+        if user:
+            token = auth.issue_token(user)
+            request.session["token"] = token
+            request.session["username"] = user.username
+            return RedirectResponse("/radar", status_code=status.HTTP_302_FOUND)
+
     user = await auth.authenticate(username, password)
     if not user:
         return templates.TemplateResponse(
             "auth/login.html",
-            {"request": request, "error": "Credenciais inválidas."},
+            {"request": request, "error": "Credenciais inválidas.", "setup_mode": False},
             status_code=401,
         )
     token = auth.issue_token(user)
