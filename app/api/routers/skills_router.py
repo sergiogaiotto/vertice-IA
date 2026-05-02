@@ -137,7 +137,15 @@ async def save_skill(
     svc: SkillService = Depends(get_skill_service),
     user: User = Depends(require_user),
 ):
-    s = svc.save(name, body.content)
+    target_name = body.new_name or name
+    if body.new_name and body.new_name != name:
+        try:
+            svc.rename(name, body.new_name)
+        except FileNotFoundError:
+            raise HTTPException(404, "skill não encontrada")
+        except FileExistsError:
+            raise HTTPException(400, f"skill '{body.new_name}' já existe")
+    s = svc.save(target_name, body.content)
     return _to_detail(s)
 
 

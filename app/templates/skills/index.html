@@ -51,7 +51,9 @@
 
     <header class="h-12 border-b border-neutral-200 flex items-center justify-between px-4 shrink-0 bg-white">
       <div class="flex items-center gap-2 min-w-0">
-        <span class="text-sm font-medium truncate" x-text="selected && selected.title"></span>
+        <input x-model="editedName" @input="dirty=true"
+               class="h-7 px-2 text-sm font-medium border border-neutral-200 rounded-md w-64 max-w-full"
+               placeholder="nome da skill" />
         <span class="text-[10px] text-neutral-400 font-mono" x-text="selected && selected.path"></span>
         <span x-show="dirty" class="text-[10px] text-amber-600 px-1.5 py-0.5 bg-amber-50 rounded">não salvo</span>
       </div>
@@ -263,6 +265,7 @@ function skillsApp() {
     skills: initial.map(s => ({ ...s, updated_at: new Date(s.updated_at) })),
     selected: sel ? { ...sel, updated_at: new Date(sel.updated_at) } : null,
     content: sel ? sel.content : '',
+    editedName: sel ? sel.name : '',
     dirty: false,
     view: 'split',
     filter: '',
@@ -277,6 +280,7 @@ function skillsApp() {
     init() {
       // re-render on content change
       this.$watch('content', () => this.$nextTick(() => {}));
+      this.$watch('selected', (s) => { this.editedName = s?.name || ''; });
     },
 
     get renderedHtml() {
@@ -359,10 +363,16 @@ function skillsApp() {
     async save() {
       if (!this.selected || !this.dirty) return;
       try {
-        const updated = await window.api('PUT', `/api/skills/${this.selected.name}`, { content: this.content });
+        const oldName = this.selected.name;
+        const newName = (this.editedName || '').trim();
+        if (!newName) { toast('Informe um nome de skill válido.', 'warn'); return; }
+        const updated = await window.api('PUT', `/api/skills/${oldName}`, { content: this.content, new_name: newName });
         this.selected = { ...updated, updated_at: new Date(updated.updated_at) };
         this.dirty = false;
         toast('Skill salva.', 'success');
+        if (newName !== oldName) {
+          window.location.href = `/skills?name=${encodeURIComponent(newName)}`;
+        }
       } catch (e) { toast(e.message, 'error'); }
     },
 
