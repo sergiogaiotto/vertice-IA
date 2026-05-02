@@ -28,6 +28,7 @@ class SkillDetail(BaseModel):
 
 class SaveSkillRequest(BaseModel):
     content: str
+    new_name: str | None = None
 
 
 class CreateSkillRequest(BaseModel):

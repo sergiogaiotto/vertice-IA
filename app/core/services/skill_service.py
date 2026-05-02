@@ -102,6 +102,16 @@ class SkillService:
         p.write_text(content, encoding="utf-8")
         return self.get(p.stem)
 
+    def rename(self, old_name: str, new_name: str) -> SkillFile:
+        old_path = self._skill_path(old_name)
+        if not old_path.exists():
+            raise FileNotFoundError("skill não encontrada")
+        new_path = self._skill_path(new_name)
+        if new_path.exists() and new_path != old_path:
+            raise FileExistsError("skill destino já existe")
+        old_path.rename(new_path)
+        return self.get(new_path.stem)
+
     def delete(self, name: str) -> bool:
         p = self._skill_path(name)
         if p.exists():
