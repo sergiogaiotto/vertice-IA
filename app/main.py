@@ -23,6 +23,7 @@ from app.api.routers import (
     presentations_router,
     prompts_router,
     radar_router,
+    raiox_router,
     skills_router,
     users_router,
 )
@@ -65,6 +66,7 @@ app.include_router(pages.router)
 app.include_router(auth_router.router, prefix="/api/auth", tags=["auth"])
 app.include_router(users_router.router, prefix="/api/users", tags=["users"])
 app.include_router(radar_router.router, prefix="/api/radar", tags=["radar"])
+app.include_router(raiox_router.router, prefix="/api/raiox", tags=["raiox"])
 app.include_router(churn_router.router, prefix="/api/churn", tags=["churn"])
 app.include_router(prompts_router.router, prefix="/api/prompts", tags=["prompts"])
 app.include_router(finops_router.router, prefix="/api/finops", tags=["finops"])

@@ -1,0 +1,470 @@
+{% extends "base.html" %}
+{% block title %}Raio X Cliente — Vértice{% endblock %}
+
+{% block content %}
+<div x-data="raioxApp({{ 'true' if can_edit else 'false' }}, {{ ('\"' ~ initial_board_id ~ '\"') if initial_board_id else 'null' }})"
+     x-init="init()"
+     class="px-6 py-5 pb-12 max-w-full">
+
+  <!-- ============================================================ -->
+  <!-- Header: seletor de board · ações                              -->
+  <!-- ============================================================ -->
+  <div class="flex items-center gap-3 mb-4 flex-wrap">
+
+    <h1 class="text-base font-medium flex items-center gap-2">
+      <span x-text="currentBoard?.cover_emoji || '🩻'"></span>
+      <span x-text="currentBoard?.name || 'Raio X Cliente'"></span>
+    </h1>
+
+    <div class="text-xs text-neutral-500" x-show="currentBoard">
+      · <span x-text="charts.length"></span>/30 charts
+    </div>
+
+    <div class="flex-1"></div>
+
+    <!-- Seletor de board -->
+    <div class="relative">
+      <button @click="boardDropdownOpen = !boardDropdownOpen"
+              class="text-xs px-3 py-1.5 border border-neutral-200 rounded-md hover:bg-neutral-50 flex items-center gap-2">
+        <span x-text="currentBoard ? `prancheta · ${currentBoard.name}` : 'selecionar prancheta'"></span>
+        ▾
+      </button>
+      <div x-show="boardDropdownOpen" x-cloak @click.outside="boardDropdownOpen = false"
+           class="absolute right-0 mt-1 w-[420px] bg-white rounded-lg shadow-xl border border-neutral-200 max-h-[420px] overflow-y-auto z-30">
+        <template x-for="b in boards" :key="b.id">
+          <a href="#" @click.prevent="selectBoard(b.id); boardDropdownOpen = false"
+             class="flex items-center gap-2 px-3 py-2 hover:bg-neutral-50 text-xs border-b border-neutral-100">
+            <span x-text="b.cover_emoji || '🩻'"></span>
+            <span class="font-medium" x-text="b.name"></span>
+            <span class="text-neutral-400 truncate" x-text="b.description"></span>
+            <span x-show="!b.is_shared" class="ml-auto text-[9px] text-amber-700">privado</span>
+          </a>
+        </template>
+        <div x-show="boards.length === 0" class="px-4 py-6 text-center text-xs text-neutral-400">
+          Nenhuma prancheta criada ainda.
+        </div>
+      </div>
+    </div>
+
+    <!-- Filtros globais (board-level, persistidos) -->
+    <div class="relative" x-show="currentBoard">
+      <button @click="globalFiltersOpen = !globalFiltersOpen"
+              class="text-xs px-3 py-1.5 border border-neutral-200 rounded-md hover:bg-neutral-50 flex items-center gap-1.5">
+        <svg width="12" height="12" viewBox="0 0 24 24" fill="none">
+          <path d="M3 5 H21 M6 12 H18 M10 19 H14" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>
+        </svg>
+        <span>filtros globais</span>
+        <span x-show="(currentBoard?.filters?.global || []).length" class="bg-ai-50 text-ai-800 text-[9px] px-1.5 rounded-full"
+              x-text="(currentBoard?.filters?.global || []).length"></span>
+      </button>
+      <div x-show="globalFiltersOpen" x-cloak @click.outside="globalFiltersOpen = false"
+           class="absolute right-0 mt-1 w-[420px] bg-white rounded-lg shadow-xl border border-neutral-200 z-30 p-3">
+        <h3 class="text-[11px] uppercase tracking-wider text-neutral-500 mb-2">Filtros do board</h3>
+        <div class="space-y-1 mb-3">
+          <template x-for="(f, idx) in (currentBoard?.filters?.global || [])" :key="`gf-${idx}-${f.column}-${f.value}`">
+            <div class="flex items-center gap-2 text-xs bg-neutral-50 px-2 py-1 rounded">
+              <span class="font-mono" x-text="f.column"></span>
+              <span class="text-neutral-400">=</span>
+              <span class="font-medium flex-1 truncate" x-text="f.value"></span>
+              {% if can_edit %}
+              <button @click="removeGlobalFilter(idx)" class="text-risk-600 hover:bg-risk-50 px-1 rounded">×</button>
+              {% endif %}
+            </div>
+          </template>
+          <div x-show="!(currentBoard?.filters?.global || []).length" class="text-[10px] text-neutral-400 italic">
+            nenhum filtro global ativo.
+          </div>
+        </div>
+        {% if can_edit %}
+        <div class="border-t border-neutral-100 pt-2 grid grid-cols-3 gap-1.5">
+          <select x-model="newGlobalFilter.table"
+                  @change="newGlobalFilter.column=''"
+                  class="h-8 px-1 text-xs border border-neutral-200 rounded bg-white">
+            <option value="">tabela…</option>
+            <template x-for="t in tables" :key="t.name">
+              <option :value="t.name" x-text="t.label"></option>
+            </template>
+          </select>
+          <select x-model="newGlobalFilter.column"
+                  :disabled="!newGlobalFilter.table"
+                  class="h-8 px-1 text-xs border border-neutral-200 rounded bg-white">
+            <option value="">coluna…</option>
+            <template x-for="col in tableColumns(newGlobalFilter.table)" :key="col.name">
+              <option :value="col.name" x-text="col.name"></option>
+            </template>
+          </select>
+          <div class="flex gap-1">
+            <input x-model="newGlobalFilter.value" placeholder="valor"
+                   @keydown.enter="addGlobalFilter()"
+                   class="flex-1 h-8 px-2 text-xs border border-neutral-200 rounded" />
+            <button @click="addGlobalFilter()"
+                    :disabled="!newGlobalFilter.column || newGlobalFilter.value === ''"
+                    class="h-8 px-2 text-xs bg-brand-600 text-white rounded disabled:opacity-50">+</button>
+          </div>
+        </div>
+        {% endif %}
+      </div>
+    </div>
+
+    <!-- Toggle Mapa de Tecidos -->
+    <button @click="tissueMapOpen = !tissueMapOpen"
+            class="text-xs px-3 py-1.5 border border-neutral-200 rounded-md hover:bg-neutral-50 flex items-center gap-1.5">
+      <svg width="12" height="12" viewBox="0 0 24 24" fill="none">
+        <path d="M4 4 H10 V10 H4 Z M14 4 H20 V10 H14 Z M4 14 H10 V20 H4 Z M14 14 H20 V20 H14 Z"
+              stroke="currentColor" stroke-width="1.5"/>
+      </svg>
+      <span>Mapa de Tecidos</span>
+      <span class="text-neutral-400 text-[10px]" x-show="tables.length" x-text="`(${tables.length})`"></span>
+    </button>
+
+    {% if can_edit %}
+    <!-- Nova prancheta -->
+    <button @click="newBoardModalOpen = true"
+            class="text-xs px-3 py-1.5 bg-brand-600 text-white rounded-md hover:bg-brand-800 flex items-center gap-1.5">
+      <svg width="11" height="11" viewBox="0 0 12 12" fill="none"><path d="M6 1 V11 M1 6 H11" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
+      <span>nova prancheta</span>
+    </button>
+
+    <!-- Add chart -->
+    <button @click="newChartModalOpen = true" :disabled="!currentBoard"
+            class="text-xs px-3 py-1.5 border border-neutral-200 rounded-md hover:bg-neutral-50 flex items-center gap-1.5 disabled:opacity-50">
+      <svg width="11" height="11" viewBox="0 0 12 12" fill="none"><path d="M6 1 V11 M1 6 H11" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
+      <span>+ chart</span>
+    </button>
+    {% else %}
+    <span class="text-[10px] text-amber-700 italic">modo leitura · {{ user.roles | join(', ') }}</span>
+    {% endif %}
+  </div>
+
+  <!-- ============================================================ -->
+  <!-- Chips de crossfilter ativos                                   -->
+  <!-- ============================================================ -->
+  <div x-show="crossfilters.length" x-cloak
+       class="flex items-center gap-2 mb-3 flex-wrap text-xs">
+    <span class="text-neutral-500 uppercase tracking-wider text-[10px]">filtros ativos</span>
+    <template x-for="(f, idx) in crossfilters" :key="`${f.sourceChartId}-${f.column}-${f.value}`">
+      <span class="inline-flex items-center gap-1.5 bg-ai-50 text-ai-800 px-2 py-1 rounded-md">
+        <span class="font-mono" x-text="f.column"></span>
+        <span class="text-ai-600">=</span>
+        <span class="font-medium" x-text="f.value"></span>
+        <button @click="removeCrossfilter(idx)" class="text-ai-600 hover:text-risk-600 ml-0.5" title="remover filtro">×</button>
+      </span>
+    </template>
+    <button @click="clearCrossfilters()" class="text-[10px] text-neutral-500 hover:text-neutral-800 underline">limpar tudo</button>
+  </div>
+
+  <!-- ============================================================ -->
+  <!-- Estado vazio                                                  -->
+  <!-- ============================================================ -->
+  <div x-show="!currentBoard && !loading" x-cloak
+       class="bg-white rounded-lg border border-dashed border-neutral-300 p-10 text-center">
+    <div class="text-4xl mb-3">🩻</div>
+    <h2 class="text-sm font-medium mb-1">Bem-vindo ao Raio X Cliente</h2>
+    <p class="text-xs text-neutral-500 mb-4 max-w-md mx-auto">
+      Crie uma prancheta para montar até 30 gráficos Plotly interativos sobre as
+      tabelas do Vértice (incluindo as geradas dinamicamente por outros módulos).
+    </p>
+    {% if can_edit %}
+    <button @click="newBoardModalOpen = true"
+            class="text-xs px-4 py-2 bg-brand-600 text-white rounded-md hover:bg-brand-800">
+      criar primeira prancheta
+    </button>
+    {% else %}
+    <p class="text-[11px] text-neutral-400 italic">somente admin/supervisor pode criar pranchetas.</p>
+    {% endif %}
+  </div>
+
+  <div x-show="loading" x-cloak class="text-center py-8 text-xs text-neutral-400">
+    carregando…
+  </div>
+
+  <!-- ============================================================ -->
+  <!-- Grid 3xN — mesa de exames                                    -->
+  <!-- ============================================================ -->
+  <section x-show="currentBoard" x-cloak
+           class="grid grid-cols-3 gap-3 auto-rows-[260px]">
+    <template x-for="chart in sortedCharts" :key="chart.id">
+      <article class="bg-white border border-neutral-200 rounded-lg overflow-hidden flex flex-col"
+               :draggable="canEdit"
+               @dragstart="onDragStart(chart.id, $event)"
+               @dragover="onDragOver($event)"
+               @drop="onDrop(chart.id, $event)"
+               :style="`grid-column: span ${chart.span_cols} / span ${chart.span_cols}; grid-row: span ${chart.span_rows} / span ${chart.span_rows};`">
+        <header class="px-3 py-2 border-b border-neutral-100 flex items-center gap-2 bg-neutral-50">
+          <span class="w-1.5 h-1.5 rounded-full shrink-0"
+                :class="chartStates[chart.id]?.error ? 'bg-risk-500' : (chartStates[chart.id]?.loaded ? 'bg-brand-400' : 'bg-amber-400 animate-pulse')"></span>
+          <div class="flex-1 min-w-0">
+            <input :value="chart.title || `${chart.chart_type} · ${chart.query_spec.table}`"
+                   @blur="renameChart(chart.id, $event.target.value)"
+                   @keydown.enter="$event.target.blur()"
+                   :readonly="!canEdit"
+                   class="w-full text-[12px] font-medium bg-transparent outline-none focus:bg-white px-1 py-0.5 rounded read-only:cursor-default" />
+            <div class="text-[10px] text-neutral-400 truncate px-1"
+                 x-text="`${chart.query_spec.aggregate}(${chart.query_spec.value_column || '*'}) por ${chart.query_spec.label_column}`"></div>
+          </div>
+          {% if can_edit %}
+          <!-- Span controls -->
+          <div class="flex items-center gap-0.5 text-[9px] text-neutral-500 mr-1">
+            <span title="largura (cols)">w</span>
+            <button @click="resizeChart(chart.id, Math.max(1, chart.span_cols-1), chart.span_rows)"
+                    class="w-4 h-4 hover:bg-neutral-200 rounded">−</button>
+            <span class="font-mono w-3 text-center" x-text="chart.span_cols"></span>
+            <button @click="resizeChart(chart.id, Math.min(3, chart.span_cols+1), chart.span_rows)"
+                    class="w-4 h-4 hover:bg-neutral-200 rounded">+</button>
+            <span class="ml-1" title="altura (rows)">h</span>
+            <button @click="resizeChart(chart.id, chart.span_cols, Math.max(1, chart.span_rows-1))"
+                    class="w-4 h-4 hover:bg-neutral-200 rounded">−</button>
+            <span class="font-mono w-3 text-center" x-text="chart.span_rows"></span>
+            <button @click="resizeChart(chart.id, chart.span_cols, Math.min(2, chart.span_rows+1))"
+                    class="w-4 h-4 hover:bg-neutral-200 rounded">+</button>
+          </div>
+          <button @click="deleteChart(chart.id)" title="remover"
+                  class="text-[10px] w-5 h-5 hover:bg-risk-50 text-risk-600 rounded">×</button>
+          {% endif %}
+        </header>
+        <div class="flex-1 p-2 min-h-0" :id="`raiox-chart-${chart.id}`"></div>
+        <div x-show="chartStates[chart.id]?.error" x-cloak
+             class="px-3 py-2 border-t border-risk-100 bg-risk-50 text-[10px] text-risk-700"
+             x-text="chartStates[chart.id]?.error"></div>
+      </article>
+    </template>
+
+    <!-- Slot vazio (call to action) -->
+    {% if can_edit %}
+    <button x-show="currentBoard && charts.length === 0"
+            @click="newChartModalOpen = true"
+            class="border-2 border-dashed border-neutral-200 rounded-lg flex items-center justify-center text-xs text-neutral-400 hover:border-brand-400 hover:text-brand-700 col-span-3 row-span-2">
+      + adicionar primeiro chart
+    </button>
+    {% endif %}
+  </section>
+
+  <!-- ============================================================ -->
+  <!-- Drawer: Mapa de Tecidos                                       -->
+  <!-- ============================================================ -->
+  <aside x-show="tissueMapOpen" x-cloak
+         @click.outside="tissueMapOpen = false"
+         class="fixed top-12 right-0 bottom-0 w-[420px] bg-white border-l border-neutral-200 shadow-2xl z-40 flex flex-col">
+    <header class="px-4 py-3 border-b border-neutral-200 flex items-center justify-between">
+      <div>
+        <h2 class="text-sm font-medium">Mapa de Tecidos</h2>
+        <p class="text-[10px] text-neutral-500">tabelas + colunas + amostras</p>
+      </div>
+      <button @click="tissueMapOpen = false" class="text-neutral-400 hover:text-neutral-700 text-lg leading-none">×</button>
+    </header>
+
+    <div class="px-3 py-2 border-b border-neutral-100">
+      <input x-model="tissueFilter" placeholder="filtrar tabela ou coluna…"
+             class="w-full h-8 px-2 text-xs border border-neutral-200 rounded outline-none focus:border-brand-600" />
+    </div>
+
+    <div class="flex-1 overflow-y-auto">
+      <template x-for="t in filteredTables" :key="t.name">
+        <div class="border-b border-neutral-100">
+          <button @click="expandedTables[t.name] = !expandedTables[t.name]"
+                  class="w-full px-3 py-2 hover:bg-neutral-50 flex items-center gap-2 text-left">
+            <svg width="9" height="9" viewBox="0 0 12 12" fill="none"
+                 :style="expandedTables[t.name] ? 'transform:rotate(90deg)' : ''"
+                 class="text-neutral-400 shrink-0">
+              <path d="M4 2 L8 6 L4 10" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+            </svg>
+            <div class="flex-1 min-w-0">
+              <div class="text-[12px] font-medium truncate" x-text="t.label"></div>
+              <div class="text-[10px] text-neutral-400 truncate" x-text="`${t.name} · ${t.row_count} linhas · ${t.columns.length} colunas`"></div>
+            </div>
+            <span x-show="t.is_dynamic" class="text-[9px] text-ai-800 bg-ai-50 px-1 py-0 rounded">dinâmica</span>
+          </button>
+          <div x-show="expandedTables[t.name]" x-cloak>
+            <template x-for="col in t.columns" :key="col.name">
+              <div class="px-6 py-1.5 text-[11px] border-t border-neutral-50 hover:bg-neutral-50">
+                <div class="flex items-center gap-2">
+                  <span class="font-mono" x-text="col.name"></span>
+                  <span class="text-neutral-400 text-[10px]" x-text="col.type"></span>
+                  <span x-show="col.is_pk" class="text-[9px] text-brand-700 bg-brand-50 px-1 rounded">PK</span>
+                  <span class="ml-auto text-[10px] text-neutral-400" x-text="`${col.non_null_count} não-nulos`"></span>
+                </div>
+                <div x-show="col.sample_values.length" class="text-[10px] text-neutral-500 truncate mt-0.5"
+                     x-text="`ex: ${col.sample_values.join(' · ')}`"></div>
+              </div>
+            </template>
+          </div>
+        </div>
+      </template>
+      <div x-show="filteredTables.length === 0" class="px-4 py-8 text-center text-xs text-neutral-400">
+        Nenhuma tabela encontrada.
+      </div>
+    </div>
+  </aside>
+
+  <!-- ============================================================ -->
+  <!-- Modal: Nova prancheta                                         -->
+  <!-- ============================================================ -->
+  {% if can_edit %}
+  <div x-show="newBoardModalOpen" x-cloak
+       class="fixed inset-0 bg-black/40 flex items-center justify-center z-50 p-4">
+    <div @click.outside="newBoardModalOpen = false"
+         class="bg-white rounded-xl w-[480px] max-w-full overflow-hidden">
+      <header class="px-5 py-3 border-b border-neutral-100 flex items-center justify-between">
+        <h2 class="text-sm font-medium">Nova prancheta</h2>
+        <button @click="newBoardModalOpen = false" class="text-neutral-400 hover:text-neutral-700">×</button>
+      </header>
+      <div class="p-5 space-y-3">
+        <div>
+          <label class="text-[10px] uppercase tracking-wider text-neutral-500">Nome</label>
+          <input x-model="newBoard.name" placeholder="ex: Visão Churn 360"
+                 class="w-full h-9 px-2 text-sm border border-neutral-200 rounded outline-none focus:border-brand-600" />
+        </div>
+        <div>
+          <label class="text-[10px] uppercase tracking-wider text-neutral-500">Descrição (opcional)</label>
+          <input x-model="newBoard.description"
+                 class="w-full h-9 px-2 text-sm border border-neutral-200 rounded outline-none focus:border-brand-600" />
+        </div>
+        <div class="flex items-center gap-2">
+          <input type="checkbox" id="board-shared" x-model="newBoard.is_shared" class="rounded" />
+          <label for="board-shared" class="text-xs">visível para todos os usuários autenticados</label>
+        </div>
+      </div>
+      <footer class="px-5 py-3 border-t border-neutral-100 flex items-center justify-end gap-2">
+        <button @click="newBoardModalOpen = false" class="text-xs px-3 py-1.5 hover:bg-neutral-50 rounded">cancelar</button>
+        <button @click="createBoard()" :disabled="!newBoard.name?.trim()"
+                class="text-xs px-3 py-1.5 bg-brand-600 text-white rounded hover:bg-brand-800 disabled:opacity-50">
+          criar
+        </button>
+      </footer>
+    </div>
+  </div>
+
+  <!-- ============================================================ -->
+  <!-- Modal: Novo chart                                             -->
+  <!-- ============================================================ -->
+  <div x-show="newChartModalOpen" x-cloak
+       class="fixed inset-0 bg-black/40 flex items-center justify-center z-50 p-4">
+    <div @click.outside="newChartModalOpen = false"
+         class="bg-white rounded-xl w-[640px] max-w-full overflow-hidden">
+      <header class="px-5 py-3 border-b border-neutral-100 flex items-center justify-between">
+        <h2 class="text-sm font-medium">Novo chart</h2>
+        <button @click="newChartModalOpen = false" class="text-neutral-400 hover:text-neutral-700">×</button>
+      </header>
+      <div class="p-5 grid grid-cols-2 gap-4">
+        <div class="col-span-2">
+          <label class="text-[10px] uppercase tracking-wider text-neutral-500">Título</label>
+          <input x-model="newChart.title" placeholder="ex: contratos por operadora"
+                 class="w-full h-9 px-2 text-sm border border-neutral-200 rounded outline-none focus:border-brand-600" />
+        </div>
+        <div>
+          <label class="text-[10px] uppercase tracking-wider text-neutral-500">Tipo</label>
+          <select x-model="newChart.chart_type"
+                  class="w-full h-9 px-2 text-sm border border-neutral-200 rounded bg-white">
+            <optgroup label="Comparação">
+              <option value="bar">📊 bar</option>
+              <option value="funnel">🔻 funnel</option>
+              <option value="waterfall">🪜 waterfall</option>
+            </optgroup>
+            <optgroup label="Tempo / sequência">
+              <option value="line">📈 line</option>
+              <option value="area">⛰ area</option>
+            </optgroup>
+            <optgroup label="Composição">
+              <option value="pie">🥧 pie</option>
+              <option value="donut">🍩 donut</option>
+              <option value="treemap">🗺 treemap</option>
+              <option value="sunburst">☀ sunburst</option>
+            </optgroup>
+            <optgroup label="Distribuição">
+              <option value="histogram">📶 histogram</option>
+              <option value="box">📦 box</option>
+              <option value="violin">🎻 violin</option>
+            </optgroup>
+            <optgroup label="Relação / matriz">
+              <option value="scatter">⚬ scatter</option>
+              <option value="heatmap">🔥 heatmap</option>
+            </optgroup>
+            <optgroup label="KPI">
+              <option value="indicator">🎯 indicator</option>
+            </optgroup>
+          </select>
+        </div>
+        <div>
+          <label class="text-[10px] uppercase tracking-wider text-neutral-500">Tabela</label>
+          <select x-model="newChart.query_spec.table"
+                  @change="newChart.query_spec.label_column=''; newChart.query_spec.value_column=''"
+                  class="w-full h-9 px-2 text-sm border border-neutral-200 rounded bg-white">
+            <option value="">— escolher —</option>
+            <template x-for="t in tables" :key="t.name">
+              <option :value="t.name" x-text="`${t.label} (${t.row_count})`"></option>
+            </template>
+          </select>
+        </div>
+        <div>
+          <label class="text-[10px] uppercase tracking-wider text-neutral-500">Coluna de rótulo</label>
+          <select x-model="newChart.query_spec.label_column" :disabled="!newChart.query_spec.table"
+                  class="w-full h-9 px-2 text-sm border border-neutral-200 rounded bg-white">
+            <option value="">— escolher —</option>
+            <template x-for="col in tableColumns(newChart.query_spec.table)" :key="col.name">
+              <option :value="col.name" x-text="`${col.name} (${col.type})`"></option>
+            </template>
+          </select>
+        </div>
+        <div>
+          <label class="text-[10px] uppercase tracking-wider text-neutral-500">Agregação</label>
+          <select x-model="newChart.query_spec.aggregate"
+                  class="w-full h-9 px-2 text-sm border border-neutral-200 rounded bg-white">
+            <option value="count">count</option>
+            <option value="sum">sum</option>
+            <option value="avg">avg</option>
+            <option value="min">min</option>
+            <option value="max">max</option>
+          </select>
+        </div>
+        <div>
+          <label class="text-[10px] uppercase tracking-wider text-neutral-500">
+            Coluna de valor
+            <span x-show="newChart.query_spec.aggregate === 'count'" class="text-neutral-400 normal-case">(ignorada)</span>
+          </label>
+          <select x-model="newChart.query_spec.value_column"
+                  :disabled="!newChart.query_spec.table || newChart.query_spec.aggregate === 'count'"
+                  class="w-full h-9 px-2 text-sm border border-neutral-200 rounded bg-white">
+            <option value="">—</option>
+            <template x-for="col in tableColumns(newChart.query_spec.table)" :key="col.name">
+              <option :value="col.name" x-text="col.name"></option>
+            </template>
+          </select>
+        </div>
+        <div class="col-span-2 grid grid-cols-3 gap-3">
+          <div>
+            <label class="text-[10px] uppercase tracking-wider text-neutral-500">Largura (cols)</label>
+            <select x-model.number="newChart.span_cols" class="w-full h-9 px-2 text-sm border border-neutral-200 rounded bg-white">
+              <option value="1">1</option><option value="2">2</option><option value="3">3</option>
+            </select>
+          </div>
+          <div>
+            <label class="text-[10px] uppercase tracking-wider text-neutral-500">Altura (rows)</label>
+            <select x-model.number="newChart.span_rows" class="w-full h-9 px-2 text-sm border border-neutral-200 rounded bg-white">
+              <option value="1">1</option><option value="2">2</option>
+            </select>
+          </div>
+          <div>
+            <label class="text-[10px] uppercase tracking-wider text-neutral-500">Limite</label>
+            <input type="number" min="3" max="200" x-model.number="newChart.query_spec.limit"
+                   class="w-full h-9 px-2 text-sm border border-neutral-200 rounded" />
+          </div>
+        </div>
+      </div>
+      <footer class="px-5 py-3 border-t border-neutral-100 flex items-center justify-end gap-2">
+        <button @click="newChartModalOpen = false" class="text-xs px-3 py-1.5 hover:bg-neutral-50 rounded">cancelar</button>
+        <button @click="createChart()"
+                :disabled="!newChart.query_spec.table || !newChart.query_spec.label_column"
+                class="text-xs px-3 py-1.5 bg-brand-600 text-white rounded hover:bg-brand-800 disabled:opacity-50">
+          adicionar
+        </button>
+      </footer>
+    </div>
+  </div>
+  {% endif %}
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script src="https://cdn.plot.ly/plotly-2.35.2.min.js" charset="utf-8"></script>
+<script src="/static/js/raiox.js"></script>
+{% endblock %}

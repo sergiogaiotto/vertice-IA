@@ -333,6 +333,58 @@ CREATE TABLE IF NOT EXISTS finops_alerts (
 
 CREATE INDEX IF NOT EXISTS idx_alerts_budget ON finops_alerts(budget_id, triggered_at DESC);
 
+-- ===== Raio X Cliente =====
+-- Boards (pranchetas): grid 3xN de gráficos Plotly persistidos por usuário.
+CREATE TABLE IF NOT EXISTS raiox_boards (
+    id TEXT PRIMARY KEY,
+    name TEXT NOT NULL,
+    description TEXT DEFAULT '',
+    owner_id TEXT,
+    is_shared INTEGER NOT NULL DEFAULT 1,        -- 0=privado, 1=visível pra todos
+    layout_json TEXT,                             -- JSON com layout/posições
+    filters_json TEXT,                            -- JSON com filtros globais persistidos
+    cover_emoji TEXT DEFAULT '🩻',
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+CREATE INDEX IF NOT EXISTS idx_raiox_boards_owner ON raiox_boards(owner_id);
+
+-- Charts: cada tile do grid. position_row/col em [0..9 x 0..2], span_cols 1..3, span_rows 1..2.
+CREATE TABLE IF NOT EXISTS raiox_charts (
+    id TEXT PRIMARY KEY,
+    board_id TEXT NOT NULL,
+    title TEXT,
+    chart_type TEXT NOT NULL,                     -- 'bar'|'line'|'scatter'|'pie'|...
+    position_row INTEGER NOT NULL DEFAULT 0,
+    position_col INTEGER NOT NULL DEFAULT 0,
+    span_cols INTEGER NOT NULL DEFAULT 1,
+    span_rows INTEGER NOT NULL DEFAULT 1,
+    query_spec_json TEXT NOT NULL,                -- JSON: tabela, colunas, agg, filtros
+    plotly_config_json TEXT,                      -- overrides do tema/layout Plotly
+    created_by_ai INTEGER NOT NULL DEFAULT 0,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (board_id) REFERENCES raiox_boards(id) ON DELETE CASCADE
+);
+CREATE INDEX IF NOT EXISTS idx_raiox_charts_board ON raiox_charts(board_id);
+
+-- Relacionamentos entre tabelas: detectados (confidence>0) ou confirmados pelo usuário.
+CREATE TABLE IF NOT EXISTS raiox_relationships (
+    id TEXT PRIMARY KEY,
+    table_a TEXT NOT NULL,
+    column_a TEXT NOT NULL,
+    table_b TEXT NOT NULL,
+    column_b TEXT NOT NULL,
+    kind TEXT NOT NULL DEFAULT 'one_to_many',     -- '1:1'|'1:N'|'N:1'|'N:N'
+    confidence REAL DEFAULT 0.0,                  -- 0..1, da heurística
+    confirmed_by_user TEXT,                       -- NULL = sugestão; preenchido = aprovado
+    confirmed_at TIMESTAMP,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE (table_a, column_a, table_b, column_b)
+);
+CREATE INDEX IF NOT EXISTS idx_raiox_rel_a ON raiox_relationships(table_a);
+CREATE INDEX IF NOT EXISTS idx_raiox_rel_b ON raiox_relationships(table_b);
+
 -- Failsafe inbox
 CREATE TABLE IF NOT EXISTS failsafe_actions (
     id TEXT PRIMARY KEY,

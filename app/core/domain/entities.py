@@ -317,5 +317,56 @@ class TranscriptRecord:
     raw_json: str = ""
 
 
+# ===== Raio X Cliente =====
+
+
+@dataclass
+class RaioXBoard:
+    """Prancheta do Raio X Cliente — agrega charts em um grid 3xN."""
+    id: UUID
+    name: str
+    description: str = ""
+    owner_id: str | None = None
+    is_shared: bool = True
+    layout: dict[str, Any] = field(default_factory=dict)
+    filters: dict[str, Any] = field(default_factory=dict)
+    cover_emoji: str = "🩻"
+    created_at: datetime = field(default_factory=datetime.utcnow)
+    updated_at: datetime = field(default_factory=datetime.utcnow)
+
+
+@dataclass
+class RaioXChart:
+    """Tile do grid: tipo, posição, span e a query_spec que alimenta o gráfico."""
+    id: UUID
+    board_id: UUID
+    chart_type: str
+    query_spec: dict[str, Any]
+    title: str = ""
+    position_row: int = 0
+    position_col: int = 0
+    span_cols: int = 1
+    span_rows: int = 1
+    plotly_config: dict[str, Any] = field(default_factory=dict)
+    created_by_ai: bool = False
+    created_at: datetime = field(default_factory=datetime.utcnow)
+    updated_at: datetime = field(default_factory=datetime.utcnow)
+
+
+@dataclass
+class RaioXRelationship:
+    """Aresta entre duas tabelas. Confidence>0 e confirmed_by_user=NULL = sugestão IA."""
+    id: UUID
+    table_a: str
+    column_a: str
+    table_b: str
+    column_b: str
+    kind: str = "one_to_many"
+    confidence: float = 0.0
+    confirmed_by_user: str | None = None
+    confirmed_at: datetime | None = None
+    created_at: datetime = field(default_factory=datetime.utcnow)
+
+
 def new_uuid() -> UUID:
     return uuid4()

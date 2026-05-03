@@ -176,6 +176,7 @@ class SchemaService:
         aggregate: str = "sum",
         order_by: str = "label_asc",
         limit: int = 50,
+        filters: list[dict] | None = None,
     ) -> dict:
         """Devolve {labels, values, agg, total_rows} para alimentar Chart.js.
 
@@ -183,6 +184,9 @@ class SchemaService:
         - aggregate='sum'|'avg'|'min'|'max' agrega value_column GROUP BY label_column
         - aggregate='none' devolve linhas brutas (label, value) sem agregação
         - order_by: ordenação dos resultados
+        - filters: lista de {column, op, value} aplicados como WHERE adicional.
+                   ops aceitos: '='. Identificadores validados com _is_safe_ident,
+                   valores parametrizados (sqlite-binding) — sem risco de injection.
         """
         if not _is_safe_ident(table) or not _is_safe_ident(label_column):
             raise ValueError("identificador inválido")
@@ -216,24 +220,39 @@ class SchemaService:
         }
         order_clause = order_clauses.get(order_by, '"_label" ASC')
 
+        # Filtros adicionais (crossfilter / globais) — só op '=' nesta fase.
+        extra_where = ""
+        extra_params: list = []
+        if filters:
+            for f in filters:
+                col = f.get("column")
+                op = f.get("op", "=")
+                val = f.get("value")
+                if not col or not _is_safe_ident(col) or col in _HIDDEN_COLUMNS:
+                    raise ValueError(f"filtro com coluna inválida: {col}")
+                if op != "=":
+                    raise ValueError(f"operador de filtro não suportado: {op}")
+                extra_where += f' AND "{col}" = ?'
+                extra_params.append(val)
+
         async with connect() as db:
             if agg == "none":
                 sql = (
                     f'SELECT "{label_column}" AS "_label", {value_expr} AS "_value" '
                     f'FROM "{table}" '
-                    f'WHERE "{label_column}" IS NOT NULL '
+                    f'WHERE "{label_column}" IS NOT NULL{extra_where} '
                     f'ORDER BY {order_clause} LIMIT ?'
                 )
             else:
                 sql = (
                     f'SELECT "{label_column}" AS "_label", {value_expr} AS "_value" '
                     f'FROM "{table}" '
-                    f'WHERE "{label_column}" IS NOT NULL '
+                    f'WHERE "{label_column}" IS NOT NULL{extra_where} '
                     f'GROUP BY "{label_column}" '
                     f'ORDER BY {order_clause} LIMIT ?'
                 )
             try:
-                cur = await db.execute(sql, (limit,))
+                cur = await db.execute(sql, (*extra_params, limit))
                 rows = await cur.fetchall()
             except Exception as e:
                 raise ValueError(f"erro na consulta: {e}")
