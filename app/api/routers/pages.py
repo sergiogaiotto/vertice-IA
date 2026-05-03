@@ -234,6 +234,29 @@ async def radar_case_page(
     )
 
 
+# ---------- Raio X Cliente ----------
+
+@router.get("/raiox", response_class=HTMLResponse)
+async def raiox_page(
+    request: Request,
+    board: str | None = None,
+    user: User | None = Depends(current_user_optional),
+):
+    if not user:
+        return RedirectResponse("/login")
+    # Todos os usuários autenticados acessam (analista_n3 em modo leitura).
+    can_edit = any(r in {"admin", "supervisor"} for r in (user.roles or []))
+    return templates.TemplateResponse(
+        "raiox/index.html",
+        _ctx(
+            request, user,
+            active_module="raiox",
+            can_edit=can_edit,
+            initial_board_id=board,
+        ),
+    )
+
+
 # ---------- Churn ----------
 
 @router.get("/churn", response_class=HTMLResponse)

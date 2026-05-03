@@ -215,6 +215,33 @@ def get_schema_service():
     return SchemaService()
 
 
+# ---------- Raio X Cliente ----------
+
+def get_raiox_board_repo():
+    from app.adapters.db.repositories.raiox_repo import SqliteRaioXBoardRepository
+    return SqliteRaioXBoardRepository()
+
+
+def get_raiox_chart_repo():
+    from app.adapters.db.repositories.raiox_repo import SqliteRaioXChartRepository
+    return SqliteRaioXChartRepository()
+
+
+def get_raiox_rel_repo():
+    from app.adapters.db.repositories.raiox_repo import SqliteRaioXRelationshipRepository
+    return SqliteRaioXRelationshipRepository()
+
+
+def get_raiox_service(
+    boards=Depends(get_raiox_board_repo),
+    charts=Depends(get_raiox_chart_repo),
+    rels=Depends(get_raiox_rel_repo),
+    schema=Depends(get_schema_service),
+):
+    from app.core.services.raiox_service import RaioXService
+    return RaioXService(boards=boards, charts=charts, rels=rels, schema=schema)
+
+
 # ---------- auth helpers ----------
 
 async def current_user_optional(

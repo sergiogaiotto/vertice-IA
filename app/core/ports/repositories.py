@@ -17,6 +17,9 @@ from app.core.domain.entities import (
     FinOpsModelPolicy,
     Module,
     PromptBundle,
+    RaioXBoard,
+    RaioXChart,
+    RaioXRelationship,
     User,
 )
 
@@ -203,6 +206,51 @@ class FinOpsModelPolicyRepository(ABC):
 
     @abstractmethod
     async def delete(self, policy_id: UUID) -> bool: ...
+
+
+class RaioXBoardRepository(ABC):
+    @abstractmethod
+    async def list_visible(self, user_id: str | None) -> list[RaioXBoard]: ...
+
+    @abstractmethod
+    async def get(self, board_id: UUID) -> RaioXBoard | None: ...
+
+    @abstractmethod
+    async def save(self, board: RaioXBoard) -> RaioXBoard: ...
+
+    @abstractmethod
+    async def delete(self, board_id: UUID) -> bool: ...
+
+
+class RaioXChartRepository(ABC):
+    @abstractmethod
+    async def list_for_board(self, board_id: UUID) -> list[RaioXChart]: ...
+
+    @abstractmethod
+    async def get(self, chart_id: UUID) -> RaioXChart | None: ...
+
+    @abstractmethod
+    async def save(self, chart: RaioXChart) -> RaioXChart: ...
+
+    @abstractmethod
+    async def delete(self, chart_id: UUID) -> bool: ...
+
+
+class RaioXRelationshipRepository(ABC):
+    @abstractmethod
+    async def list_all(self) -> list[RaioXRelationship]: ...
+
+    @abstractmethod
+    async def list_for_table(self, table: str) -> list[RaioXRelationship]: ...
+
+    @abstractmethod
+    async def save(self, rel: RaioXRelationship) -> RaioXRelationship: ...
+
+    @abstractmethod
+    async def delete(self, rel_id: UUID) -> bool: ...
+
+    @abstractmethod
+    async def confirm(self, rel_id: UUID, username: str) -> bool: ...
 
 
 class FailsafeRepository(ABC):
