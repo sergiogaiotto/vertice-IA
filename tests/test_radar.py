@@ -251,6 +251,73 @@ async def test_card_visibility_repo_sync_removes_stale():
 
 
 @pytest.mark.asyncio
+async def test_card_visibility_repo_tracks_creator_and_previous_visibility():
+    """upsert snapshota o criador no INSERT; update_visibility captura o estado anterior."""
+    from app.adapters.db.repositories.radar_card_visibility_repo import (
+        SqliteRadarCardVisibilityRepository,
+    )
+    await init_db()
+    repo = SqliteRadarCardVisibilityRepository()
+    creator = "user-creator-1"
+    for uid in list((await repo.list_for_owner(creator)).keys()):
+        await repo.delete(uid)
+
+    await repo.sync_owner_cards(
+        owner_id=creator, owner_username="alice",
+        cards=[{"uid": "tracked-1", "module_name": "x", "visibility": "private"}],
+    )
+    rec = await repo.get("tracked-1")
+    assert rec["created_by_id"] == creator
+    assert rec["created_by_username"] == "alice"
+    assert rec["previous_visibility"] is None  # ainda não houve mudança
+
+    # transição para public_analista — captura previous_visibility
+    ok = await repo.update_visibility("tracked-1", "public_analista")
+    assert ok
+    rec = await repo.get("tracked-1")
+    assert rec["visibility"] == "public_analista"
+    assert rec["previous_visibility"] == "private"
+
+    # transição para public_lideranca — substitui previous
+    await repo.update_visibility("tracked-1", "public_lideranca")
+    rec = await repo.get("tracked-1")
+    assert rec["visibility"] == "public_lideranca"
+    assert rec["previous_visibility"] == "public_analista"
+
+    # mesmo valor — não polui previous_visibility
+    await repo.update_visibility("tracked-1", "public_lideranca")
+    rec = await repo.get("tracked-1")
+    assert rec["previous_visibility"] == "public_analista"
+
+
+@pytest.mark.asyncio
+async def test_card_visibility_repo_change_owner_preserves_creator():
+    """change_owner altera dono, mas mantém created_by_*."""
+    from app.adapters.db.repositories.radar_card_visibility_repo import (
+        SqliteRadarCardVisibilityRepository,
+    )
+    await init_db()
+    repo = SqliteRadarCardVisibilityRepository()
+    creator = "user-co-creator"
+    new_owner = "user-co-newowner"
+    for uid in list((await repo.list_for_owner(creator)).keys()):
+        await repo.delete(uid)
+
+    await repo.sync_owner_cards(
+        owner_id=creator, owner_username="bob",
+        cards=[{"uid": "transfer-1", "module_name": "y"}],
+    )
+    ok = await repo.change_owner("transfer-1", new_owner, "carol")
+    assert ok
+    rec = await repo.get("transfer-1")
+    assert rec["owner_id"] == new_owner
+    assert rec["owner_username"] == "carol"
+    # criador ORIGINAL preservado
+    assert rec["created_by_id"] == creator
+    assert rec["created_by_username"] == "bob"
+
+
+@pytest.mark.asyncio
 async def test_card_visibility_repo_preserves_visibility_on_resync():
     """Resync sem campo `visibility` no payload preserva o valor anterior."""
     from app.adapters.db.repositories.radar_card_visibility_repo import (

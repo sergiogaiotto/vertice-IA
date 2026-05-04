@@ -602,6 +602,7 @@ async def cards_em_tela_page(
     from app.adapters.db.repositories.radar_card_visibility_repo import (
         SqliteRadarCardVisibilityRepository,
     )
+    from app.adapters.db.repositories.user_repo import SqliteUserRepository
     repo = SqliteRadarCardVisibilityRepository()
     rows = await repo.list_all()
     # enriquece com `who_can_see` igual ao endpoint /api/radar/admin/cards
@@ -615,7 +616,17 @@ async def cards_em_tela_page(
             r["who_can_see"] = ["dono", "admin", "supervisor", "analista"]
         else:
             r["who_can_see"] = ["dono"]
+
+    # Lista de usuários ativos para o seletor de "alterar dono"
+    users_repo = SqliteUserRepository()
+    all_users = await users_repo.list_all()
+    user_options = sorted(
+        [{"id": str(u.id), "username": u.username, "full_name": getattr(u, "full_name", "") or ""}
+         for u in all_users if getattr(u, "is_active", True)],
+        key=lambda u: u["username"].lower(),
+    )
+
     return templates.TemplateResponse(
         "admin/cards_em_tela.html",
-        _ctx(request, user, active_module="cards_em_tela", cards=rows),
+        _ctx(request, user, active_module="cards_em_tela", cards=rows, user_options=user_options),
     )

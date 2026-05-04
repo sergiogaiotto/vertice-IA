@@ -8,12 +8,13 @@
     <div>
       <h1 class="text-lg font-medium">Cards em tela · Voz do Cliente</h1>
       <p class="text-xs text-neutral-500">
-        Listagem global de todos os cards adicionados em tela por todos os usuários — criador,
-        nível de visibilidade e quem pode ver. Filtro por dono, módulo ou estado.
+        Listagem global de todos os cards adicionados em tela por todos os usuários — criador, dono atual,
+        nível de visibilidade, estado anterior e quem pode ver. Ações administrativas: alterar visibilidade,
+        transferir dono e excluir card.
       </p>
     </div>
     <div class="flex items-center gap-2">
-      <input x-model="filter" type="text" placeholder="filtrar por dono, módulo ou estado…"
+      <input x-model="filter" type="text" placeholder="filtrar por dono, criador, módulo ou estado…"
              class="h-9 pl-3 pr-3 w-72 border border-neutral-200 rounded-md text-sm focus:border-brand-600 focus:ring-2 focus:ring-brand-50 outline-none" />
       <span class="text-[10px] text-neutral-400" x-text="`${filteredCards.length}/${cards.length}`"></span>
     </div>
@@ -47,11 +48,13 @@
           <tr>
             <th class="text-left px-3 py-2.5">Módulo</th>
             <th class="text-left px-3 py-2.5">Dono</th>
+            <th class="text-left px-3 py-2.5">Criador (login)</th>
             <th class="text-left px-3 py-2.5">Grupo</th>
             <th class="text-left px-3 py-2.5">Estado</th>
+            <th class="text-left px-3 py-2.5">Estado anterior</th>
             <th class="text-left px-3 py-2.5">Quem pode ver</th>
             <th class="text-right px-3 py-2.5">Atualizado em</th>
-            <th class="px-2 py-2.5"></th>
+            <th class="px-2 py-2.5 text-right">Ações</th>
           </tr>
         </thead>
         <tbody>
@@ -62,6 +65,12 @@
                 <div class="text-[10.5px] text-neutral-500 truncate max-w-md" x-text="c.module_description || ''"></div>
               </td>
               <td class="px-3 py-2 text-[12px]" x-text="c.owner_username || c.owner_id"></td>
+              <td class="px-3 py-2 text-[12px]">
+                <span x-text="c.created_by_username || c.created_by_id || '—'"></span>
+                <span x-show="c.created_by_id && c.owner_id && c.created_by_id !== c.owner_id"
+                      class="ml-1 text-[9px] px-1 py-0 bg-amber-50 text-amber-700 rounded"
+                      title="dono atual difere do criador original">transf.</span>
+              </td>
               <td class="px-3 py-2 text-[12px] text-neutral-600" x-text="c.group_title || '?'"></td>
               <td class="px-3 py-2">
                 <span class="text-[10.5px] px-1.5 py-0.5 rounded inline-flex items-center gap-1"
@@ -70,24 +79,54 @@
                   <span x-text="visibilityLabel(c.visibility)"></span>
                 </span>
               </td>
+              <td class="px-3 py-2">
+                <template x-if="c.previous_visibility">
+                  <span class="text-[10.5px] px-1.5 py-0.5 rounded inline-flex items-center gap-1 opacity-70"
+                        :class="visibilityClass(c.previous_visibility)"
+                        :title="`estado anterior: ${visibilityLabel(c.previous_visibility)}`">
+                    <span x-text="visibilityIcon(c.previous_visibility)"></span>
+                    <span x-text="visibilityLabel(c.previous_visibility)"></span>
+                  </span>
+                </template>
+                <template x-if="!c.previous_visibility">
+                  <span class="text-[10.5px] text-neutral-400 italic">—</span>
+                </template>
+              </td>
               <td class="px-3 py-2 text-[10.5px] text-neutral-600">
                 <span x-text="(c.who_can_see || []).join(', ')"></span>
               </td>
               <td class="px-3 py-2 text-right text-[10.5px] text-neutral-400 whitespace-nowrap"
                   x-text="c.updated_at ? new Date(c.updated_at).toLocaleString('pt-BR') : ''"></td>
-              <td class="px-2 py-2 text-right">
-                <select @change="changeVisibility(c.card_uid, $event.target.value); $event.target.value = ''"
-                        class="text-[10.5px] h-7 px-1.5 border border-neutral-200 rounded text-neutral-600">
-                  <option value="" disabled selected>alterar…</option>
-                  <option value="private">🔒 privado</option>
-                  <option value="public_lideranca">👔 público liderança</option>
-                  <option value="public_analista">👥 público analista</option>
-                </select>
+              <td class="px-2 py-2 text-right whitespace-nowrap">
+                <div class="inline-flex items-center gap-1">
+                  <!-- alterar visibilidade -->
+                  <select @change="changeVisibility(c.card_uid, $event.target.value); $event.target.value = ''"
+                          class="text-[10.5px] h-7 px-1.5 border border-neutral-200 rounded text-neutral-600">
+                    <option value="" disabled selected>visibilidade…</option>
+                    <option value="private">🔒 privado</option>
+                    <option value="public_lideranca">👔 público liderança</option>
+                    <option value="public_analista">👥 público analista</option>
+                  </select>
+                  <!-- alterar dono -->
+                  <select @change="changeOwner(c.card_uid, $event.target.value, c.owner_username); $event.target.value = ''"
+                          class="text-[10.5px] h-7 px-1.5 border border-neutral-200 rounded text-neutral-600 max-w-[140px]"
+                          :title="`dono atual: ${c.owner_username || c.owner_id}`">
+                    <option value="" disabled selected>👤 dono…</option>
+                    <template x-for="u in userOptions" :key="u.id">
+                      <option :value="u.username" :disabled="u.username === c.owner_username"
+                              x-text="u.full_name ? `${u.username} · ${u.full_name}` : u.username"></option>
+                    </template>
+                  </select>
+                  <!-- excluir -->
+                  <button @click="deleteCard(c.card_uid, c.module_name)"
+                          class="text-[10.5px] h-7 px-2 border border-risk-200 text-risk-600 hover:bg-risk-50 rounded"
+                          title="excluir card da tela do dono e da listagem global">🗑</button>
+                </div>
               </td>
             </tr>
           </template>
           <tr x-show="filteredCards.length === 0">
-            <td colspan="7" class="text-center py-8 text-neutral-400 italic text-xs">
+            <td colspan="9" class="text-center py-8 text-neutral-400 italic text-xs">
               <span x-show="cards.length === 0">Nenhum card em tela ainda.</span>
               <span x-show="cards.length > 0">Sem resultados para o filtro atual.</span>
             </td>
@@ -102,14 +141,17 @@
 <script>
 function cardsAdminApp() {
   const initialCards = {{ cards | tojson }};
+  const initialUsers = {{ user_options | tojson }};
   return {
     cards: initialCards,
+    userOptions: initialUsers,
     filter: '',
     get filteredCards() {
       const q = (this.filter || '').toLowerCase().trim();
       if (!q) return this.cards;
       return this.cards.filter(c =>
         (c.owner_username || '').toLowerCase().includes(q) ||
+        (c.created_by_username || '').toLowerCase().includes(q) ||
         (c.module_name || '').toLowerCase().includes(q) ||
         (c.module_description || '').toLowerCase().includes(q) ||
         (c.group_title || '').toLowerCase().includes(q) ||
@@ -155,9 +197,9 @@ function cardsAdminApp() {
           try { const j = await r.json(); if (j && j.detail) msg = j.detail; } catch (_) {}
           throw new Error(msg);
         }
-        // atualiza localmente
         const card = this.cards.find(c => c.card_uid === uid);
         if (card) {
+          card.previous_visibility = card.visibility;
           card.visibility = value;
           if (value === 'private')              card.who_can_see = ['dono'];
           else if (value === 'public_lideranca') card.who_can_see = ['dono', 'admin', 'supervisor'];
@@ -165,6 +207,50 @@ function cardsAdminApp() {
         }
       } catch (e) {
         alert('Falha ao alterar visibilidade: ' + (e.message || ''));
+      }
+    },
+    async changeOwner(uid, newUsername, currentOwner) {
+      if (!newUsername || newUsername === currentOwner) return;
+      if (!confirm(`Transferir o card de "${currentOwner}" para "${newUsername}"?\n\nO card sai da tela do dono atual e entra no primeiro grupo do novo dono. O criador original é preservado.`)) return;
+      try {
+        const r = await fetch(`/api/radar/admin/cards/${encodeURIComponent(uid)}/owner`, {
+          method: 'PUT',
+          credentials: 'same-origin',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ new_owner_username: newUsername }),
+        });
+        if (!r.ok) {
+          let msg = `HTTP ${r.status}`;
+          try { const j = await r.json(); if (j && j.detail) msg = j.detail; } catch (_) {}
+          throw new Error(msg);
+        }
+        const card = this.cards.find(c => c.card_uid === uid);
+        if (card) {
+          card.owner_username = newUsername;
+          // owner_id também muda no servidor; pegamos via reload se quiser precisão
+          const u = this.userOptions.find(x => x.username === newUsername);
+          if (u) card.owner_id = u.id;
+        }
+      } catch (e) {
+        alert('Falha ao transferir dono: ' + (e.message || ''));
+      }
+    },
+    async deleteCard(uid, name) {
+      if (!confirm(`Excluir o card "${name || uid}" da tela?\n\nEle será removido da tela do dono atual E da listagem global. Essa ação é definitiva.`)) return;
+      try {
+        const r = await fetch(`/api/radar/admin/cards/${encodeURIComponent(uid)}`, {
+          method: 'DELETE',
+          credentials: 'same-origin',
+        });
+        if (!r.ok) {
+          let msg = `HTTP ${r.status}`;
+          try { const j = await r.json(); if (j && j.detail) msg = j.detail; } catch (_) {}
+          throw new Error(msg);
+        }
+        const idx = this.cards.findIndex(c => c.card_uid === uid);
+        if (idx >= 0) this.cards.splice(idx, 1);
+      } catch (e) {
+        alert('Falha ao excluir card: ' + (e.message || ''));
       }
     },
   };

@@ -346,6 +346,160 @@ async def admin_list_all_cards(
     return {"items": rows, "count": len(rows)}
 
 
+# ============================================================
+# Admin actions: deletar card e transferir dono
+# ============================================================
+
+async def _remove_card_from_user_state(state_repo, user_id: str, card_uid: str) -> bool:
+    """Remove um card pelo uid dentro do state.json do usuário. Retorna True
+    se algo foi removido (e re-grava). Idempotente: se não achar, retorna False.
+    """
+    import json as _json
+    record = await state_repo.get(user_id)
+    if not record:
+        return False
+    try:
+        state = _json.loads(record["state_json"] or "[]")
+    except Exception:
+        return False
+    if not isinstance(state, list):
+        return False
+    removed = False
+    for group in state:
+        if not isinstance(group, dict):
+            continue
+        cards = group.get("cards") or []
+        new_cards = [c for c in cards if not (isinstance(c, dict) and c.get("uid") == card_uid)]
+        if len(new_cards) != len(cards):
+            group["cards"] = new_cards
+            removed = True
+    if not removed:
+        return False
+    new_json = _json.dumps(state, ensure_ascii=False)
+    await state_repo.put(user_id=user_id, state_json=new_json, expected_version=None)
+    return True
+
+
+async def _add_card_to_user_state(state_repo, user_id: str, card_dict: dict) -> bool:
+    """Adiciona um card no PRIMEIRO grupo do state.json do usuário. Se ainda
+    não tem groups, cria um grupo "Análise principal". Retorna True se gravou.
+    """
+    import json as _json
+    import uuid as _uuid
+    record = await state_repo.get(user_id)
+    state = []
+    if record:
+        try:
+            state = _json.loads(record["state_json"] or "[]")
+            if not isinstance(state, list):
+                state = []
+        except Exception:
+            state = []
+    if not state:
+        state = [{"id": str(_uuid.uuid4()), "title": "Análise principal", "cards": []}]
+    # Primeiro grupo recebe o card; dedup por uid
+    target = state[0]
+    if not isinstance(target, dict):
+        target = {"id": str(_uuid.uuid4()), "title": "Análise principal", "cards": []}
+        state[0] = target
+    target.setdefault("cards", [])
+    uid = card_dict.get("uid")
+    target["cards"] = [c for c in target["cards"] if not (isinstance(c, dict) and c.get("uid") == uid)]
+    target["cards"].append(card_dict)
+    new_json = _json.dumps(state, ensure_ascii=False)
+    await state_repo.put(user_id=user_id, state_json=new_json, expected_version=None)
+    return True
+
+
+@router.delete("/admin/cards/{card_uid}")
+async def admin_delete_card(
+    card_uid: str,
+    state_repo=Depends(get_radar_state_repo),
+    visibility_repo=Depends(get_radar_card_visibility_repo),
+    user: User = Depends(require_user),
+):
+    """Remove um card da tela do dono e da tabela de visibility.
+    Apenas admin/supervisor/root.
+    """
+    if not _is_lideranca(user):
+        raise HTTPException(403, "apenas admin/supervisor")
+    record = await visibility_repo.get(card_uid)
+    if not record:
+        raise HTTPException(404, "card não encontrado")
+    owner_id = record["owner_id"]
+    # Remove do state do dono (best-effort — se já tinha sumido, ainda assim
+    # apaga a linha de visibility para limpar o sidecar).
+    try:
+        await _remove_card_from_user_state(state_repo, owner_id, card_uid)
+    except Exception:
+        pass
+    await visibility_repo.delete(card_uid)
+    return {"ok": True, "card_uid": card_uid}
+
+
+class ChangeOwnerRequest(BaseModel):
+    new_owner_username: str
+
+
+@router.put("/admin/cards/{card_uid}/owner")
+async def admin_change_card_owner(
+    card_uid: str,
+    body: ChangeOwnerRequest,
+    state_repo=Depends(get_radar_state_repo),
+    visibility_repo=Depends(get_radar_card_visibility_repo),
+    user: User = Depends(require_user),
+):
+    """Transfere o dono de um card. O card é movido do state do dono atual
+    para o primeiro grupo do state do novo dono (cria grupo se não existir).
+    O criador (created_by_*) é preservado. Apenas admin/supervisor/root.
+    """
+    if not _is_lideranca(user):
+        raise HTTPException(403, "apenas admin/supervisor")
+    new_username = (body.new_owner_username or "").strip()
+    if not new_username:
+        raise HTTPException(400, "new_owner_username obrigatório")
+
+    record = await visibility_repo.get(card_uid)
+    if not record:
+        raise HTTPException(404, "card não encontrado")
+
+    # resolve novo dono pelo username
+    from app.adapters.db.repositories.user_repo import SqliteUserRepository
+    users_repo = SqliteUserRepository()
+    new_owner = await users_repo.get_by_username(new_username)
+    if not new_owner:
+        raise HTTPException(404, f"usuário '{new_username}' não encontrado")
+    if str(new_owner.id) == record["owner_id"]:
+        return {"ok": True, "no_op": True, "card_uid": card_uid}
+
+    card_dict = record.get("card_json") or {"uid": card_uid}
+    if "uid" not in card_dict:
+        card_dict["uid"] = card_uid
+
+    # 1) remove do state do dono atual
+    try:
+        await _remove_card_from_user_state(state_repo, record["owner_id"], card_uid)
+    except Exception as e:
+        raise HTTPException(500, f"falha ao remover do dono atual: {e}")
+    # 2) adiciona ao state do novo dono
+    try:
+        await _add_card_to_user_state(state_repo, str(new_owner.id), card_dict)
+    except Exception as e:
+        raise HTTPException(500, f"falha ao adicionar ao novo dono: {e}")
+    # 3) atualiza visibility (preserva created_by_*)
+    await visibility_repo.change_owner(
+        card_uid=card_uid,
+        new_owner_id=str(new_owner.id),
+        new_owner_username=new_owner.username,
+    )
+    return {
+        "ok": True,
+        "card_uid": card_uid,
+        "new_owner_id": str(new_owner.id),
+        "new_owner_username": new_owner.username,
+    }
+
+
 @router.get("/cases")
 async def list_bko_cases(
     bko=Depends(get_bko_service),

@@ -83,6 +83,28 @@ async def init_db() -> None:
             await db.execute("ALTER TABLE raiox_boards ADD COLUMN allowed_departments TEXT")
         await db.commit()
 
+        # ---- migração idempotente: radar_card_visibility (criador + estado anterior) ----
+        # Adiciona created_by_id/created_by_username (criador original, não muda em
+        # transferências) e previous_visibility (último estado antes da mudança atual).
+        # Para registros existentes, popula created_by_* a partir do owner atual —
+        # melhor aproximação possível pois antes não havia distinção dono/criador.
+        cur = await db.execute("PRAGMA table_info(radar_card_visibility)")
+        rcv_cols = {row[1] for row in await cur.fetchall()}
+        if rcv_cols:
+            if "created_by_id" not in rcv_cols:
+                await db.execute("ALTER TABLE radar_card_visibility ADD COLUMN created_by_id TEXT")
+                await db.execute(
+                    "UPDATE radar_card_visibility SET created_by_id = owner_id WHERE created_by_id IS NULL"
+                )
+            if "created_by_username" not in rcv_cols:
+                await db.execute("ALTER TABLE radar_card_visibility ADD COLUMN created_by_username TEXT")
+                await db.execute(
+                    "UPDATE radar_card_visibility SET created_by_username = owner_username WHERE created_by_username IS NULL"
+                )
+            if "previous_visibility" not in rcv_cols:
+                await db.execute("ALTER TABLE radar_card_visibility ADD COLUMN previous_visibility TEXT")
+            await db.commit()
+
         # ---- migração idempotente: dimensões finops modernas no ledger ----
         # Cada dimensão é nullable: gravações antigas continuam válidas. A UI
         # do Cockpit FinOps trata NULL como "sem rateio" (bucket 'outros').
