@@ -81,6 +81,7 @@ async def test_radar_state_repo_roundtrip():
     await init_db()
     repo = SqliteRadarStateRepository()
     user_id = "user-test-state-1"
+    await repo.delete(user_id)  # idempotente — limpa resíduo de runs anteriores
 
     # estado inicial: nada
     assert await repo.get(user_id) is None
@@ -109,6 +110,7 @@ async def test_radar_state_repo_version_conflict():
     await init_db()
     repo = SqliteRadarStateRepository()
     user_id = "user-test-state-2"
+    await repo.delete(user_id)  # idempotente — limpa resíduo de runs anteriores
 
     await repo.put(user_id, '[{"a":1}]')  # version 1
     await repo.put(user_id, '[{"a":2}]')  # version 2
