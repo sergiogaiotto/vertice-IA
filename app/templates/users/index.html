@@ -1,0 +1,335 @@
+{% extends "base.html" %}
+{% block title %}Usuários — Vértice{% endblock %}
+
+{% block content %}
+<div x-data="usersApp()" x-init="init()" class="px-6 py-5 pb-12 max-w-full">
+
+  <!-- Datalist único reutilizado pelos inputs de departamento (Novo e Editar) -->
+  <datalist id="users-departments-list">
+    <template x-for="d in availableDepartments" :key="d">
+      <option :value="d"></option>
+    </template>
+  </datalist>
+
+  <div class="flex items-center justify-between mb-5">
+    <div>
+      <h1 class="text-lg font-medium">Usuários</h1>
+      <p class="text-xs text-neutral-500">Gerencie acessos, papéis e estado dos usuários da plataforma.</p>
+    </div>
+
+    <div class="flex items-center gap-2">
+      <div class="relative">
+        <input x-model="filter" type="text" placeholder="filtrar por nome ou role…"
+               class="h-9 pl-8 pr-3 w-64 border border-neutral-200 rounded-md text-sm focus:border-brand-600 focus:ring-2 focus:ring-brand-50 outline-none" />
+        <svg class="absolute left-2.5 top-2.5 text-neutral-400" width="14" height="14" viewBox="0 0 12 12" fill="none">
+          <circle cx="5" cy="5" r="3.5" stroke="currentColor" stroke-width="1.2"/><path d="M7.5 7.5 L10 10" stroke="currentColor" stroke-width="1.2" stroke-linecap="round"/>
+        </svg>
+      </div>
+      <button @click="openNew = true" class="text-xs h-9 px-3 bg-brand-600 hover:bg-brand-800 text-white rounded-md font-medium flex items-center gap-1.5">
+        <span class="text-base leading-none">+</span> novo usuário
+      </button>
+    </div>
+  </div>
+
+  <!-- Stats compactos -->
+  <div class="grid grid-cols-4 gap-3 mb-5">
+    <div class="bg-white border border-neutral-200 rounded-lg p-3">
+      <div class="text-[10px] text-neutral-500 uppercase tracking-wider">total</div>
+      <div class="text-xl font-medium" x-text="users.length"></div>
+    </div>
+    <div class="bg-white border border-neutral-200 rounded-lg p-3">
+      <div class="text-[10px] text-neutral-500 uppercase tracking-wider">ativos</div>
+      <div class="text-xl font-medium text-brand-600" x-text="users.filter(u => u.is_active).length"></div>
+    </div>
+    <div class="bg-white border border-neutral-200 rounded-lg p-3">
+      <div class="text-[10px] text-neutral-500 uppercase tracking-wider">admins</div>
+      <div class="text-xl font-medium text-ai-600" x-text="users.filter(u => u.roles.includes('admin')).length"></div>
+    </div>
+    <div class="bg-white border border-neutral-200 rounded-lg p-3">
+      <div class="text-[10px] text-neutral-500 uppercase tracking-wider">inativos</div>
+      <div class="text-xl font-medium text-neutral-400" x-text="users.filter(u => !u.is_active).length"></div>
+    </div>
+  </div>
+
+  <!-- Lista de usuários -->
+  <div class="bg-white border border-neutral-200 rounded-lg divide-y divide-neutral-100">
+    <template x-for="u in filtered()" :key="u.id">
+      <div class="flex items-center gap-3 px-4 py-3 group hover:bg-neutral-50 transition" :class="!u.is_active && 'opacity-60'">
+
+        <div class="w-9 h-9 rounded-full text-white text-xs font-medium flex items-center justify-center shrink-0"
+             :style="`background:${u.avatar_color}`" x-text="u.initials"></div>
+
+        <div class="flex-1 min-w-0">
+          <div class="flex items-center gap-2">
+            <span class="text-sm font-medium" x-text="u.username"></span>
+            <span x-show="!u.is_active" class="text-[10px] px-1.5 py-0.5 bg-neutral-100 text-neutral-500 rounded">inativo</span>
+          </div>
+          <div class="flex flex-wrap gap-1 mt-0.5">
+            <template x-for="r in u.roles" :key="r">
+              <span class="text-[10px] px-1.5 py-0.5 rounded"
+                    :class="r === 'admin' ? 'bg-ai-50 text-ai-800' : 'bg-neutral-100 text-neutral-600'"
+                    x-text="r"></span>
+            </template>
+            <span x-show="u.roles.length === 0" class="text-[10px] text-neutral-400 italic">sem papéis</span>
+          </div>
+        </div>
+
+        <!-- Ações -->
+        <div class="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition">
+          <button @click="editUser(u)" class="text-[11px] px-2 py-1 hover:bg-neutral-100 rounded text-neutral-600">editar</button>
+          <button @click="resetPassword(u)" class="text-[11px] px-2 py-1 hover:bg-neutral-100 rounded text-neutral-600">reset senha</button>
+          <button @click="toggleActive(u)" class="text-[11px] px-2 py-1 hover:bg-neutral-100 rounded"
+                  :class="u.is_active ? 'text-neutral-600' : 'text-brand-600'">
+            <span x-text="u.is_active ? 'desativar' : 'ativar'"></span>
+          </button>
+          <button @click="deleteUser(u)" class="text-[11px] px-2 py-1 hover:bg-risk-50 text-risk-600 rounded">excluir</button>
+        </div>
+      </div>
+    </template>
+
+    <div x-show="filtered().length === 0" class="px-6 py-10 text-center text-sm text-neutral-400">
+      Nenhum usuário corresponde ao filtro.
+    </div>
+  </div>
+
+  <!-- Modal: novo usuário -->
+  <div x-show="openNew" x-cloak class="fixed inset-0 bg-black/40 flex items-center justify-center z-40">
+    <div @click.outside="openNew = false" class="bg-white rounded-xl p-6 w-[440px] max-w-[92vw]">
+      <h3 class="text-base font-medium mb-1">Novo usuário</h3>
+      <p class="text-xs text-neutral-500 mb-4">Defina credenciais iniciais e papéis. A senha pode ser trocada depois.</p>
+
+      <div class="space-y-3">
+        <div>
+          <label class="block text-xs text-neutral-500 mb-1">usuário</label>
+          <input x-model="form.username" class="w-full h-9 px-3 border border-neutral-200 rounded-md text-sm" />
+        </div>
+        <div>
+          <label class="block text-xs text-neutral-500 mb-1">senha</label>
+          <input x-model="form.password" type="password" class="w-full h-9 px-3 border border-neutral-200 rounded-md text-sm" />
+        </div>
+        <div class="grid grid-cols-2 gap-3">
+          <div>
+            <label class="block text-xs text-neutral-500 mb-1">nome completo</label>
+            <input x-model="form.full_name" class="w-full h-9 px-3 border border-neutral-200 rounded-md text-sm" />
+          </div>
+          <div>
+            <label class="block text-xs text-neutral-500 mb-1">cargo</label>
+            <input x-model="form.title" class="w-full h-9 px-3 border border-neutral-200 rounded-md text-sm" />
+          </div>
+          <div>
+            <label class="block text-xs text-neutral-500 mb-1">e-mail</label>
+            <input x-model="form.email" class="w-full h-9 px-3 border border-neutral-200 rounded-md text-sm" />
+          </div>
+          <div>
+            <label class="block text-xs text-neutral-500 mb-1">telefone</label>
+            <input x-model="form.phone" class="w-full h-9 px-3 border border-neutral-200 rounded-md text-sm" />
+          </div>
+        </div>
+        <div>
+          <label class="block text-xs text-neutral-500 mb-1">departamento</label>
+          <input x-model="form.department" list="users-departments-list"
+                 placeholder="escolha um existente ou digite um novo"
+                 class="w-full h-9 px-3 border border-neutral-200 rounded-md text-sm" />
+          <p class="text-[10px] text-neutral-400 mt-0.5"
+             x-text="availableDepartments.length ? `${availableDepartments.length} departamento(s) cadastrado(s) — texto livre permitido` : 'nenhum cadastrado ainda — digite o primeiro'"></p>
+        </div>
+
+        <div>
+          <label class="block text-xs text-neutral-500 mb-1">papéis</label>
+          <div class="flex flex-wrap gap-1.5">
+            <template x-for="r in availableRoles" :key="r">
+              <button type="button" @click="toggleRoleForm(r)"
+                      class="text-[11px] px-2.5 py-1 rounded-full border transition"
+                      :class="form.roles.includes(r) ? 'bg-brand-600 text-white border-brand-600' : 'border-neutral-200 text-neutral-600 hover:bg-neutral-50'"
+                      x-text="r"></button>
+            </template>
+          </div>
+        </div>
+      </div>
+
+      <div class="flex justify-end gap-2 pt-4 mt-4 border-t border-neutral-100">
+        <button @click="openNew = false" class="text-sm px-3 py-1.5 text-neutral-600 hover:bg-neutral-100 rounded-md">cancelar</button>
+        <button @click="createUser()" class="text-sm px-3 py-1.5 bg-brand-600 hover:bg-brand-800 text-white rounded-md font-medium">criar</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Modal: editar — todos os campos do Novo (exceto senha, via reset senha) -->
+  <div x-show="editing" x-cloak class="fixed inset-0 bg-black/40 flex items-center justify-center z-40">
+    <div @click.outside="editing = null" class="bg-white rounded-xl p-6 w-[440px] max-w-[92vw]">
+      <div class="flex items-center gap-3 mb-4">
+        <div class="w-10 h-10 rounded-full text-white text-sm font-medium flex items-center justify-center"
+             :style="editing && `background:${editing.avatar_color}`" x-text="editing && editing.initials"></div>
+        <div>
+          <h3 class="text-base font-medium" x-text="editing && editing.username"></h3>
+          <p class="text-xs text-neutral-500">Edite os dados. Senha tem fluxo separado (botão "reset senha" na lista).</p>
+        </div>
+      </div>
+
+      <div class="space-y-3" x-show="editing">
+        <div class="grid grid-cols-2 gap-3">
+          <div>
+            <label class="block text-xs text-neutral-500 mb-1">nome completo</label>
+            <input x-model="editing.full_name" class="w-full h-9 px-3 border border-neutral-200 rounded-md text-sm" />
+          </div>
+          <div>
+            <label class="block text-xs text-neutral-500 mb-1">cargo</label>
+            <input x-model="editing.title" class="w-full h-9 px-3 border border-neutral-200 rounded-md text-sm" />
+          </div>
+          <div>
+            <label class="block text-xs text-neutral-500 mb-1">e-mail</label>
+            <input x-model="editing.email" class="w-full h-9 px-3 border border-neutral-200 rounded-md text-sm" />
+          </div>
+          <div>
+            <label class="block text-xs text-neutral-500 mb-1">telefone</label>
+            <input x-model="editing.phone" class="w-full h-9 px-3 border border-neutral-200 rounded-md text-sm" />
+          </div>
+        </div>
+        <div>
+          <label class="block text-xs text-neutral-500 mb-1">departamento</label>
+          <input x-model="editing.department" list="users-departments-list"
+                 placeholder="escolha um existente ou digite um novo"
+                 class="w-full h-9 px-3 border border-neutral-200 rounded-md text-sm" />
+          <p class="text-[10px] text-neutral-400 mt-0.5"
+             x-text="availableDepartments.length ? `${availableDepartments.length} departamento(s) cadastrado(s) — texto livre permitido` : 'nenhum cadastrado ainda — digite o primeiro'"></p>
+        </div>
+
+        <div>
+          <label class="block text-xs text-neutral-500 mb-1.5">papéis</label>
+          <div class="flex flex-wrap gap-1.5">
+            <template x-for="r in availableRoles" :key="r">
+              <button type="button" @click="toggleRoleEdit(r)"
+                      class="text-[11px] px-2.5 py-1 rounded-full border transition"
+                      :class="editing && editing.roles.includes(r) ? 'bg-brand-600 text-white border-brand-600' : 'border-neutral-200 text-neutral-600 hover:bg-neutral-50'"
+                      x-text="r"></button>
+            </template>
+          </div>
+        </div>
+      </div>
+
+      <div class="flex justify-end gap-2 pt-4 mt-4 border-t border-neutral-100">
+        <button @click="editing = null" class="text-sm px-3 py-1.5 text-neutral-600 hover:bg-neutral-100 rounded-md">fechar</button>
+        <button @click="saveEdit()" class="text-sm px-3 py-1.5 bg-brand-600 hover:bg-brand-800 text-white rounded-md font-medium">salvar</button>
+      </div>
+    </div>
+  </div>
+
+</div>
+
+<script>
+function usersApp() {
+  return {
+    users: {{ users | tojson }}.map(u => ({
+      ...u,
+      initials: (u.username[0] + (u.username[1] || u.username[0])).toUpperCase(),
+      avatar_color: ['#DC2626','#534AB7','#185FA5','#993C1D','#993556','#854F0B','#3B6D11'][
+        Array.from(u.username).reduce((a,c)=>a+c.charCodeAt(0),0) % 7
+      ]
+    })),
+    availableRoles: ['root', 'admin', 'supervisor', 'analista_n3', 'finops'],
+    availableDepartments: [],
+    filter: '',
+    openNew: false,
+    editing: null,
+    form: { username: '', password: '', full_name: '', email: '', phone: '', department: '', title: '', roles: ['analista_n3'] },
+
+    async init() {
+      try {
+        this.availableDepartments = await window.api('GET', '/api/users/departments');
+      } catch (e) {
+        this.availableDepartments = [];
+      }
+    },
+
+    filtered() {
+      const q = this.filter.toLowerCase();
+      if (!q) return this.users;
+      return this.users.filter(u =>
+        u.username.toLowerCase().includes(q) ||
+        u.roles.some(r => r.toLowerCase().includes(q))
+      );
+    },
+
+    toggleRoleForm(r) {
+      const i = this.form.roles.indexOf(r);
+      if (i >= 0) this.form.roles.splice(i, 1);
+      else this.form.roles.push(r);
+    },
+
+    toggleRoleEdit(r) {
+      if (!this.editing) return;
+      const i = this.editing.roles.indexOf(r);
+      if (i >= 0) this.editing.roles.splice(i, 1);
+      else this.editing.roles.push(r);
+    },
+
+    async createUser() {
+      try {
+        const created = await window.api('POST', '/api/users/', this.form);
+        this.users.push(created);
+        toast(`Usuário ${created.username} criado.`, 'success');
+        this.openNew = false;
+        // Se digitou departamento novo, refresca o datalist
+        if (this.form.department && !this.availableDepartments.includes(this.form.department)) {
+          this.availableDepartments = [...this.availableDepartments, this.form.department].sort();
+        }
+        this.form = { username: '', password: '', full_name: '', email: '', phone: '', department: '', title: '', roles: ['analista_n3'] };
+      } catch (e) { toast(e.message, 'error'); }
+    },
+
+    editUser(u) { this.editing = JSON.parse(JSON.stringify(u)); },
+
+    async saveEdit() {
+      if (!this.editing) return;
+      try {
+        // 1) profile (full_name, email, phone, department, title)
+        await window.api('PATCH', `/api/users/${this.editing.id}/profile`, {
+          full_name: this.editing.full_name || '',
+          email: this.editing.email || '',
+          phone: this.editing.phone || '',
+          department: this.editing.department || '',
+          title: this.editing.title || '',
+        });
+        // 2) roles (chamada separada — endpoint dedicado preserva a auditoria)
+        const updated = await window.api('PATCH', `/api/users/${this.editing.id}/roles`, { roles: this.editing.roles });
+        // Atualiza datalist se editou para um departamento novo
+        if (this.editing.department && !this.availableDepartments.includes(this.editing.department)) {
+          this.availableDepartments = [...this.availableDepartments, this.editing.department].sort();
+        }
+        const idx = this.users.findIndex(x => x.id === updated.id);
+        if (idx >= 0) this.users[idx] = { ...updated, initials: this.users[idx].initials, avatar_color: this.users[idx].avatar_color };
+        toast('Usuário atualizado.', 'success');
+        this.editing = null;
+      } catch (e) { toast(e.message, 'error'); }
+    },
+
+    async toggleActive(u) {
+      try {
+        const updated = await window.api('PATCH', `/api/users/${u.id}/active`, { active: !u.is_active });
+        const idx = this.users.findIndex(x => x.id === u.id);
+        if (idx >= 0) this.users[idx] = updated;
+        toast(updated.is_active ? 'Usuário ativado.' : 'Usuário desativado.', 'success');
+      } catch (e) { toast(e.message, 'error'); }
+    },
+
+    async resetPassword(u) {
+      if (!confirm(`Gerar nova senha temporária para ${u.username}?`)) return;
+      try {
+        const r = await window.api('POST', `/api/users/${u.id}/reset-password`);
+        prompt(`Nova senha temporária para ${u.username} (copie agora — não será mostrada de novo):`, r.temporary_password);
+        toast('Senha resetada.', 'success');
+      } catch (e) { toast(e.message, 'error'); }
+    },
+
+    async deleteUser(u) {
+      if (!confirm(`Excluir definitivamente o usuário ${u.username}?`)) return;
+      try {
+        await window.api('DELETE', `/api/users/${u.id}`);
+        this.users = this.users.filter(x => x.id !== u.id);
+        toast('Usuário excluído.', 'success');
+      } catch (e) { toast(e.message, 'error'); }
+    },
+  };
+}
+</script>
+{% endblock %}

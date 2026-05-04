@@ -1,0 +1,514 @@
+{% extends "base.html" %}
+{% block title %}Rastreabilidade — Vértice{% endblock %}
+
+{% block content %}
+<div x-data="auditApp()" x-init="init()" class="px-6 py-5 pb-12 max-w-full">
+
+  <!-- Header -->
+  <div class="flex items-end justify-between mb-5 flex-wrap gap-3">
+    <div>
+      <h1 class="text-lg font-medium">Rastreabilidade</h1>
+      <p class="text-xs text-neutral-500">Histórico completo de toda ação executada na plataforma — chamadas HTTP, execuções de módulo, uploads, configurações.</p>
+    </div>
+    <button @click="refresh()" :disabled="loading"
+            class="text-xs px-3 py-1.5 border border-neutral-200 rounded-md hover:bg-neutral-50 flex items-center gap-2">
+      <svg width="11" height="11" viewBox="0 0 24 24" fill="none"
+           :class="loading && 'animate-spin'">
+        <path d="M3 12 A9 9 0 1 0 6 5.3 M3 4 V10 H9" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+      </svg>
+      atualizar
+    </button>
+  </div>
+
+  <!-- KPIs (drill-down: clicar aplica/remove o filtro correspondente) -->
+  <div class="grid grid-cols-2 md:grid-cols-4 gap-3 mb-5">
+    <!-- EVENTOS TOTAIS — clicar limpa todos os filtros -->
+    <button @click="resetFilters()" :title="hasAnyFilter() ? 'limpar filtros e mostrar tudo' : 'já mostrando todos'"
+            class="bg-white border border-neutral-200 rounded-lg p-3 text-left transition hover:shadow-sm hover:border-neutral-300 group"
+            :class="!hasAnyFilter() && 'ring-2 ring-neutral-300/60 ring-offset-1'">
+      <div class="text-[10px] uppercase tracking-wider text-neutral-500 flex items-center justify-between">
+        <span>eventos totais</span>
+        <span class="text-neutral-300 group-hover:text-neutral-500 text-[10px]" x-text="hasAnyFilter() ? '↻ limpar' : '✓'"></span>
+      </div>
+      <div class="text-xl font-medium" x-text="(stats.total || 0).toLocaleString('pt-BR')"></div>
+    </button>
+
+    <!-- NA ÚLTIMA HORA — toggle do filtro since=1h -->
+    <button @click="toggleSince('1h')" :title="filter.since === '1h' ? 'remover filtro de tempo' : 'filtrar última hora'"
+            class="bg-white border border-neutral-200 rounded-lg p-3 text-left transition hover:shadow-sm hover:border-brand-300 group"
+            :class="filter.since === '1h' && 'ring-2 ring-brand-500 ring-offset-1 border-brand-500'">
+      <div class="text-[10px] uppercase tracking-wider text-neutral-500 flex items-center justify-between">
+        <span>na última hora</span>
+        <span class="text-brand-300 group-hover:text-brand-700 text-[10px]" x-text="filter.since === '1h' ? '✓ ativo' : '↗ filtrar'"></span>
+      </div>
+      <div class="text-xl font-medium text-brand-700" x-text="(stats.last_hour || 0).toLocaleString('pt-BR')"></div>
+    </button>
+
+    <!-- ERROS — toggle de status_min=400 -->
+    <button @click="toggleErrors()" :title="onlyErrors ? 'remover filtro de erros' : 'filtrar apenas erros (4xx/5xx)'"
+            class="bg-white border rounded-lg p-3 text-left transition hover:shadow-sm group"
+            :class="onlyErrors ? 'ring-2 ring-risk-500 ring-offset-1 border-risk-500' : ((stats.errors || 0) > 0 ? 'border-risk-400/40 hover:border-risk-500' : 'border-neutral-200 hover:border-neutral-300')">
+      <div class="text-[10px] uppercase tracking-wider flex items-center justify-between"
+           :class="(stats.errors || 0) > 0 ? 'text-risk-700' : 'text-neutral-500'">
+        <span>erros</span>
+        <span class="text-risk-300 group-hover:text-risk-700 text-[10px]" x-text="onlyErrors ? '✓ ativo' : '↗ filtrar'"></span>
+      </div>
+      <div class="text-xl font-medium"
+           :class="(stats.errors || 0) > 0 ? 'text-risk-700' : 'text-neutral-800'"
+           x-text="(stats.errors || 0).toLocaleString('pt-BR')"></div>
+    </button>
+
+    <!-- FILTRADOS AGORA — clicar abre seletor de janela temporal -->
+    <div class="bg-white border border-neutral-200 rounded-lg p-3 relative" x-data="{ open: false }" @click.outside="open = false">
+      <button @click="open = !open" :title="'mudar janela temporal'"
+              class="w-full text-left">
+        <div class="text-[10px] uppercase tracking-wider text-neutral-500 flex items-center justify-between">
+          <span>filtrados agora</span>
+          <span class="text-ai-300 hover:text-ai-700 text-[10px]" x-text="filter.since ? '⏱ ' + filter.since : '⏱ janela'"></span>
+        </div>
+        <div class="text-xl font-medium text-ai-700" x-text="(total || 0).toLocaleString('pt-BR')"></div>
+      </button>
+      <!-- popover de janelas -->
+      <div x-show="open" x-cloak x-transition.opacity
+           class="absolute right-2 top-full mt-1 z-30 bg-white border border-neutral-200 rounded-md shadow-lg p-1.5 w-44">
+        <div class="text-[9px] uppercase tracking-wider text-neutral-400 px-1.5 pt-1">janela temporal</div>
+        <template x-for="opt in [{v:'',label:'sem filtro'},{v:'1h',label:'última hora'},{v:'6h',label:'últimas 6 h'},{v:'24h',label:'24 horas'},{v:'7d',label:'7 dias'},{v:'30d',label:'30 dias'}]" :key="opt.v">
+          <button @click="setSince(opt.v); open = false"
+                  class="w-full text-left text-[11px] px-2 py-1 rounded hover:bg-neutral-100 flex items-center justify-between"
+                  :class="(filter.since || '') === opt.v && 'bg-ai-50 text-ai-800 font-medium'">
+            <span x-text="opt.label"></span>
+            <span x-show="(filter.since || '') === opt.v" class="text-ai-700">✓</span>
+          </button>
+        </template>
+      </div>
+    </div>
+  </div>
+
+  <!-- Heatmap horizontal de categorias + features -->
+  <div class="grid grid-cols-1 md:grid-cols-2 gap-3 mb-5">
+    <div class="bg-white border border-neutral-200 rounded-lg p-3">
+      <div class="text-[10px] uppercase tracking-wider text-neutral-500 mb-2">categorias</div>
+      <div class="flex flex-wrap gap-1">
+        <template x-for="c in (stats.by_category || [])" :key="c.category">
+          <button @click="filter.category = filter.category === c.category ? '' : c.category; resetPage(); refresh()"
+                  class="text-[10px] px-2 py-1 rounded transition flex items-center gap-1.5"
+                  :class="filter.category === c.category ? 'bg-brand-600 text-white' : 'bg-neutral-100 hover:bg-neutral-200 text-neutral-700'">
+            <span x-text="c.category"></span>
+            <span class="opacity-70" x-text="c.count.toLocaleString('pt-BR')"></span>
+          </button>
+        </template>
+        <span x-show="(stats.by_category || []).length === 0" class="text-[10px] text-neutral-400 italic">sem dados ainda</span>
+      </div>
+    </div>
+    <div class="bg-white border border-neutral-200 rounded-lg p-3">
+      <div class="text-[10px] uppercase tracking-wider text-neutral-500 mb-2">funcionalidades</div>
+      <div class="flex flex-wrap gap-1">
+        <template x-for="f in (stats.by_feature || [])" :key="f.feature">
+          <button @click="filter.feature = filter.feature === f.feature ? '' : f.feature; resetPage(); refresh()"
+                  class="text-[10px] px-2 py-1 rounded transition flex items-center gap-1.5"
+                  :class="filter.feature === f.feature ? 'bg-ai-600 text-white' : 'bg-neutral-100 hover:bg-neutral-200 text-neutral-700'">
+            <span x-text="f.feature"></span>
+            <span class="opacity-70" x-text="f.count.toLocaleString('pt-BR')"></span>
+          </button>
+        </template>
+        <span x-show="(stats.by_feature || []).length === 0" class="text-[10px] text-neutral-400 italic">sem dados ainda</span>
+      </div>
+    </div>
+  </div>
+
+  <!-- Filtros + paginação -->
+  <div class="bg-white border border-neutral-200 rounded-lg p-3 mb-3 flex flex-wrap items-center gap-2">
+    <input x-model="filter.q" @input.debounce.400ms="resetPage(); refresh()"
+           placeholder="buscar em alvo, ação ou erro…"
+           class="h-8 px-3 text-xs border border-neutral-200 rounded outline-none focus:border-brand-600 w-64" />
+    <input x-model="filter.username" @input.debounce.400ms="resetPage(); refresh()"
+           placeholder="usuário"
+           class="h-8 px-3 text-xs border border-neutral-200 rounded outline-none focus:border-brand-600 w-32" />
+    <label class="flex items-center gap-1.5 text-xs text-neutral-600 cursor-pointer">
+      <input type="checkbox" x-model="onlyErrors" @change="filter.status_min = onlyErrors ? 400 : null; resetPage(); refresh()"
+             class="rounded border-neutral-300 text-risk-600 focus:ring-risk-600" />
+      apenas erros
+    </label>
+
+    <!-- Chip do filtro temporal (`since`) — visível apenas quando ativo -->
+    <span x-show="filter.since" x-cloak
+          class="inline-flex items-center gap-1 text-[10px] px-2 py-1 rounded bg-ai-50 text-ai-800 border border-ai-200">
+      <span>⏱ janela: <span x-text="filter.since"></span></span>
+      <button @click="setSince('')" class="text-ai-700 hover:text-ai-900 font-bold leading-none" title="remover filtro de tempo">×</button>
+    </span>
+
+    <div class="flex-1"></div>
+
+    <span class="text-[10px] text-neutral-500">mostrar</span>
+    <div class="flex bg-neutral-100 rounded p-0.5">
+      <template x-for="opt in [10, 30, 100, -1]" :key="opt">
+        <button @click="filter.per_page = opt; resetPage(); refresh()"
+                class="text-[11px] px-2.5 py-0.5 rounded transition"
+                :class="filter.per_page === opt ? 'bg-white shadow-sm font-medium' : 'text-neutral-500 hover:text-neutral-800'"
+                x-text="opt === -1 ? 'todos' : opt"></button>
+      </template>
+    </div>
+
+    <button @click="resetFilters()" class="text-[10px] text-neutral-500 hover:text-brand-700">limpar</button>
+  </div>
+
+  <!-- Lista (timeline) -->
+  <div class="bg-white border border-neutral-200 rounded-lg overflow-hidden">
+    <header class="px-4 py-2 border-b border-neutral-100 flex items-center justify-between text-[10px] uppercase tracking-wider text-neutral-500 bg-neutral-50">
+      <span>timestamp · usuário · ação · alvo</span>
+      <span x-text="loading ? 'carregando...' : `${events.length} de ${total}`"></span>
+    </header>
+    <div class="divide-y divide-neutral-100 max-h-[calc(100vh-30rem)] overflow-y-auto">
+      <template x-for="ev in events" :key="ev.id">
+        <button @click="openDetails(ev)"
+                class="w-full text-left flex items-center gap-3 px-4 py-2.5 hover:bg-neutral-50 transition group">
+          <!-- pulse de status -->
+          <span class="w-1.5 h-1.5 rounded-full shrink-0"
+                :class="statusColor(ev)"></span>
+
+          <!-- timestamp (dd/mm/yyyy hh:mm:ss = 19 chars em mono → ~w-44) -->
+          <span class="text-[10px] text-neutral-400 font-mono shrink-0 w-44" x-text="formatTime(ev.ts)"></span>
+
+          <!-- usuário -->
+          <div class="flex items-center gap-1.5 shrink-0 w-32 min-w-0">
+            <div x-show="ev.username" class="w-5 h-5 rounded-full text-white text-[9px] font-medium flex items-center justify-center shrink-0"
+                 :style="`background:${avatarColor(ev.username)}`"
+                 x-text="initials(ev.username)"></div>
+            <span class="text-[11px] text-neutral-600 truncate" x-text="ev.username || '—'"></span>
+          </div>
+
+          <!-- ação + categoria -->
+          <div class="flex items-center gap-1.5 shrink-0 w-44">
+            <span class="text-[9px] px-1.5 py-0.5 rounded font-mono"
+                  :class="categoryStyle(ev.category)"
+                  x-text="ev.category"></span>
+            <span class="text-[10px] font-mono text-neutral-700 font-medium" x-text="ev.action"></span>
+          </div>
+
+          <!-- target -->
+          <span class="text-[11px] font-mono text-neutral-700 truncate flex-1" x-text="ev.target || '(sem alvo)'"></span>
+
+          <!-- métricas -->
+          <span class="text-[10px] text-neutral-400 shrink-0 font-mono" x-text="ev.duration_ms ? ev.duration_ms.toFixed(0) + 'ms' : ''"></span>
+          <span x-show="ev.status_code" class="text-[10px] font-mono shrink-0 w-10 text-right"
+                :class="ev.status_code >= 500 ? 'text-risk-700' : (ev.status_code >= 400 ? 'text-amber-700' : 'text-brand-700')"
+                x-text="ev.status_code"></span>
+
+          <!-- ícone "abrir" -->
+          <svg width="10" height="10" viewBox="0 0 12 12" fill="none" class="text-neutral-300 group-hover:text-neutral-700 shrink-0">
+            <path d="M4 2 L8 6 L4 10" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+          </svg>
+        </button>
+      </template>
+
+      <div x-show="!loading && events.length === 0" class="px-6 py-12 text-center text-sm text-neutral-400 italic">
+        nenhum evento corresponde aos filtros
+      </div>
+    </div>
+
+    <!-- Paginação -->
+    <footer x-show="filter.per_page > 0 && total > filter.per_page" class="px-4 py-2 border-t border-neutral-100 flex items-center justify-between bg-neutral-50">
+      <span class="text-[10px] text-neutral-500">
+        página <span x-text="filter.page"></span> de <span x-text="totalPages()"></span>
+      </span>
+      <div class="flex items-center gap-1">
+        <button @click="goToPage(1)" :disabled="filter.page <= 1"
+                class="text-[10px] px-2 py-1 rounded hover:bg-white text-neutral-600 disabled:opacity-30 disabled:cursor-not-allowed">«</button>
+        <button @click="goToPage(filter.page - 1)" :disabled="filter.page <= 1"
+                class="text-[10px] px-2 py-1 rounded hover:bg-white text-neutral-600 disabled:opacity-30 disabled:cursor-not-allowed">‹ ant</button>
+        <span class="text-[10px] text-neutral-700 mx-1">
+          <input type="number" x-model.number="filter.page" @change="goToPage(filter.page)"
+                 :min="1" :max="totalPages()"
+                 class="w-12 text-center border border-neutral-200 rounded px-1 py-0.5 text-[10px]" />
+        </span>
+        <button @click="goToPage(filter.page + 1)" :disabled="filter.page >= totalPages()"
+                class="text-[10px] px-2 py-1 rounded hover:bg-white text-neutral-600 disabled:opacity-30 disabled:cursor-not-allowed">próx ›</button>
+        <button @click="goToPage(totalPages())" :disabled="filter.page >= totalPages()"
+                class="text-[10px] px-2 py-1 rounded hover:bg-white text-neutral-600 disabled:opacity-30 disabled:cursor-not-allowed">»</button>
+      </div>
+    </footer>
+  </div>
+
+  <!-- Drawer de detalhes -->
+  <div x-show="selected" x-cloak class="fixed inset-0 z-40 flex">
+    <div @click="selected = null" class="flex-1 bg-black/30"></div>
+    <div class="w-[640px] max-w-[92vw] bg-white shadow-2xl overflow-y-auto" x-show="selected" x-transition.opacity>
+      <template x-if="selected">
+        <div class="flex flex-col h-full">
+          <header class="px-6 py-4 border-b border-neutral-100 sticky top-0 bg-white z-10">
+            <div class="flex items-start justify-between gap-3">
+              <div class="min-w-0 flex-1">
+                <div class="flex items-center gap-2 mb-2">
+                  <span class="w-2 h-2 rounded-full" :class="statusColor(selected)"></span>
+                  <span class="text-[10px] px-1.5 py-0.5 rounded font-mono" :class="categoryStyle(selected.category)" x-text="selected.category"></span>
+                  <span x-show="selected.feature" class="text-[10px] px-1.5 py-0.5 rounded bg-ai-50 text-ai-800" x-text="selected.feature"></span>
+                </div>
+                <h2 class="text-base font-medium font-mono break-all">
+                  <span x-text="selected.action"></span>
+                  <span class="text-neutral-500" x-text="selected.target"></span>
+                </h2>
+                <p class="text-[10px] text-neutral-400 mt-1 font-mono" x-text="selected.id"></p>
+              </div>
+              <button @click="selected = null" class="w-7 h-7 rounded-full hover:bg-neutral-100 flex items-center justify-center text-neutral-400 hover:text-neutral-700 shrink-0">×</button>
+            </div>
+          </header>
+
+          <div class="flex-1 px-6 py-4 space-y-4 overflow-y-auto">
+            <!-- Grid de metadados -->
+            <div class="grid grid-cols-2 gap-3 text-xs">
+              <div>
+                <div class="text-[10px] uppercase tracking-wider text-neutral-400">timestamp</div>
+                <div class="font-mono" x-text="new Date(selected.ts).toLocaleString('pt-BR') + ' · há ' + relativeTime(selected.ts)"></div>
+              </div>
+              <div>
+                <div class="text-[10px] uppercase tracking-wider text-neutral-400">duração</div>
+                <div class="font-mono" x-text="selected.duration_ms ? selected.duration_ms.toFixed(2) + ' ms' : '—'"></div>
+              </div>
+              <div>
+                <div class="text-[10px] uppercase tracking-wider text-neutral-400">usuário</div>
+                <div class="flex items-center gap-1.5">
+                  <div x-show="selected.username" class="w-5 h-5 rounded-full text-white text-[9px] font-medium flex items-center justify-center"
+                       :style="`background:${avatarColor(selected.username)}`"
+                       x-text="initials(selected.username)"></div>
+                  <span x-text="selected.username || 'anônimo'"></span>
+                </div>
+              </div>
+              <div>
+                <div class="text-[10px] uppercase tracking-wider text-neutral-400">status</div>
+                <div class="font-mono"
+                     :class="selected.status_code >= 500 ? 'text-risk-700' : (selected.status_code >= 400 ? 'text-amber-700' : 'text-brand-700')"
+                     x-text="selected.status_code || '—'"></div>
+              </div>
+              <div x-show="selected.ip">
+                <div class="text-[10px] uppercase tracking-wider text-neutral-400">ip</div>
+                <div class="font-mono text-neutral-600" x-text="selected.ip"></div>
+              </div>
+              <div x-show="selected.user_agent">
+                <div class="text-[10px] uppercase tracking-wider text-neutral-400">agent</div>
+                <div class="text-[10px] text-neutral-600 truncate" :title="selected.user_agent" x-text="selected.user_agent"></div>
+              </div>
+            </div>
+
+            <!-- Erro destacado -->
+            <div x-show="selected.error" class="bg-risk-50 border border-risk-400/40 rounded-md p-3">
+              <div class="text-[10px] uppercase tracking-wider text-risk-700 mb-1">erro capturado</div>
+              <div class="text-xs font-mono text-risk-800 whitespace-pre-wrap" x-text="selected.error"></div>
+            </div>
+
+            <!-- Payload (JSON tree) -->
+            <div x-show="selected.payload">
+              <div class="text-[10px] uppercase tracking-wider text-neutral-400 mb-1 flex items-center justify-between">
+                <span>payload</span>
+                <button @click="copyPayload()" class="text-[10px] text-brand-700 hover:underline normal-case">copiar JSON</button>
+              </div>
+              <pre class="text-[10px] font-mono bg-neutral-50 border border-neutral-200 rounded p-3 overflow-x-auto max-h-96" x-text="prettyJson(selected.payload)"></pre>
+            </div>
+
+            <!-- Sub-eventos relacionados (mesmo target nas últimas 5 min do mesmo user) -->
+            <div x-show="related.length > 0">
+              <div class="text-[10px] uppercase tracking-wider text-neutral-400 mb-1">eventos relacionados</div>
+              <div class="space-y-1">
+                <template x-for="r in related" :key="r.id">
+                  <button @click="openDetails(r)" class="w-full text-left flex items-center gap-2 px-2 py-1.5 hover:bg-neutral-50 rounded text-[11px]">
+                    <span class="w-1.5 h-1.5 rounded-full shrink-0" :class="statusColor(r)"></span>
+                    <span class="text-neutral-400 font-mono shrink-0" x-text="formatTime(r.ts)"></span>
+                    <span class="font-mono text-neutral-700 truncate" x-text="`${r.action} ${r.target}`"></span>
+                  </button>
+                </template>
+              </div>
+            </div>
+          </div>
+        </div>
+      </template>
+    </div>
+  </div>
+
+</div>
+
+<script>
+function auditApp() {
+  return {
+    events: [],
+    total: 0,
+    stats: {},
+    loading: false,
+    selected: null,
+    related: [],
+    onlyErrors: false,
+    filter: {
+      page: 1,
+      per_page: 30,
+      category: '',
+      feature: '',
+      username: '',
+      status_min: null,
+      q: '',
+      since: '',
+    },
+
+    async init() {
+      await Promise.all([this.refresh(), this.loadStats()]);
+    },
+
+    async loadStats() {
+      try { this.stats = await window.api('GET', '/api/audit/stats'); }
+      catch (e) {}
+    },
+
+    async refresh() {
+      this.loading = true;
+      try {
+        const params = new URLSearchParams();
+        for (const [k, v] of Object.entries(this.filter)) {
+          if (v !== '' && v !== null && v !== undefined) params.set(k, v);
+        }
+        const r = await window.api('GET', `/api/audit/?${params}`);
+        this.events = r.events || [];
+        this.total = r.total || 0;
+        await this.loadStats();
+      } catch (e) {
+        toast(e.message, 'error');
+      } finally {
+        this.loading = false;
+      }
+    },
+
+    resetPage() { this.filter.page = 1; },
+
+    resetFilters() {
+      this.filter = { page: 1, per_page: 30, category: '', feature: '', username: '', status_min: null, q: '', since: '' };
+      this.onlyErrors = false;
+      this.refresh();
+    },
+
+    /** Algum filtro (não-paginação) está ativo? Usado pelo card "eventos totais". */
+    hasAnyFilter() {
+      const f = this.filter;
+      return !!(f.category || f.feature || f.username || f.status_min || f.q || f.since);
+    },
+
+    /** Toggle do drill-down "Na última hora" — se já está ativo nessa janela, remove. */
+    toggleSince(window) {
+      this.filter.since = this.filter.since === window ? '' : window;
+      this.resetPage();
+      this.refresh();
+    },
+
+    /** Define janela temporal a partir do popover de "filtrados agora". */
+    setSince(window) {
+      this.filter.since = window || '';
+      this.resetPage();
+      this.refresh();
+    },
+
+    /** Toggle do drill-down "Erros" — espelha checkbox "apenas erros". */
+    toggleErrors() {
+      this.onlyErrors = !this.onlyErrors;
+      this.filter.status_min = this.onlyErrors ? 400 : null;
+      this.resetPage();
+      this.refresh();
+    },
+
+    totalPages() {
+      if (this.filter.per_page <= 0) return 1;
+      return Math.max(1, Math.ceil(this.total / this.filter.per_page));
+    },
+
+    goToPage(p) {
+      const max = this.totalPages();
+      this.filter.page = Math.min(Math.max(1, parseInt(p) || 1), max);
+      this.refresh();
+    },
+
+    async openDetails(ev) {
+      // refetch para garantir payload completo (lista pode vir truncada no futuro)
+      try {
+        const full = await window.api('GET', `/api/audit/${ev.id}`);
+        this.selected = full;
+        this.related = this.findRelated(full);
+      } catch (e) {
+        this.selected = ev;
+        this.related = this.findRelated(ev);
+      }
+    },
+
+    findRelated(ev) {
+      // mesmo target, mesmo user, dentro de 5 min, exceto o próprio
+      const tEv = new Date(ev.ts).getTime();
+      return this.events
+        .filter(e => e.id !== ev.id && e.target === ev.target && e.username === ev.username
+                  && Math.abs(new Date(e.ts).getTime() - tEv) < 5 * 60 * 1000)
+        .slice(0, 8);
+    },
+
+    statusColor(ev) {
+      if (!ev.status_code) return 'bg-neutral-300';
+      if (ev.status_code >= 500) return 'bg-risk-500';
+      if (ev.status_code >= 400) return 'bg-amber-400';
+      if (ev.status_code >= 300) return 'bg-ai-400';
+      return 'bg-brand-400';
+    },
+
+    categoryStyle(cat) {
+      const map = {
+        'http_read':   'bg-neutral-100 text-neutral-700',
+        'http_write':  'bg-amber-50 text-amber-800',
+        'module_run':  'bg-ai-50 text-ai-800',
+        'auth':        'bg-brand-50 text-brand-800',
+        'upload':      'bg-amber-50 text-amber-800',
+        'page_view':   'bg-neutral-50 text-neutral-500',
+        'config':      'bg-amber-50 text-amber-800',
+      };
+      return map[cat] || 'bg-neutral-100 text-neutral-700';
+    },
+
+    formatTime(ts) {
+      if (!ts) return '';
+      const d = new Date(ts);
+      // Sempre dd/mm/yyyy hh:mm:ss para auditoria — data completa evita
+      // ambiguidade entre eventos do mesmo horário em dias diferentes.
+      const dd = String(d.getDate()).padStart(2, '0');
+      const mm = String(d.getMonth() + 1).padStart(2, '0');
+      const yyyy = d.getFullYear();
+      const hh = String(d.getHours()).padStart(2, '0');
+      const mi = String(d.getMinutes()).padStart(2, '0');
+      const ss = String(d.getSeconds()).padStart(2, '0');
+      return `${dd}/${mm}/${yyyy} ${hh}:${mi}:${ss}`;
+    },
+
+    relativeTime(ts) {
+      const diff = (Date.now() - new Date(ts).getTime()) / 1000;
+      if (diff < 60) return Math.floor(diff) + 's';
+      if (diff < 3600) return Math.floor(diff/60) + 'min';
+      if (diff < 86400) return Math.floor(diff/3600) + 'h';
+      return Math.floor(diff/86400) + 'd';
+    },
+
+    initials(username) {
+      if (!username) return '?';
+      const p = username.replace(/[._]/g, ' ').split(' ').filter(Boolean);
+      if (p.length === 0) return '?';
+      if (p.length === 1) return p[0].substring(0, 2).toUpperCase();
+      return (p[0][0] + p[p.length - 1][0]).toUpperCase();
+    },
+
+    avatarColor(username) {
+      const palette = ['#DC2626', '#534AB7', '#185FA5', '#993C1D', '#993556', '#854F0B', '#3B6D11'];
+      const seed = Array.from(String(username || '?')).reduce((a, c) => a + c.charCodeAt(0), 0);
+      return palette[seed % palette.length];
+    },
+
+    prettyJson(obj) {
+      try { return JSON.stringify(obj, null, 2); } catch { return String(obj); }
+    },
+
+    async copyPayload() {
+      try {
+        await navigator.clipboard.writeText(this.prettyJson(this.selected.payload));
+        toast('JSON copiado.', 'success');
+      } catch (e) { toast('falha ao copiar', 'error'); }
+    },
+  };
+}
+</script>
+{% endblock %}

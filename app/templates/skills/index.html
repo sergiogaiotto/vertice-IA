@@ -1,0 +1,413 @@
+{% extends "base.html" %}
+{% block title %}Skills — Vértice{% endblock %}
+
+{% block content %}
+<div x-data="skillsApp()" x-init="init()" class="flex h-[calc(100vh-3rem-2rem)]">
+
+  <!-- Sidebar -->
+  <aside class="w-64 bg-white border-r border-neutral-200 flex flex-col shrink-0">
+    <div class="p-3 border-b border-neutral-100">
+      <input x-model="filter" type="text" placeholder="filtrar skills…"
+             class="w-full h-8 px-2.5 border border-neutral-200 rounded text-sm focus:border-brand-600 outline-none" />
+    </div>
+
+    <div class="flex-1 overflow-y-auto">
+      <template x-for="s in filtered()" :key="s.name">
+        <a :href="`/skills?name=${s.name}`"
+           class="block px-3 py-2.5 border-b border-neutral-50 hover:bg-neutral-50 transition"
+           :class="selected && selected.name === s.name && 'bg-brand-50 border-l-2 border-brand-600'">
+          <div class="flex items-center gap-2">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" class="text-neutral-400">
+              <path d="M5 4 H19 V20 H5 Z M9 9 H15 M9 13 H15 M9 17 H13" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+            </svg>
+            <span class="text-sm font-medium truncate" x-text="s.title || s.name"></span>
+          </div>
+          <div class="text-[10px] text-neutral-400 mt-0.5 ml-5">
+            <span x-text="s.sections.length"></span> seções · <span x-text="formatBytes(s.size_bytes)"></span>
+          </div>
+        </a>
+      </template>
+      <div x-show="filtered().length === 0" class="px-4 py-6 text-center text-xs text-neutral-400">
+        nenhuma skill
+      </div>
+    </div>
+
+    <div class="p-2 border-t border-neutral-100 space-y-1.5">
+      <button @click="openWizard()"
+              class="w-full h-8 text-xs bg-ai-600 hover:bg-ai-800 text-white rounded font-medium flex items-center justify-center gap-1.5">
+        <svg width="11" height="11" viewBox="0 0 12 12" fill="none">
+          <path d="M6 1 L7 4 L10 5 L7 6 L6 9 L5 6 L2 5 L5 4 Z" fill="currentColor" stroke="currentColor" stroke-linejoin="round" stroke-width="0.8"/>
+        </svg>
+        IA, me ajuda!
+      </button>
+      <button @click="newSkill()" class="w-full h-8 text-xs bg-brand-600 hover:bg-brand-800 text-white rounded font-medium flex items-center justify-center gap-1.5">
+        <span>+</span> nova skill
+      </button>
+    </div>
+  </aside>
+
+  <!-- Editor + Preview -->
+  <div class="flex-1 flex flex-col min-w-0" x-show="selected">
+
+    <header class="h-12 border-b border-neutral-200 flex items-center justify-between px-4 shrink-0 bg-white">
+      <div class="flex items-center gap-2 min-w-0">
+        <input x-model="editedName" @input="dirty=true"
+               class="h-7 px-2 text-sm font-medium border border-neutral-200 rounded-md w-64 max-w-full"
+               placeholder="nome da skill" />
+        <span class="text-[10px] text-neutral-400 font-mono" x-text="selected && selected.path"></span>
+        <span x-show="dirty" class="text-[10px] text-amber-600 px-1.5 py-0.5 bg-amber-50 rounded">não salvo</span>
+      </div>
+
+      <div class="flex items-center gap-2">
+        <div class="flex bg-neutral-100 rounded p-0.5">
+          <button @click="view='split'" class="text-[11px] px-2 py-1 rounded" :class="view==='split' ? 'bg-white shadow-sm' : 'text-neutral-500'">split</button>
+          <button @click="view='edit'" class="text-[11px] px-2 py-1 rounded" :class="view==='edit' ? 'bg-white shadow-sm' : 'text-neutral-500'">editor</button>
+          <button @click="view='preview'" class="text-[11px] px-2 py-1 rounded" :class="view==='preview' ? 'bg-white shadow-sm' : 'text-neutral-500'">preview</button>
+        </div>
+        <button @click="save()" :disabled="!dirty" class="text-xs px-3 py-1.5 rounded font-medium" :class="dirty ? 'bg-brand-600 hover:bg-brand-800 text-white' : 'bg-neutral-100 text-neutral-400'">
+          salvar (⌘S)
+        </button>
+        <button @click="deleteSkill()" class="text-xs px-2 py-1.5 text-risk-600 hover:bg-risk-50 rounded">excluir</button>
+      </div>
+    </header>
+
+    <div class="flex-1 flex min-h-0 overflow-hidden">
+
+      <!-- Editor -->
+      <div class="flex-1 min-w-0 border-r border-neutral-200" x-show="view !== 'preview'" :class="view === 'edit' ? 'flex-1' : ''">
+        <textarea x-model="content" @input="dirty=true"
+                  @keydown.meta.s.prevent="save()" @keydown.ctrl.s.prevent="save()"
+                  class="w-full h-full p-4 text-[13px] font-mono leading-relaxed resize-none outline-none bg-white"
+                  spellcheck="false"></textarea>
+      </div>
+
+      <!-- Preview -->
+      <div class="flex-1 min-w-0 overflow-y-auto p-6 bg-neutral-50" x-show="view !== 'edit'">
+        <div class="prose-vertice max-w-none" x-html="renderedHtml"></div>
+      </div>
+
+    </div>
+
+    <!-- Lista de seções extraídas (footer) -->
+    <div x-show="selected && Object.keys(selected.sections || {}).length > 0"
+         class="border-t border-neutral-200 bg-white px-4 py-2 flex items-center gap-1.5 overflow-x-auto shrink-0">
+      <span class="text-[10px] text-neutral-400 uppercase tracking-wider mr-2">seções:</span>
+      <template x-for="sec in Object.keys(selected.sections || {})" :key="sec">
+        <span class="text-[11px] px-2 py-0.5 bg-neutral-100 text-neutral-600 rounded whitespace-nowrap" x-text="sec"></span>
+      </template>
+    </div>
+
+  </div>
+
+  <!-- Empty state -->
+  <div x-show="!selected" class="flex-1 flex items-center justify-center text-neutral-400 text-sm">
+    Selecione ou crie uma skill para começar.
+  </div>
+
+  <!-- ============================================================ -->
+  <!-- Modal: IA, me ajuda! (gerador de SKILL.md alinhado à Vértice) -->
+  <!-- ============================================================ -->
+  <div x-show="wizardOpen" x-cloak class="fixed inset-0 bg-black/40 flex items-center justify-center z-50 p-4">
+    <div @click.outside="!wizardLoading && (wizardOpen = false)" class="bg-white rounded-xl w-[760px] max-w-full max-h-[90vh] overflow-hidden flex flex-col">
+
+      <!-- Header -->
+      <header class="px-6 py-4 border-b border-neutral-100 flex items-start justify-between gap-3 shrink-0">
+        <div class="flex items-start gap-3">
+          <div class="w-10 h-10 rounded-lg bg-ai-50 flex items-center justify-center text-ai-600 shrink-0">
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none">
+              <path d="M12 2 L14 8 L20 10 L14 12 L12 18 L10 12 L4 10 L10 8 Z" fill="currentColor" stroke="currentColor" stroke-linejoin="round" stroke-width="0.8"/>
+              <circle cx="19" cy="5" r="1" fill="currentColor"/>
+              <circle cx="5" cy="19" r="1" fill="currentColor"/>
+            </svg>
+          </div>
+          <div>
+            <h3 class="text-base font-medium">IA, me ajuda a criar uma skill</h3>
+            <p class="text-xs text-neutral-500 mt-0.5">
+              descreva em linguagem natural o que esse agente deve fazer — a IA gera um SKILL.md completo, alinhado ao formato canônico Vértice
+            </p>
+          </div>
+        </div>
+        <button @click="wizardOpen = false" :disabled="wizardLoading" class="text-neutral-400 hover:text-neutral-700 text-lg leading-none disabled:opacity-30">×</button>
+      </header>
+
+      <!-- STEP 1: prompt -->
+      <div x-show="wizardStep === 1" class="flex-1 overflow-y-auto px-6 py-5 space-y-3">
+        <div>
+          <label class="field-label">o que o agente deve fazer?</label>
+          <textarea x-model="wizardPrompt"
+                    placeholder="ex: classificador de intenção de cancelamento de plano de internet — recebe texto da transcrição, retorna categoria (rescisao_imediata | negociacao | duvida) e nível de confiança"
+                    class="w-full h-36 px-3 py-2 border border-neutral-200 rounded-md text-[12px] resize-none focus:border-ai-600 outline-none"
+                    spellcheck="false"></textarea>
+          <p class="text-[10px] text-neutral-400 mt-1">
+            quanto mais específico (escopo, inputs, formato de saída esperado, restrições) melhor o resultado
+          </p>
+        </div>
+
+        <div class="bg-ai-50 border border-ai-50/40 rounded p-3 text-[11px] text-ai-800">
+          <strong>O que a IA gera:</strong>
+          <ul class="mt-1.5 space-y-0.5 list-disc list-inside text-neutral-700">
+            <li>título específico ao domínio</li>
+            <li>seção <code class="bg-white px-1 font-mono">## Identidade</code> com escopo e tom</li>
+            <li>inputs aceitos com tipos</li>
+            <li>saída esperada (markdown / json com schema / csv / html / xml)</li>
+            <li>ferramentas autorizadas ou "apenas inferência"</li>
+            <li>política de roteamento (default + fallback)</li>
+            <li>guardrails específicos ao domínio (entrada e saída)</li>
+            <li>sinais de failsafe operacionais</li>
+          </ul>
+        </div>
+      </div>
+
+      <!-- STEP 2: preview/edit -->
+      <div x-show="wizardStep === 2 && wizardReady" class="flex-1 overflow-y-auto px-6 py-5 space-y-3">
+        <div class="bg-ai-50 border border-ai-50 rounded-md p-3">
+          <div class="flex items-center gap-2 mb-1">
+            <span class="text-[9px] uppercase font-bold text-ai-800">Sugestão da IA</span>
+            <span class="text-[9.5px] px-1.5 py-0.5 rounded font-mono bg-white border border-neutral-200" x-text="wizardSuggestion?.source"></span>
+            <span x-show="wizardSuggestion?.cost_estimated > 0" class="text-[9.5px] text-neutral-500" x-text="`${wizardSuggestion?.tokens_input + wizardSuggestion?.tokens_output} tokens · US$ ${(wizardSuggestion?.cost_estimated || 0).toFixed(5)}`"></span>
+          </div>
+          <p class="text-[12px] text-neutral-700 leading-relaxed" x-text="wizardSuggestion?.reasoning"></p>
+        </div>
+
+        <div class="grid grid-cols-2 gap-3">
+          <div>
+            <label class="field-label">nome (slug)</label>
+            <input type="text" x-model="wizardSuggestion.name"
+                   class="w-full h-9 px-3 border border-neutral-200 rounded-md text-[12px] font-mono"
+                   pattern="[a-z0-9_]+" />
+            <p class="text-[10px] text-neutral-400 mt-0.5">arquivo: <code x-text="`app/skills/${wizardSuggestion?.name || ''}.md`"></code></p>
+          </div>
+          <div>
+            <label class="field-label">formato de saída detectado</label>
+            <select x-model="wizardSuggestion.output_format" class="w-full h-9 px-2 border border-neutral-200 rounded-md text-[12px]">
+              <option value="markdown">markdown — texto estruturado</option>
+              <option value="json">json — schema estrito</option>
+              <option value="csv">csv — linhas tabulares</option>
+              <option value="html">html — fragmento renderizável</option>
+              <option value="xml">xml — estrutura hierárquica</option>
+            </select>
+          </div>
+        </div>
+
+        <div>
+          <label class="field-label">título</label>
+          <input type="text" x-model="wizardSuggestion.title"
+                 class="w-full h-9 px-3 border border-neutral-200 rounded-md text-[12px]" />
+        </div>
+
+        <div>
+          <label class="field-label">SKILL.md (editável)</label>
+          <textarea x-model="wizardSuggestion.content"
+                    class="w-full h-72 px-3 py-2 border border-neutral-200 rounded-md text-[11px] font-mono resize-none leading-relaxed"
+                    spellcheck="false"></textarea>
+          <p class="text-[10px] text-neutral-400 mt-1">
+            <span x-text="`${(wizardSuggestion?.content || '').length} chars · ${(wizardSuggestion?.content || '').split('\\n').length} linhas`"></span>
+            · revise antes de salvar — você ainda pode editar tudo no editor principal depois
+          </p>
+        </div>
+      </div>
+
+      <!-- Footer -->
+      <footer class="px-6 py-3 border-t border-neutral-100 flex items-center bg-neutral-25">
+        <div x-show="wizardLoading" class="text-xs text-neutral-500 flex items-center gap-2">
+          <span class="w-3 h-3 border-2 border-neutral-200 border-t-ai-600 rounded-full animate-spin"></span>
+          gerando SKILL.md...
+        </div>
+        <div class="ml-auto flex gap-2 items-center">
+          <template x-if="wizardStep === 1">
+            <div class="flex gap-2 items-center">
+              <button @click="wizardOpen = false" class="text-sm px-3 py-1.5 text-neutral-600 hover:bg-neutral-100 rounded-md">cancelar</button>
+              <button @click="generateSkillSuggestion()" :disabled="wizardLoading || !wizardPrompt.trim()"
+                      class="text-sm px-3 py-1.5 bg-ai-600 hover:bg-ai-800 text-white rounded-md font-medium disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-1.5">
+                <svg width="11" height="11" viewBox="0 0 12 12" fill="none">
+                  <path d="M6 1 L7 4 L10 5 L7 6 L6 9 L5 6 L2 5 L5 4 Z" fill="currentColor" stroke-linejoin="round" stroke-width="0.8"/>
+                </svg>
+                gerar skill
+              </button>
+            </div>
+          </template>
+          <template x-if="wizardStep === 2">
+            <div class="flex gap-2 items-center">
+              <button @click="wizardStep = 1" class="text-xs text-neutral-500 hover:text-neutral-800">← voltar</button>
+              <button @click="generateSkillSuggestion()" :disabled="wizardLoading"
+                      class="text-sm px-3 py-1.5 text-ai-700 hover:bg-ai-50 rounded-md font-medium disabled:opacity-50">regenerar</button>
+              <button @click="createFromWizard()" :disabled="wizardLoading || !wizardSuggestion?.name || !wizardSuggestion?.content"
+                      class="text-sm px-3 py-1.5 bg-brand-600 hover:bg-brand-800 text-white rounded-md font-medium disabled:opacity-50">criar skill</button>
+            </div>
+          </template>
+        </div>
+      </footer>
+    </div>
+  </div>
+
+</div>
+
+<style>
+.prose-vertice h1 { font-size: 1.5rem; font-weight: 500; margin-bottom: 0.75rem; color: #111; }
+.prose-vertice h2 { font-size: 1.1rem; font-weight: 500; margin-top: 1.25rem; margin-bottom: 0.5rem; color: #111; border-bottom: 1px solid #e5e5e5; padding-bottom: 0.25rem; }
+.prose-vertice h3 { font-size: 0.95rem; font-weight: 500; margin-top: 1rem; margin-bottom: 0.4rem; color: #333; }
+.prose-vertice p { font-size: 0.875rem; line-height: 1.7; color: #444; margin-bottom: 0.6rem; }
+.prose-vertice ul, .prose-vertice ol { font-size: 0.875rem; line-height: 1.7; color: #444; padding-left: 1.5rem; margin-bottom: 0.6rem; }
+.prose-vertice li { margin-bottom: 0.15rem; }
+.prose-vertice code { background: #f1efe8; padding: 0.1rem 0.35rem; border-radius: 3px; font-size: 0.82em; color: #DC2626; }
+.prose-vertice pre { background: #f7f7f5; padding: 0.75rem; border-radius: 6px; overflow-x: auto; font-size: 0.8rem; }
+.prose-vertice pre code { background: transparent; padding: 0; color: #333; }
+.prose-vertice strong { font-weight: 500; color: #111; }
+.prose-vertice blockquote { border-left: 3px solid #F87171; padding-left: 0.75rem; color: #555; font-style: italic; margin: 0.5rem 0; }
+</style>
+
+<script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+<script>
+function skillsApp() {
+  const initial = {{ skills | tojson | safe }};
+  const sel = {{ (selected | tojson | safe) if selected else 'null' }};
+  return {
+    skills: initial.map(s => ({ ...s, updated_at: new Date(s.updated_at) })),
+    selected: sel ? { ...sel, updated_at: new Date(sel.updated_at) } : null,
+    content: sel ? sel.content : '',
+    editedName: sel ? sel.name : '',
+    dirty: false,
+    view: 'split',
+    filter: '',
+
+    // Wizard "IA, me ajuda!" — usa defaults seguros porque Alpine avalia
+    // expressões `wizardSuggestion.X` no template antes do x-show esconder.
+    wizardOpen: false,
+    wizardStep: 1,
+    wizardPrompt: '',
+    wizardReady: false,
+    wizardSuggestion: {
+      name: '', title: '', content: '', output_format: 'markdown',
+      reasoning: '', source: '',
+      tokens_input: 0, tokens_output: 0, cost_estimated: 0,
+    },
+    wizardLoading: false,
+
+    init() {
+      // re-render on content change
+      this.$watch('content', () => this.$nextTick(() => {}));
+      this.$watch('selected', (s) => { this.editedName = s?.name || ''; });
+    },
+
+    get renderedHtml() {
+      try { return marked.parse(this.content || ''); } catch { return ''; }
+    },
+
+    filtered() {
+      const q = this.filter.toLowerCase();
+      if (!q) return this.skills;
+      return this.skills.filter(s =>
+        s.name.toLowerCase().includes(q) || (s.title || '').toLowerCase().includes(q)
+      );
+    },
+
+    formatBytes(n) {
+      if (n < 1024) return n + ' B';
+      return (n / 1024).toFixed(1) + ' KB';
+    },
+
+    async newSkill() {
+      const name = prompt('Nome da nova skill (use letras minúsculas, números, _ e -):');
+      if (!name) return;
+      try {
+        const created = await window.api('POST', '/api/skills/', { name });
+        toast('Skill criada.', 'success');
+        window.location.href = `/skills?name=${created.name}`;
+      } catch (e) { toast(e.message, 'error'); }
+    },
+
+    // ---------- Wizard "IA, me ajuda!" ----------
+
+    openWizard() {
+      this.wizardOpen = true;
+      this.wizardStep = 1;
+      this.wizardPrompt = '';
+      this.wizardReady = false;
+      this.wizardSuggestion = {
+        name: '', title: '', content: '', output_format: 'markdown',
+        reasoning: '', source: '',
+        tokens_input: 0, tokens_output: 0, cost_estimated: 0,
+      };
+      this.wizardLoading = false;
+    },
+
+    async generateSkillSuggestion() {
+      const text = (this.wizardPrompt || '').trim();
+      if (text.length < 5) { toast('Descreva o agente em pelo menos algumas palavras.', 'warn'); return; }
+      this.wizardLoading = true;
+      try {
+        const r = await window.api('POST', '/api/skills/wizard/suggest', { prompt: text });
+        this.wizardSuggestion = {
+          name: r?.name || '',
+          title: r?.title || '',
+          content: r?.content || '',
+          output_format: r?.output_format || 'markdown',
+          reasoning: r?.reasoning || '',
+          source: r?.source || '',
+          tokens_input: r?.tokens_input || 0,
+          tokens_output: r?.tokens_output || 0,
+          cost_estimated: r?.cost_estimated || 0,
+        };
+        this.wizardReady = true;
+        this.wizardStep = 2;
+      } catch (e) {
+        toast('Falha ao gerar sugestão: ' + (e.message || ''), 'error');
+      } finally {
+        this.wizardLoading = false;
+      }
+    },
+
+    async createFromWizard() {
+      const s = this.wizardSuggestion;
+      if (!s || !s.name || !s.content) { toast('Sugestão incompleta.', 'warn'); return; }
+      // valida nome no padrão snake_case ASCII
+      const slugRe = /^[a-z0-9_-]+$/;
+      if (!slugRe.test(s.name)) {
+        toast('Nome deve conter apenas a-z, 0-9, _ e -.', 'warn'); return;
+      }
+      this.wizardLoading = true;
+      try {
+        // 1. cria com conteúdo placeholder (POST /api/skills/ aceita só name)
+        await window.api('POST', '/api/skills/', { name: s.name });
+        // 2. PUT com o conteúdo real gerado pela IA
+        await window.api('PUT', `/api/skills/${encodeURIComponent(s.name)}`, { content: s.content });
+        toast('Skill criada com IA.', 'success');
+        this.wizardOpen = false;
+        // navega para a skill recém-criada
+        window.location.href = `/skills?name=${encodeURIComponent(s.name)}`;
+      } catch (e) {
+        toast('Falha ao criar skill: ' + (e.message || ''), 'error');
+      } finally {
+        this.wizardLoading = false;
+      }
+    },
+
+    async save() {
+      if (!this.selected || !this.dirty) return;
+      try {
+        const oldName = this.selected.name;
+        const newName = (this.editedName || '').trim();
+        if (!newName) { toast('Informe um nome de skill válido.', 'warn'); return; }
+        const updated = await window.api('PUT', `/api/skills/${oldName}`, { content: this.content, new_name: newName });
+        this.selected = { ...updated, updated_at: new Date(updated.updated_at) };
+        this.dirty = false;
+        toast('Skill salva.', 'success');
+        if (newName !== oldName) {
+          window.location.href = `/skills?name=${encodeURIComponent(newName)}`;
+        }
+      } catch (e) { toast(e.message, 'error'); }
+    },
+
+    async deleteSkill() {
+      if (!this.selected) return;
+      if (!confirm(`Excluir definitivamente a skill "${this.selected.name}"?`)) return;
+      try {
+        await window.api('DELETE', `/api/skills/${this.selected.name}`);
+        toast('Skill excluída.', 'success');
+        window.location.href = '/skills';
+      } catch (e) { toast(e.message, 'error'); }
+    },
+  };
+}
+</script>
+{% endblock %}

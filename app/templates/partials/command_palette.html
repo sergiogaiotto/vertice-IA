@@ -1,0 +1,67 @@
+<script>
+  // injeta roles do usuário ANTES do palette renderizar — evita conflito de
+  // aspas no x-data (tojson emite ["admin"] com aspas duplas que quebrariam o
+  // atributo HTML envolvido em aspas duplas).
+  window.__user_roles = {{ (user.roles if user and user.roles else []) | tojson }};
+  window.__user_username = {{ (user.username if user else '') | tojson }};
+</script>
+<div x-data="{
+       open: false,
+       q: '',
+       userRoles: window.__user_roles || [],
+       items: [
+         { href: '/',         label: 'Cockpit (visão geral)',           color: 'bg-brand-600',   group: 'Geral',         roles: null },
+         { href: '/radar',    label: 'Voz do Cliente',                  color: 'bg-brand-600',   group: 'Funcionalidade', roles: null },
+         { href: '/churn',    label: 'Gestão Churn (taxonomia)',        color: 'bg-ai-600',      group: 'Funcionalidade', roles: null },
+         { href: '/prompts',  label: 'Editor de Prompts',               color: 'bg-neutral-400', group: 'Configurações',  roles: ['admin', 'supervisor'] },
+         { href: '/skills',   label: 'Skills (SKILL.md)',               color: 'bg-neutral-400', group: 'Configurações',  roles: ['admin', 'supervisor'] },
+         { href: '/modules',  label: 'Módulos',                         color: 'bg-neutral-400', group: 'Configurações',  roles: ['admin', 'supervisor'] },
+         { href: '/blocks',   label: 'Inventário',                      color: 'bg-neutral-400', group: 'Configurações',  roles: ['admin', 'supervisor'] },
+         { href: '/finops',   label: 'FinOps · custos e burndown',      color: 'bg-amber-500',   group: 'Monitoramento',  roles: ['admin', 'supervisor', 'finops'] },
+         { href: '/failsafe', label: 'Failsafe · inbox',                color: 'bg-risk-600',    group: 'Monitoramento',  roles: ['admin', 'supervisor', 'finops'] },
+         { href: '/audit',    label: 'Rastreabilidade · audit trail',   color: 'bg-amber-500',   group: 'Monitoramento',  roles: ['admin', 'supervisor', 'finops'] },
+         { href: '/users',    label: 'Usuários (admin)',                color: 'bg-neutral-400', group: 'Administrativo', roles: ['admin'] },
+         { href: '/apis',      label: 'APIs · endpoints externos',       color: 'bg-ai-600',      group: 'Administrativo', roles: ['admin'] },
+         { href: '/gallery',  label: 'Galeria de Apresentações',        color: 'bg-brand-600',   group: 'Administrativo', roles: ['admin'] },
+         { href: '/api/docs', label: 'Documentação OpenAPI',            color: 'bg-neutral-400', group: 'Geral',         roles: null }
+       ],
+       allowed() {
+         return this.items.filter(i => !i.roles || i.roles.some(r => this.userRoles.includes(r)));
+       },
+       filtered() {
+         const q = this.q.toLowerCase().trim();
+         const items = this.allowed();
+         if (!q) return items;
+         return items.filter(i => i.label.toLowerCase().includes(q) || i.group.toLowerCase().includes(q));
+       }
+     }"
+     x-show="open"
+     x-cloak
+     @keydown.escape.window="open = false"
+     @open-palette.window="open = true; q = ''; $nextTick(() => $refs.input.focus())"
+     class="fixed inset-0 z-50 bg-black/40 flex items-start justify-center pt-32"
+     style="display: none">
+  <div @click.outside="open = false" class="bg-white rounded-xl shadow-2xl w-[560px] max-w-[90vw] overflow-hidden">
+    <div class="flex items-center gap-3 px-4 py-3 border-b border-neutral-100">
+      <svg width="16" height="16" viewBox="0 0 12 12" fill="none"><circle cx="5" cy="5" r="3.5" stroke="currentColor" stroke-width="1.2"/><path d="M7.5 7.5 L10 10" stroke="currentColor" stroke-width="1.2" stroke-linecap="round"/></svg>
+      <input x-ref="input" x-model="q"
+             type="text" placeholder="Pergunte, busque, comande…"
+             @keydown.enter="if (filtered().length > 0) { window.location.href = filtered()[0].href }"
+             class="flex-1 outline-none text-sm placeholder-neutral-400">
+      <kbd class="text-[10px] text-neutral-400 px-1.5 py-0.5 border border-neutral-200 rounded">Esc</kbd>
+    </div>
+    <div class="max-h-80 overflow-y-auto p-2 text-sm">
+      <template x-for="(item, idx) in filtered()" :key="item.href">
+        <a :href="item.href" class="flex items-center gap-3 px-3 py-2 rounded-md hover:bg-neutral-100 cursor-pointer"
+           :class="idx === 0 ? 'bg-neutral-50' : ''">
+          <span class="w-1.5 h-1.5 rounded-full" :class="item.color"></span>
+          <span x-text="item.label"></span>
+          <span class="ml-auto text-[10px] text-neutral-400" x-text="item.group"></span>
+        </a>
+      </template>
+      <div x-show="filtered().length === 0" class="px-3 py-6 text-center text-xs text-neutral-400">
+        nenhum resultado para "<span x-text="q"></span>"
+      </div>
+    </div>
+  </div>
+</div>

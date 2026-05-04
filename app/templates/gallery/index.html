@@ -1,0 +1,176 @@
+{% extends "base.html" %}
+{% block title %}Galeria — Vértice{% endblock %}
+
+{% block content %}
+<div x-data="galleryApp()" x-init="init()" class="px-6 py-5 pb-12 max-w-full">
+
+  <!-- Header -->
+  <div class="flex items-end justify-between mb-5">
+    <div>
+      <h1 class="text-lg font-medium">Galeria de Apresentações</h1>
+      <p class="text-xs text-neutral-500">apresentações executivas geradas pela plataforma · consulta, conversação e download</p>
+    </div>
+    <div class="flex items-center gap-2">
+      <input x-model="filter" @input.debounce.300ms="refresh()" placeholder="filtrar por título…"
+             class="h-9 px-3 text-xs border border-neutral-200 rounded-md w-64" />
+      <button @click="refresh()" class="text-xs px-3 py-1.5 border border-neutral-200 rounded-md hover:bg-neutral-50">↻ atualizar</button>
+    </div>
+  </div>
+
+  <!-- KPIs (foco em conteúdo: o que existe na galeria, sem custos/tokens) -->
+  <div class="grid grid-cols-2 md:grid-cols-4 gap-3 mb-3">
+    <div class="kpi-card">
+      <div class="kpi-label">apresentações</div>
+      <div class="kpi-value" x-text="(stats.total || 0).toLocaleString('pt-BR')"></div>
+      <div class="text-[10px] text-neutral-400 mt-0.5"
+           x-text="`${(stats.last_7d || 0)} novas nos últimos 7 dias`"></div>
+    </div>
+    <div class="kpi-card">
+      <div class="kpi-label">seções no acervo</div>
+      <div class="kpi-value" x-text="(stats.sections_total || 0).toLocaleString('pt-BR')"></div>
+      <div class="text-[10px] text-neutral-400 mt-0.5"
+           x-text="stats.total ? `~${Math.round((stats.sections_total || 0) / stats.total)} por apresentação` : '—'"></div>
+    </div>
+    <div class="kpi-card">
+      <div class="kpi-label">insights documentados</div>
+      <div class="kpi-value" x-text="(stats.insights_total || 0).toLocaleString('pt-BR')"></div>
+      <div class="text-[10px] text-neutral-400 mt-0.5"
+           x-text="stats.total ? `~${Math.round((stats.insights_total || 0) / stats.total)} por apresentação` : '—'"></div>
+    </div>
+    <div class="kpi-card">
+      <div class="kpi-label">visuais embutidos</div>
+      <div class="kpi-value" x-text="(stats.visuals_total || 0).toLocaleString('pt-BR')"></div>
+      <div class="text-[10px] text-neutral-400 mt-0.5">gráficos · diagramas</div>
+    </div>
+  </div>
+
+  <!-- Linha secundária: engajamento + autores + breakdown por origem -->
+  <div class="grid grid-cols-1 md:grid-cols-3 gap-3 mb-5">
+    <div class="kpi-card">
+      <div class="kpi-label">conversas no chat</div>
+      <div class="flex items-baseline gap-2">
+        <div class="kpi-value" x-text="(stats.chat_messages_total || 0).toLocaleString('pt-BR')"></div>
+        <span class="text-[11px] text-neutral-400" x-text="`em ${stats.with_chat || 0} apres.`"></span>
+      </div>
+      <div class="text-[10px] text-neutral-400 mt-0.5">mensagens trocadas pelos usuários</div>
+    </div>
+    <div class="kpi-card">
+      <div class="kpi-label">autores únicos</div>
+      <div class="kpi-value" x-text="(stats.authors_count || 0).toLocaleString('pt-BR')"></div>
+      <div class="text-[10px] text-neutral-400 mt-0.5">pessoas que criaram apresentações</div>
+    </div>
+    <div class="kpi-card">
+      <div class="kpi-label">por origem</div>
+      <div x-show="(stats.by_feature || []).length" class="space-y-1 mt-1">
+        <template x-for="f in (stats.by_feature || []).slice(0, 4)" :key="f.feature">
+          <div class="flex items-center gap-2 text-[11px]">
+            <span class="font-mono uppercase text-neutral-700 w-16 truncate" x-text="f.feature"></span>
+            <div class="flex-1 h-1.5 bg-neutral-100 rounded-full overflow-hidden">
+              <div class="h-full bg-gradient-to-r from-brand-400 to-brand-600 rounded-full"
+                   :style="`width: ${stats.total ? Math.round((f.count / stats.total) * 100) : 0}%`"></div>
+            </div>
+            <span class="text-neutral-500 tabular text-[10px] w-8 text-right" x-text="f.count"></span>
+          </div>
+        </template>
+      </div>
+      <div x-show="!(stats.by_feature || []).length" class="text-[10px] text-neutral-400 italic mt-1">sem origens registradas</div>
+    </div>
+  </div>
+
+  <!-- Grid de cards -->
+  <div x-show="presentations.length === 0 && !loading"
+       class="bg-white border border-dashed border-neutral-200 rounded-lg p-10 text-center">
+    <div class="w-12 h-12 mx-auto rounded-full bg-brand-50 flex items-center justify-center text-brand-600 mb-3">
+      <svg width="20" height="20" viewBox="0 0 24 24" fill="none">
+        <path d="M12 2 L13.5 8.5 L20 10 L13.5 11.5 L12 18 L10.5 11.5 L4 10 L10.5 8.5 Z" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round"/>
+      </svg>
+    </div>
+    <h3 class="text-sm font-medium text-neutral-700">Nenhuma apresentação ainda</h3>
+    <p class="text-xs text-neutral-500 mt-1">crie a primeira pelo módulo "Apresentação VIP" no Radar.</p>
+    <a href="/radar" class="inline-block mt-4 text-xs px-3 py-1.5 bg-brand-600 hover:bg-brand-800 text-white rounded-md font-medium">ir para Radar</a>
+  </div>
+
+  <div class="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-3">
+    <template x-for="p in presentations" :key="p.id">
+      <a :href="`/gallery/${p.id}`"
+         class="section-card hover:shadow-sm transition group cursor-pointer block">
+        <!-- Thumbnail estilo capa -->
+        <div class="relative h-32 bg-gradient-to-br from-brand-50 to-brand-100/50 overflow-hidden border-b border-neutral-100">
+          <div class="absolute inset-0 p-4 flex flex-col justify-between">
+            <span class="text-[9px] uppercase tracking-wider text-brand-800 font-bold">VÉRTICE · APRESENTAÇÃO</span>
+            <div>
+              <h3 class="text-sm font-medium text-neutral-900 line-clamp-2" x-text="p.title"></h3>
+              <p x-show="p.subtitle" class="text-[11px] text-neutral-600 line-clamp-1 mt-1" x-text="p.subtitle"></p>
+            </div>
+          </div>
+          <!-- decoração -->
+          <div class="absolute top-0 right-0 w-1 h-full bg-brand-600"></div>
+          <div class="absolute -bottom-6 -right-6 w-20 h-20 rounded-full bg-brand-200 opacity-30"></div>
+        </div>
+
+        <div class="p-3">
+          <div class="flex items-center gap-1.5 text-[10px] text-neutral-400 mb-2">
+            <span x-text="p.feature || '—'"></span>
+            <span x-show="p.case_number" class="text-neutral-300">·</span>
+            <span x-show="p.case_number" x-text="`caso ${p.case_number}`"></span>
+            <span class="text-neutral-300">·</span>
+            <span x-text="formatDate(p.created_at)"></span>
+          </div>
+          <div class="flex items-center gap-3 text-[10px] text-neutral-500">
+            <span class="flex items-center gap-1">
+              <span class="dot dot-success"></span>
+              <span x-text="`${(p.insights || []).length} insights`"></span>
+            </span>
+            <span class="flex items-center gap-1">
+              <span class="dot dot-ai"></span>
+              <span x-text="`${(p.sections || []).length} seções`"></span>
+            </span>
+            <span x-show="(p.chat_history || []).length > 0" class="flex items-center gap-1">
+              <span class="dot dot-info"></span>
+              <span x-text="`${(p.chat_history || []).length} msgs`"></span>
+            </span>
+          </div>
+          <div class="text-[10px] text-neutral-400 mt-2 truncate">por <span x-text="p.created_by_user || '—'"></span></div>
+        </div>
+      </a>
+    </template>
+  </div>
+</div>
+
+<script>
+function galleryApp() {
+  return {
+    presentations: [],
+    stats: {},
+    filter: '',
+    loading: false,
+
+    async init() {
+      await Promise.all([this.refresh(), this.loadStats()]);
+    },
+
+    async loadStats() {
+      try { this.stats = await window.api('GET', '/api/presentations/stats'); }
+      catch (e) {}
+    },
+
+    async refresh() {
+      this.loading = true;
+      try {
+        const params = new URLSearchParams();
+        if (this.filter) params.set('q', this.filter);
+        this.presentations = await window.api('GET', `/api/presentations/?${params}`);
+        await this.loadStats();
+      } catch (e) { toast(e.message, 'error'); }
+      finally { this.loading = false; }
+    },
+
+    formatDate(iso) {
+      if (!iso) return '';
+      const d = new Date(iso);
+      return d.toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit', year: '2-digit' });
+    },
+  };
+}
+</script>
+{% endblock %}
