@@ -1950,6 +1950,9 @@ function radarApp() {
         this.loadSchema(),
         this._loadStatePromise || Promise.resolve(),
       ]);
+      // dispara em background — não bloqueia o init nem o primeiro render dos
+      // charts existentes; cada executeCard salva ao terminar, e há um
+      // saveState final coordenado dentro do autoRunIfContextChanged.
       this.autoRunIfContextChanged();
       // re-renderiza charts restaurados do localStorage (Chart.js precisa do canvas no DOM)
       this.$nextTick(() => this._rerenderAllCharts());
@@ -1980,7 +1983,7 @@ function radarApp() {
      * BLOQUEIO: sem registro posicionado (caseNumber) ou sem transcrição
      * (transactionId), nenhum módulo dispara automaticamente.
      */
-    autoRunIfContextChanged() {
+    async autoRunIfContextChanged() {
       this.autoRunSkippedReason = null;
 
       // sem registro posicionado: limpa resultados dependentes do contexto
@@ -2048,14 +2051,18 @@ function radarApp() {
         });
       });
 
-      // FASE 1: módulos cadastrados que usam campos do contexto
+      // FASE 1: módulos cadastrados que usam campos do contexto.
+      // Coleta as Promises para conseguir esperar todas terminarem antes
+      // do saveState final — caso contrário o servidor recebia um snapshot
+      // com cards ainda em loading=true e result vazio.
+      const modulePromises = [];
       this.groups.forEach((group, gIdx) => {
         group.cards.forEach((card, cIdx) => {
           if (this.cardDependsOnCurrentContext(card)) {
             const fresh = this.availableFields.find(f => f.key === card.input_field);
             if (fresh && fresh.value) {
               card.input_value = fresh.value;
-              this.executeCard(gIdx, cIdx);
+              modulePromises.push(this.executeCard(gIdx, cIdx));
               executedModules++;
             }
           }
@@ -2063,10 +2070,11 @@ function radarApp() {
       });
 
       // FASE 2: Charts — re-busca série SQL (dados podem ter mudado)
+      const chartPromises = [];
       this.groups.forEach((group, gIdx) => {
         group.cards.forEach((card, cIdx) => {
           if (card.module_id === '__chart__' && card.chart_table) {
-            this.rerun(gIdx, cIdx);  // já trata chart corretamente
+            chartPromises.push(this.rerun(gIdx, cIdx));  // já trata chart corretamente
             executedCharts++;
           }
         });
@@ -2112,7 +2120,22 @@ function radarApp() {
           msg = `${cleared.join(' + ')} limpo(s) — pergunte de novo com o novo contexto.`;
         }
         toast(msg, 'info', 4500);
-        setTimeout(() => this.saveState(), 200);
+      }
+
+      // Espera todas as execuções (módulos + charts) terminarem para garantir
+      // que o estado salvo no servidor já contém os resultados frescos. Sem
+      // este await, o saveState debounced subia um snapshot com loading=true
+      // / result vazio, e o `same-context` skip impedia re-execução depois.
+      // Cada executeCard/rerun também chama saveState no `finally`, então
+      // mesmo se o usuário sair antes do Promise.all completar, o que
+      // tiver finalizado já está persistido.
+      try {
+        await Promise.all([...modulePromises, ...chartPromises]);
+      } catch (_) { /* erros individuais já tratados em executeCard/rerun */ }
+      // saveState final — coalesça via debounce em uma única gravação no
+      // servidor mesmo após N execuções paralelas.
+      if (totalExecuted > 0 || totalCleared > 0) {
+        this.saveState();
       }
     },
 
@@ -4315,6 +4338,13 @@ function radarApp() {
           c.error = e.message || 'falha na execução';
           c.loading = false;
         }
+      } finally {
+        // Persiste resultado (ou erro) imediatamente, no localStorage e via
+        // PUT debounced ao servidor. Sem isso, execuções disparadas pelo
+        // auto-run se perdiam ao recarregar a página: o `lastAutoRunTx`
+        // marcava o caso como "já processado" mas o estado salvo só tinha
+        // `loading=true` e `result=''`, deixando os cards eternamente vazios.
+        this.saveState();
       }
     },
 
