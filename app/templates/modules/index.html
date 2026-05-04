@@ -39,6 +39,13 @@
               <span class="text-[10px] px-1.5 py-0.5 rounded"
                     :class="m.status === 'active' ? 'bg-brand-50 text-brand-800' : (m.status === 'paused' ? 'bg-amber-50 text-amber-800' : 'bg-neutral-100 text-neutral-500')"
                     x-text="m.status"></span>
+              <!-- Tipo de saída (apenas para response_type='text'); ajuda a
+                   identificar rapidamente se o módulo está cortando respostas. -->
+              <template x-if="(m.response_type || 'text') === 'text' && m.config_params && m.config_params.output_type">
+                <span class="text-[10px] px-1.5 py-0.5 rounded bg-neutral-100 text-neutral-700 font-mono"
+                      :title="`formato configurado: ${m.config_params.output_type}`"
+                      x-text="m.config_params.output_type"></span>
+              </template>
               <span x-show="health[m.id]" class="text-[10px]"
                     :class="health[m.id] && health[m.id].ok ? 'text-brand-600' : 'text-risk-600'">
                 <span x-text="health[m.id] && (health[m.id].ok ? `✓ ${health[m.id].latency_ms}ms` : '✗ falha')"></span>
@@ -257,6 +264,33 @@
             <p class="text-[10px] text-neutral-500 mt-1">
               criada/alterada automaticamente · campos do JSON viram colunas (objetos achatados em dot notation) ·
               auditoria automática (usuário, timestamp, caso, transcrição)
+            </p>
+          </div>
+
+          <!-- Formato/cap de saída — só para response_type='text'.
+               Define quanto a resposta pode crescer antes de ser cortada
+               pelo guardrail. LIVRE = sem corte (cuide o custo de tokens). -->
+          <div x-show="(form.response_type || 'text') === 'text'" class="mt-2 bg-neutral-25 border border-neutral-100 rounded p-3">
+            <label class="field-label">formato da saída</label>
+            <select x-model="form.output_type"
+                    class="w-full h-9 px-2 text-xs border border-neutral-200 rounded bg-white">
+              <optgroup label="Texto livre">
+                <option value="INTENCAO">🎯 Intenção · ≤ 600 chars · frase curta</option>
+                <option value="RESUMO">📝 Resumo · ≤ 600 chars · síntese curta</option>
+                <option value="SUMARIO">📄 Sumário · ≤ 1500 chars (default)</option>
+                <option value="ANALISE">📊 Análise · ≤ 4000 chars · análise estruturada</option>
+                <option value="RELATORIO">📚 Relatório · ≤ 8000 chars · texto longo</option>
+                <option value="LIVRE">♾️ Livre · sem corte · todo o texto preservado</option>
+              </optgroup>
+              <optgroup label="Estruturado">
+                <option value="UMA_PALAVRA">🔤 Uma palavra</option>
+                <option value="SCORE">🔢 Score · número 0–100</option>
+                <option value="TERMOS">🏷️ Termos · lista (até 8)</option>
+              </optgroup>
+            </select>
+            <p class="text-[10px] text-neutral-400 mt-1">
+              o cap aplica DEPOIS da geração — mensagens mais curtas que o limite passam intactas.
+              <span class="text-neutral-500">tokens orçados aumentam junto com o cap.</span>
             </p>
           </div>
         </div>
@@ -504,7 +538,7 @@ function modulesApp() {
     formMode: 'create',  // 'create' | 'edit'
     editingId: null,
     originalSkillPath: '',
-    form: { name: '', endpoint_url: '', description: '', skill_path: '', config_params_text: '{}', response_type: 'text', response_config: {} },
+    form: { name: '', endpoint_url: '', description: '', skill_path: '', config_params_text: '{}', response_type: 'text', response_config: {}, output_type: 'SUMARIO' },
     formSelectedPrompts: [],
     jsonError: '',
     availableApiEndpoints: [],
@@ -638,6 +672,7 @@ function modulesApp() {
         name: '', endpoint_url: '', description: '', skill_path: '',
         config_params_text: '{}',
         response_type: 'text', response_config: {},
+        output_type: 'SUMARIO',
       };
       this.formSelectedPrompts = [];
       this.jsonError = '';
@@ -662,14 +697,19 @@ function modulesApp() {
       this.formMode = 'edit';
       this.editingId = m.id;
       this.originalSkillPath = m.skill_path || '';
+      const cfg = m.config_params || {};
       this.form = {
         name: m.name,
         endpoint_url: m.endpoint_url,
         description: m.description || '',
         skill_path: m.skill_path || '',
-        config_params_text: JSON.stringify(m.config_params || {}, null, 2),
+        config_params_text: JSON.stringify(cfg, null, 2),
         response_type: m.response_type || 'text',
         response_config: m.response_config || {},
+        // output_type entra inline no form para o select; será re-injetado em
+        // config_params no submit (mantemos a tabela JSON livre como source-of-truth
+        // — o submitForm faz o merge para evitar drift entre o select e o textarea).
+        output_type: (typeof cfg.output_type === 'string' && cfg.output_type) ? cfg.output_type : 'SUMARIO',
       };
       this.formSelectedPrompts = [];
       this.jsonError = '';
@@ -687,6 +727,22 @@ function modulesApp() {
       } catch (e) {
         this.jsonError = 'JSON inválido: ' + e.message;
         return;
+      }
+      // Merge do output_type do select para config_params — só faz sentido
+      // quando response_type='text'. Para api/table o backend ignora e força
+      // JSON estrito; mas zeramos a chave para não confundir leituras futuras.
+      if ((this.form.response_type || 'text') === 'text') {
+        const ot = (this.form.output_type || 'SUMARIO').toUpperCase();
+        const VALID = new Set([
+          'INTENCAO','RESUMO','SUMARIO','ANALISE','RELATORIO','LIVRE',
+          'UMA_PALAVRA','SCORE','TERMOS',
+        ]);
+        config_params.output_type = VALID.has(ot) ? ot : 'SUMARIO';
+      } else {
+        // api/table: não persiste output_type para não vazar config inerte
+        if (config_params && typeof config_params === 'object') {
+          delete config_params.output_type;
+        }
       }
 
       try {

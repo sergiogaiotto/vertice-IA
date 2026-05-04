@@ -127,6 +127,35 @@ async def test_radar_state_repo_version_conflict():
     assert rec["version"] == 2
 
 
+def test_output_guardrail_caps_per_format():
+    """Cada output_type texto tem cap próprio; LIVRE não corta."""
+    g = DefaultOutputGuardrail()
+    text_2k = "x " * 1000          # 2000 chars
+    text_5k = "x " * 2500          # 5000 chars
+    text_10k = "x " * 5000         # 10000 chars
+
+    # SUMARIO corta em 1500
+    r = g.check(text_2k, expected_format="SUMARIO")
+    assert r.ok and r.sanitized.endswith("…") and len(r.sanitized) <= 1500 + 1
+
+    # ANALISE não corta abaixo de 4000
+    r = g.check(text_2k, expected_format="ANALISE")
+    assert r.ok and not r.sanitized.endswith("…")
+
+    # ANALISE corta acima de 4000
+    r = g.check(text_5k, expected_format="ANALISE")
+    assert r.ok and r.sanitized.endswith("…") and len(r.sanitized) <= 4000 + 1
+
+    # RELATORIO não corta abaixo de 8000
+    r = g.check(text_5k, expected_format="RELATORIO")
+    assert r.ok and not r.sanitized.endswith("…")
+
+    # LIVRE NUNCA corta — nem mesmo com 10000 chars
+    r = g.check(text_10k, expected_format="LIVRE")
+    assert r.ok and not r.sanitized.endswith("…")
+    assert len(r.sanitized) >= 9000
+
+
 @pytest.mark.asyncio
 async def test_card_visibility_repo_default_private():
     """Cards novos sincronizados sem visibility explícita entram como 'private'."""

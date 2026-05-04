@@ -2088,6 +2088,18 @@ function radarApp() {
     async autoRunIfContextChanged() {
       this.autoRunSkippedReason = null;
 
+      // ============================================================
+      // SEMPRE: ao trocar de caso, limpar conversa dos módulos padrão
+      // de plataforma (Chat e SQL). Roda ANTES de qualquer early-return
+      // ou same-context skip — a conversa pertence ao caso anterior e
+      // não deve aparecer no contexto do caso novo, mesmo que:
+      //   - o caso novo não tenha transcrição (transactionId='')
+      //   - o transactionId não tenha mudado
+      //   - o auto-run pule por "same-context" (F5 do mesmo caso)
+      // F5 do MESMO caso (lastCase === caseNumber) NÃO limpa.
+      // ============================================================
+      this._clearConversationsOnCaseChange();
+
       // sem registro posicionado: limpa resultados dependentes do contexto
       // (preserva apenas input livre e cards do schema fixo, que independem do caso)
       if (!caseNumber) {
@@ -2352,6 +2364,60 @@ function radarApp() {
       if (cleared > 0) {
         // invalida o cache de tx para que ao posicionar caso, auto-run dispare
         localStorage.removeItem('radar:lastAutoRunTx');
+        this.saveState();
+      }
+    },
+
+    /**
+     * Limpa o histórico de conversa dos módulos padrão de plataforma
+     * (__chat__ e __sql__) sempre que o `caseNumber` muda em relação à
+     * última seleção persistida. Independe de transactionId — fica
+     * correto inclusive quando o caso novo não tem transcrição ou o
+     * mesmo transactionId é reusado entre casos.
+     *
+     * F5 no mesmo caso → lastCase === caseNumber → não limpa, preservando
+     * a conversa em andamento do usuário.
+     *
+     * Persistido em localStorage `radar:lastChatCase` para sobreviver a
+     * reload completo. O saveState propaga ao servidor (sync cross-device).
+     */
+    _clearConversationsOnCaseChange() {
+      const key = 'radar:lastChatCase';
+      const lastCase = localStorage.getItem(key) || '';
+      if (lastCase === (caseNumber || '')) return;
+      let cleared = 0;
+      this.groups.forEach(group => {
+        group.cards.forEach(card => {
+          if (card.module_id === '__chat__') {
+            const had = (card.chat_history || []).length > 0;
+            card.chat_history = [];
+            card.chat_total_cost = 0;
+            card.chat_draft = '';
+            card.error = null;
+            card.loading = false;
+            // refresca os campos selecionados com valores frescos do novo
+            // contexto — preserva escopo escolhido pelo usuário.
+            if (Array.isArray(card.chat_fields)) {
+              card.chat_fields = card.chat_fields.map(f => {
+                const fresh = this.availableFields.find(x => x.key === f.key);
+                return fresh ? { ...f, value: fresh.value || '' } : f;
+              });
+            }
+            if (had) cleared++;
+          }
+          if (card.module_id === '__sql__') {
+            const had = (card.sql_history || []).length > 0;
+            card.sql_history = [];
+            card.sql_total_cost = 0;
+            card.sql_draft = '';
+            card.error = null;
+            card.loading = false;
+            if (had) cleared++;
+          }
+        });
+      });
+      localStorage.setItem(key, caseNumber || '');
+      if (cleared > 0) {
         this.saveState();
       }
     },

@@ -294,17 +294,47 @@ Transcrição (parcial):
             f"Conteúdo:\n\"\"\"{sanitized_transcript[:6000]}\"\"\""
         )
 
+        # Tipo de saída do guardrail: vem do `config_params.output_type` do
+        # módulo quando response_type='text'. Default 'SUMARIO' por compat.
+        # Para api/table sempre 'JSON' (extração estrita do bloco JSON).
+        # Cada tipo tem cap próprio no guardrail (LIVRE = sem corte).
+        configured_output = "SUMARIO"
+        try:
+            if isinstance(module.config_params, dict):
+                ot = (module.config_params.get("output_type") or "").strip().upper()
+                if ot:
+                    configured_output = ot
+        except Exception:
+            pass
+
+        # max_tokens proporcional ao cap do output_type para não desperdiçar
+        # tokens (UMA_PALAVRA não precisa de 800) nem cortar respostas longas
+        # (RELATORIO/LIVRE precisam de mais espaço).
+        TOKEN_BUDGETS = {
+            "UMA_PALAVRA": 50,
+            "SCORE":       30,
+            "TERMOS":     200,
+            "INTENCAO":   300,
+            "RESUMO":     400,
+            "SUMARIO":    800,
+            "ANALISE":   1800,
+            "RELATORIO": 3500,
+            "LIVRE":     4096,
+            "JSON":      4096,
+        }
+        text_max_tokens = TOKEN_BUDGETS.get(configured_output, 800)
+
+        guardrail_format = "JSON" if is_structured else configured_output
+
         llm = await self.router.complete(
             system_prompt=system,
             user_prompt=user_msg,
-            output_type="SUMARIO",
-            # módulos table/api precisam de JSON COMPLETO — 4096 dá folga
-            # módulos text padrão ficam com 800 (custo + latência menores)
-            max_tokens=4096 if is_structured else 800,
+            output_type=configured_output if not is_structured else "SUMARIO",
+            max_tokens=4096 if is_structured else text_max_tokens,
             # JSON mode da OpenAI/Maritaca garante saída sintaticamente válida
             force_json=is_structured,
         )
-        guard_out = self.output_guard.check(llm.text, expected_format="SUMARIO")
+        guard_out = self.output_guard.check(llm.text, expected_format=guardrail_format)
         result_text = guard_out.sanitized if guard_out.ok else "[bloqueado pelo guardrail de saída]"
 
         # gera artefato se a skill exige formato downloadable

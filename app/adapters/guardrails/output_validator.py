@@ -59,11 +59,20 @@ class DefaultOutputGuardrail(OutputGuardrail):
             except json.JSONDecodeError:
                 return GuardrailResult(ok=False, sanitized=match.group(0), reason="JSON inválido", flags=flags)
 
-        # SUMARIO/RESUMO/INTENCAO -> aceita texto livre
-        if ef in {"SUMARIO", "RESUMO", "INTENCAO"}:
-            # corta excessos óbvios
-            max_chars = 1500 if ef == "SUMARIO" else 600
-            if len(sanitized) > max_chars:
+        # Texto livre — cada formato tem cap diferente. LIVRE = sem cap.
+        # Se o texto excede o cap, cortamos no último espaço e anexamos `…`
+        # para sinalizar a quebra ao usuário (caractere unicode literal).
+        TEXT_CAPS = {
+            "INTENCAO":  600,    # frase curta sobre intenção
+            "RESUMO":    600,    # resumo curto
+            "SUMARIO":  1500,    # sumário padrão
+            "ANALISE":  4000,    # análise estruturada média
+            "RELATORIO": 8000,   # relatório longo
+            "LIVRE":     None,   # sem corte — texto total preservado
+        }
+        if ef in TEXT_CAPS:
+            max_chars = TEXT_CAPS[ef]
+            if max_chars is not None and len(sanitized) > max_chars:
                 sanitized = sanitized[:max_chars].rsplit(" ", 1)[0] + "…"
             return GuardrailResult(ok=True, sanitized=sanitized, flags=flags)
 
