@@ -189,6 +189,27 @@
         </div>
         <div class="flex items-center gap-2">
           <span class="text-[10px] text-neutral-400" x-text="`${groups.length}/3 grupos · ${totalCards()} módulos`"></span>
+          <!-- Indicador de sync cross-device -->
+          <span x-show="stateSync.loading" class="text-[10px] text-neutral-400 flex items-center gap-1" title="sincronizando estado do servidor">
+            <span class="w-2 h-2 rounded-full bg-neutral-300 animate-pulse"></span>
+            sincronizando…
+          </span>
+          <span x-show="!stateSync.loading && stateSync.saving" class="text-[10px] text-brand-600 flex items-center gap-1" title="salvando alterações no servidor">
+            <span class="w-2 h-2 rounded-full bg-brand-500 animate-pulse"></span>
+            salvando…
+          </span>
+          <span x-show="!stateSync.loading && !stateSync.saving && stateSync.error"
+                class="text-[10px] text-amber-700 flex items-center gap-1"
+                :title="`erro de sync: ${stateSync.error} · suas mudanças continuam salvas localmente`">
+            <span class="w-2 h-2 rounded-full bg-amber-500"></span>
+            offline
+          </span>
+          <span x-show="!stateSync.loading && !stateSync.saving && !stateSync.error && stateSync.lastSavedAt"
+                class="text-[10px] text-emerald-700 flex items-center gap-1"
+                :title="`sincronizado em ${stateSync.lastSavedAt}`">
+            <span class="w-2 h-2 rounded-full bg-emerald-500"></span>
+            sincronizado
+          </span>
           <button @click="addGroup()" x-show="canEdit && groups.length < 3"
                   class="text-[11px] px-2.5 py-1.5 border border-neutral-200 rounded-md hover:bg-neutral-50 text-neutral-700">
             + novo grupo
@@ -1918,9 +1939,17 @@ function radarApp() {
         localStorage.setItem(lastCaseKey, caseNumber);
       }
 
-      // sempre carrega — funciona mesmo sem caso/transcrição selecionada
+      // sempre carrega — funciona mesmo sem caso/transcrição selecionada.
+      // loadState pinta do cache localStorage de imediato e dispara o sync
+      // remoto em paralelo. Aguardamos o remoto antes do auto-run para que
+      // cards vindos de outro dispositivo já entrem na fila de execução.
       this.loadState();
-      await Promise.all([this.loadModules(), this.refreshCases(), this.loadSchema()]);
+      await Promise.all([
+        this.loadModules(),
+        this.refreshCases(),
+        this.loadSchema(),
+        this._loadStatePromise || Promise.resolve(),
+      ]);
       this.autoRunIfContextChanged();
       // re-renderiza charts restaurados do localStorage (Chart.js precisa do canvas no DOM)
       this.$nextTick(() => this._rerenderAllCharts());
@@ -3580,36 +3609,153 @@ function radarApp() {
       }
     },
 
+    // Versão do estado vista por último do servidor — usada para concorrência
+    // otimista no PUT. Inicia em null; depois do primeiro GET vira número.
+    _stateVersion: null,
+    // Timer do debounce de saveState — coalesce mudanças rápidas em um único PUT.
+    _stateSaveTimer: null,
+    // Sinaliza que o load remoto começou; saves só vão para o servidor depois.
+    _stateRemoteReady: false,
+    // Flags de UI para mostrar status de sync no header.
+    stateSync: { loading: false, saving: false, error: null, lastSavedAt: null },
+
+    _hydrateGroups(parsed) {
+      // Cards restaurados (de qualquer fonte) NUNCA podem voltar com loading=true,
+      // senão ficam presos em "processando..." quando o auto-run não dispara.
+      return parsed.map(g => ({
+        ...g,
+        _newModuleId: '',
+        cards: (g.cards || []).map(c => ({
+          ...c,
+          loading: false,
+          error: c.error || null,
+        })),
+      }));
+    },
+
     loadState() {
+      // 1) Pinta imediatamente do localStorage (cache offline) — UX instantânea
+      //    em F5 e em ambientes sem rede momentânea.
       try {
         const raw = localStorage.getItem(storageKey);
         if (raw) {
           const parsed = JSON.parse(raw);
           if (Array.isArray(parsed) && parsed.length > 0) {
-            // Cards restaurados do localStorage NUNCA podem voltar com loading=true,
-            // senão ficam presos em "processando..." quando o auto-run não dispara
-            // (ex: sem registro posicionado, mesmo contexto de F5, etc).
-            this.groups = parsed.map(g => ({
-              ...g,
-              _newModuleId: '',
-              cards: (g.cards || []).map(c => ({
-                ...c,
-                loading: false,
-                error: c.error || null,
-              })),
-            }));
-            return;
+            this.groups = this._hydrateGroups(parsed);
           }
         }
       } catch (_) {}
-      this.groups = [this.makeGroup('Análise principal')];
+      if (!this.groups || this.groups.length === 0) {
+        this.groups = [this.makeGroup('Análise principal')];
+      }
+
+      // 2) Em paralelo, busca o estado canônico do servidor e sobrescreve se
+      //    for diferente. Servidor é a fonte de verdade — outro dispositivo
+      //    pode ter modificado os groups depois do último cache local.
+      //    Exposto como `_loadStatePromise` para o init() poder aguardar
+      //    antes de rodar o auto-run.
+      this._loadStatePromise = this._loadStateRemote();
+    },
+
+    async _loadStateRemote() {
+      this.stateSync.loading = true;
+      this.stateSync.error = null;
+      try {
+        const r = await fetch('/api/radar/state', { credentials: 'same-origin' });
+        if (!r.ok) {
+          // 401: sem sessão — opera só com localStorage; 5xx: idem, com aviso.
+          if (r.status !== 401) {
+            this.stateSync.error = `HTTP ${r.status}`;
+          }
+          return;
+        }
+        const body = await r.json();
+        this._stateVersion = typeof body.version === 'number' ? body.version : 0;
+
+        const remote = Array.isArray(body.state) ? body.state : [];
+        // Compara conteúdo serializado para evitar re-render quando idêntico
+        // (cache local em sincronia com servidor — caso comum num F5).
+        const localSerialized = JSON.stringify(
+          this.groups.map(g => ({ id: g.id, title: g.title, cards: g.cards }))
+        );
+        const remoteSerialized = JSON.stringify(remote);
+
+        if (remote.length > 0 && remoteSerialized !== localSerialized) {
+          this.groups = this._hydrateGroups(remote);
+          // Atualiza cache local com a versão canônica.
+          try { localStorage.setItem(storageKey, remoteSerialized); } catch (_) {}
+          // Re-renderiza charts/mermaid pois o DOM mudou de cards.
+          this.$nextTick(() => this._rerenderAllCharts && this._rerenderAllCharts());
+        } else if (remote.length === 0 && localSerialized.length > 2) {
+          // Servidor vazio mas o cliente tem groups: faz upload imediato como
+          // bootstrap (caso de usuário que já vinha usando antes do sync).
+          this._stateRemoteReady = true;
+          this._scheduleStateSave(0);
+          return;
+        }
+      } catch (e) {
+        this.stateSync.error = String(e && e.message || e);
+      } finally {
+        this.stateSync.loading = false;
+        this._stateRemoteReady = true;
+      }
     },
 
     saveState() {
+      // Cache local sempre — independente de rede/sessão. Mantém UX em offline.
       try {
         const clean = this.groups.map(g => ({ id: g.id, title: g.title, cards: g.cards }));
         localStorage.setItem(storageKey, JSON.stringify(clean));
       } catch (_) {}
+      // Sync remoto debounced. Só dispara depois do primeiro load — assim
+      // evitamos sobrescrever o servidor com o cache antigo durante o init.
+      if (this._stateRemoteReady) {
+        this._scheduleStateSave();
+      }
+    },
+
+    _scheduleStateSave(delayMs = 800) {
+      if (this._stateSaveTimer) clearTimeout(this._stateSaveTimer);
+      this._stateSaveTimer = setTimeout(() => this._flushStateSave(), delayMs);
+    },
+
+    async _flushStateSave() {
+      this._stateSaveTimer = null;
+      const clean = this.groups.map(g => ({ id: g.id, title: g.title, cards: g.cards }));
+      this.stateSync.saving = true;
+      this.stateSync.error = null;
+      try {
+        const r = await fetch('/api/radar/state', {
+          method: 'PUT',
+          credentials: 'same-origin',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            state: clean,
+            expected_version: this._stateVersion,
+          }),
+        });
+        if (!r.ok) {
+          if (r.status !== 401) this.stateSync.error = `HTTP ${r.status}`;
+          return;
+        }
+        const body = await r.json();
+        if (body.conflict) {
+          // Outra aba/dispositivo gravou depois do nosso load. Recarrega o
+          // estado canônico — o usuário vê a versão mais recente, e perdas
+          // de mudanças ficam óbvias (em vez de sobrescrita silenciosa).
+          this.stateSync.error = 'conflito de versão — recarregando estado mais recente';
+          this._stateVersion = body.current_version || null;
+          await this._loadStateRemote();
+          toast('Estado atualizado em outro dispositivo — recarreguei a versão mais recente.', 'warn', 5000);
+          return;
+        }
+        this._stateVersion = body.version;
+        this.stateSync.lastSavedAt = new Date().toISOString();
+      } catch (e) {
+        this.stateSync.error = String(e && e.message || e);
+      } finally {
+        this.stateSync.saving = false;
+      }
     },
 
     makeGroup(title) {

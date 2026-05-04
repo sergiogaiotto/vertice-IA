@@ -11,6 +11,7 @@ from app.api.deps import (
     get_bko_service,
     get_prompt_service,
     get_radar_service,
+    get_radar_state_repo,
     get_registry_service,
     get_skill_service,
     require_user,
@@ -63,6 +64,101 @@ async def upload_transcripts_json(
         raise HTTPException(400, "envie pelo menos um arquivo .json")
     result = await bko.ingest_transcript_files(payload)
     return result
+
+
+# ============================================================
+# Estado por usuário (sync cross-device dos grupos/módulos)
+# ============================================================
+
+
+class RadarStateOut(BaseModel):
+    state: list = []                # array de groups (mesma forma do localStorage)
+    version: int = 0
+    updated_at: str | None = None
+
+
+class RadarStatePutRequest(BaseModel):
+    state: list                     # array de groups serializável em JSON
+    expected_version: int | None = None  # opcional — para concorrência otimista
+
+
+class RadarStatePutResponse(BaseModel):
+    ok: bool
+    version: int | None = None
+    conflict: bool = False
+    current_version: int | None = None
+
+
+@router.get("/state", response_model=RadarStateOut)
+async def get_radar_state(
+    repo=Depends(get_radar_state_repo),
+    user: User = Depends(require_user),
+):
+    """Devolve o estado dos grupos/módulos do usuário (sync cross-device).
+
+    Se o usuário nunca salvou, retorna estado vazio com `version=0`.
+    """
+    import json as _json
+    record = await repo.get(str(user.id))
+    if not record:
+        return RadarStateOut(state=[], version=0, updated_at=None)
+    try:
+        state_arr = _json.loads(record["state_json"] or "[]")
+        if not isinstance(state_arr, list):
+            state_arr = []
+    except Exception:
+        state_arr = []
+    return RadarStateOut(
+        state=state_arr,
+        version=record["version"],
+        updated_at=record["updated_at"],
+    )
+
+
+@router.put("/state", response_model=RadarStatePutResponse)
+async def put_radar_state(
+    body: RadarStatePutRequest,
+    repo=Depends(get_radar_state_repo),
+    user: User = Depends(require_user),
+):
+    """Persiste o estado completo dos grupos/módulos do usuário.
+
+    Recebe o array `state` (estrutura opaca para o servidor) e grava como
+    JSON. Se `expected_version` for enviado, falha com `conflict=true`
+    quando outra aba já avançou a versão — o cliente decide se sobrescreve
+    ou recarrega.
+    """
+    import json as _json
+    try:
+        state_json = _json.dumps(body.state, ensure_ascii=False)
+    except (TypeError, ValueError) as e:
+        raise HTTPException(400, f"state não é JSON-serializável: {e}")
+
+    if len(state_json) > 5_000_000:  # 5MB hard cap defensivo
+        raise HTTPException(413, "state excede 5MB — limpe cards antigos antes de salvar")
+
+    result = await repo.put(
+        user_id=str(user.id),
+        state_json=state_json,
+        expected_version=body.expected_version,
+    )
+    if not result.get("ok"):
+        return RadarStatePutResponse(
+            ok=False,
+            conflict=result.get("conflict", False),
+            current_version=result.get("current_version"),
+        )
+    return RadarStatePutResponse(ok=True, version=result["version"])
+
+
+@router.delete("/state")
+async def delete_radar_state(
+    repo=Depends(get_radar_state_repo),
+    user: User = Depends(require_user),
+):
+    """Apaga o estado salvo do usuário (reset)."""
+    await repo.delete(str(user.id))
+    return {"ok": True}
 
 
 @router.get("/cases")
