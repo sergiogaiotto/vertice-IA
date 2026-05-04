@@ -443,14 +443,17 @@ CREATE TABLE IF NOT EXISTS radar_user_state (
 -- Apenas admin/supervisor podem alterar para os estados públicos.
 CREATE TABLE IF NOT EXISTS radar_card_visibility (
     card_uid TEXT PRIMARY KEY,           -- mesmo uid usado pelo frontend
-    owner_id TEXT NOT NULL,              -- usuário que adicionou o card em tela
-    owner_username TEXT,                 -- snapshot para listagem sobreviver a deletes
+    owner_id TEXT NOT NULL,              -- DONO ATUAL (admin pode transferir)
+    owner_username TEXT,                 -- snapshot do dono atual
+    created_by_id TEXT,                  -- CRIADOR original — não muda em transferências
+    created_by_username TEXT,            -- snapshot do criador (sobrevive a delete do user)
     group_id TEXT,                       -- grupo do dono onde vive (referência para UX)
     group_title TEXT,                    -- snapshot do título
     module_id TEXT,                      -- id do módulo (ou virtual: __chat__, __chart__, etc.)
     module_name TEXT,                    -- snapshot p/ listagem
     module_description TEXT,             -- snapshot
     visibility TEXT NOT NULL DEFAULT 'private',  -- 'private'|'public_lideranca'|'public_analista'
+    previous_visibility TEXT,            -- estado anterior (NULL se nunca mudou)
     card_json TEXT,                      -- snapshot completo do card (renderizar em outras telas)
     feature TEXT DEFAULT 'radar',
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,

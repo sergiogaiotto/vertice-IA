@@ -19,13 +19,16 @@ VALID_VISIBILITY = ("private", "public_lideranca", "public_analista")
 
 class SqliteRadarCardVisibilityRepository:
 
+    _COLS = (
+        "card_uid, owner_id, owner_username, created_by_id, created_by_username, "
+        "group_id, group_title, module_id, module_name, module_description, "
+        "visibility, previous_visibility, card_json, feature, created_at, updated_at"
+    )
+
     async def get(self, card_uid: str) -> dict | None:
         async with connect() as db:
             cur = await db.execute(
-                "SELECT card_uid, owner_id, owner_username, group_id, group_title, "
-                "module_id, module_name, module_description, visibility, card_json, "
-                "feature, created_at, updated_at "
-                "FROM radar_card_visibility WHERE card_uid = ?",
+                f"SELECT {self._COLS} FROM radar_card_visibility WHERE card_uid = ?",
                 (card_uid,),
             )
             row = await cur.fetchone()
@@ -35,10 +38,7 @@ class SqliteRadarCardVisibilityRepository:
         """Retorna mapa uid → row dos cards do dono. Usado p/ override inline no GET state."""
         async with connect() as db:
             cur = await db.execute(
-                "SELECT card_uid, owner_id, owner_username, group_id, group_title, "
-                "module_id, module_name, module_description, visibility, card_json, "
-                "feature, created_at, updated_at "
-                "FROM radar_card_visibility WHERE owner_id = ?",
+                f"SELECT {self._COLS} FROM radar_card_visibility WHERE owner_id = ?",
                 (owner_id,),
             )
             return {r[0]: self._row_to_dict(r) for r in await cur.fetchall()}
@@ -59,9 +59,7 @@ class SqliteRadarCardVisibilityRepository:
             allowed = ("public_analista",)
         placeholders = ",".join("?" for _ in allowed)
         sql = (
-            "SELECT card_uid, owner_id, owner_username, group_id, group_title, "
-            "module_id, module_name, module_description, visibility, card_json, "
-            "feature, created_at, updated_at "
+            f"SELECT {self._COLS} "
             "FROM radar_card_visibility "
             f"WHERE owner_id != ? AND visibility IN ({placeholders}) "
             "ORDER BY updated_at DESC"
@@ -74,10 +72,7 @@ class SqliteRadarCardVisibilityRepository:
         """Listagem global — usada na visão administrativa."""
         async with connect() as db:
             cur = await db.execute(
-                "SELECT card_uid, owner_id, owner_username, group_id, group_title, "
-                "module_id, module_name, module_description, visibility, card_json, "
-                "feature, created_at, updated_at "
-                "FROM radar_card_visibility ORDER BY updated_at DESC"
+                f"SELECT {self._COLS} FROM radar_card_visibility ORDER BY updated_at DESC"
             )
             return [self._row_to_dict(r) for r in await cur.fetchall()]
 
@@ -95,16 +90,20 @@ class SqliteRadarCardVisibilityRepository:
         card_json: dict | None,
         feature: str = "radar",
     ) -> None:
+        """Upsert do card. Em INSERTs, snapshota o criador (owner=criador inicial).
+        Em UPDATEs, NUNCA sobrescreve created_by_*. Não altera previous_visibility
+        — mudanças de visibility vão por update_visibility, que captura o anterior.
+        """
         if visibility not in VALID_VISIBILITY:
             visibility = "private"
         async with connect() as db:
             await db.execute(
                 """
                 INSERT INTO radar_card_visibility
-                  (card_uid, owner_id, owner_username, group_id, group_title,
-                   module_id, module_name, module_description, visibility,
-                   card_json, feature, updated_at)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+                  (card_uid, owner_id, owner_username, created_by_id, created_by_username,
+                   group_id, group_title, module_id, module_name, module_description,
+                   visibility, card_json, feature, updated_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
                 ON CONFLICT(card_uid) DO UPDATE SET
                   owner_username = excluded.owner_username,
                   group_id = excluded.group_id,
@@ -120,6 +119,8 @@ class SqliteRadarCardVisibilityRepository:
                     card_uid,
                     owner_id,
                     owner_username,
+                    owner_id,                # created_by_id no INSERT (owner inicial)
+                    owner_username,          # created_by_username no INSERT
                     group_id,
                     group_title,
                     module_id,
@@ -135,13 +136,48 @@ class SqliteRadarCardVisibilityRepository:
     async def update_visibility(
         self, card_uid: str, visibility: str
     ) -> bool:
+        """Atualiza visibility e armazena a anterior em previous_visibility.
+
+        Comparação atômica: lê o estado atual, salva como previous, grava o novo.
+        Se o novo == atual, no-op (não polui previous_visibility com duplicatas).
+        """
         if visibility not in VALID_VISIBILITY:
             return False
         async with connect() as db:
             cur = await db.execute(
-                "UPDATE radar_card_visibility SET visibility = ?, updated_at = CURRENT_TIMESTAMP "
+                "SELECT visibility FROM radar_card_visibility WHERE card_uid = ?",
+                (card_uid,),
+            )
+            row = await cur.fetchone()
+            if not row:
+                return False
+            current = row[0] or "private"
+            if current == visibility:
+                return True  # nada a fazer
+            cur = await db.execute(
+                "UPDATE radar_card_visibility "
+                "SET visibility = ?, previous_visibility = ?, updated_at = CURRENT_TIMESTAMP "
                 "WHERE card_uid = ?",
-                (visibility, card_uid),
+                (visibility, current, card_uid),
+            )
+            await db.commit()
+            return cur.rowcount > 0
+
+    async def change_owner(
+        self,
+        card_uid: str,
+        new_owner_id: str,
+        new_owner_username: str | None,
+    ) -> bool:
+        """Altera o dono atual; preserva created_by_* (criador original).
+        Limpa previous_visibility — transferência de dono é evento independente.
+        """
+        async with connect() as db:
+            cur = await db.execute(
+                "UPDATE radar_card_visibility "
+                "SET owner_id = ?, owner_username = ?, updated_at = CURRENT_TIMESTAMP "
+                "WHERE card_uid = ?",
+                (new_owner_id, new_owner_username, card_uid),
             )
             await db.commit()
             return cur.rowcount > 0
@@ -207,22 +243,31 @@ class SqliteRadarCardVisibilityRepository:
 
     @staticmethod
     def _row_to_dict(row: Any) -> dict:
+        # Ordem das colunas em `_COLS`:
+        # 0=card_uid, 1=owner_id, 2=owner_username, 3=created_by_id,
+        # 4=created_by_username, 5=group_id, 6=group_title, 7=module_id,
+        # 8=module_name, 9=module_description, 10=visibility,
+        # 11=previous_visibility, 12=card_json, 13=feature,
+        # 14=created_at, 15=updated_at
         try:
-            card_json = json.loads(row[9]) if row[9] else None
+            card_json = json.loads(row[12]) if row[12] else None
         except Exception:
             card_json = None
         return {
             "card_uid": row[0],
             "owner_id": row[1],
             "owner_username": row[2],
-            "group_id": row[3],
-            "group_title": row[4],
-            "module_id": row[5],
-            "module_name": row[6],
-            "module_description": row[7],
-            "visibility": row[8],
+            "created_by_id": row[3],
+            "created_by_username": row[4],
+            "group_id": row[5],
+            "group_title": row[6],
+            "module_id": row[7],
+            "module_name": row[8],
+            "module_description": row[9],
+            "visibility": row[10],
+            "previous_visibility": row[11],
             "card_json": card_json,
-            "feature": row[10],
-            "created_at": row[11],
-            "updated_at": row[12],
+            "feature": row[13],
+            "created_at": row[14],
+            "updated_at": row[15],
         }
