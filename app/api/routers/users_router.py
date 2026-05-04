@@ -13,6 +13,7 @@ from app.api.schemas.users import (
     CreateUserRequest,
     ResetPasswordResponse,
     UpdateActiveRequest,
+    UpdateProfileRequest,
     UpdateRolesRequest,
     UserDetail,
 )
@@ -69,6 +70,23 @@ async def list_users(
     return [_to_detail(u) for u in await svc.list_all()]
 
 
+@router.get("/departments")
+async def list_departments(user: User = Depends(require_user)):
+    """Lista distinct dos departamentos cadastrados em users — alimenta o
+    combobox dos modais Novo/Editar usuário (input + datalist HTML5).
+    Aceita texto livre na UI; este endpoint só sugere os existentes."""
+    _require_admin(user)
+    from app.adapters.db.sqlite import connect
+    async with connect() as db:
+        cur = await db.execute(
+            "SELECT DISTINCT department FROM users "
+            "WHERE department IS NOT NULL AND department != '' "
+            "ORDER BY department"
+        )
+        rows = await cur.fetchall()
+    return [r[0] for r in rows]
+
+
 @router.get("/{user_id}", response_model=UserDetail)
 async def get_user(
     user_id: UUID,
@@ -114,6 +132,27 @@ async def update_roles(
 ):
     _require_admin(user)
     await svc.update_roles(user_id, body.roles)
+    u = await svc.get(user_id)
+    return _to_detail(u)
+
+
+@router.patch("/{user_id}/profile", response_model=UserDetail)
+async def update_profile(
+    user_id: UUID,
+    body: UpdateProfileRequest,
+    svc: UserAdminService = Depends(get_user_admin_service),
+    user: User = Depends(require_user),
+):
+    """Atualiza nome, email, telefone, departamento, cargo de um usuário."""
+    _require_admin(user)
+    await svc.update_profile(
+        user_id,
+        full_name=body.full_name,
+        email=body.email,
+        phone=body.phone,
+        department=body.department,
+        title=body.title,
+    )
     u = await svc.get(user_id)
     return _to_detail(u)
 

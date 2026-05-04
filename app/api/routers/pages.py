@@ -68,64 +68,36 @@ async def cockpit(
     request: Request,
     user: User | None = Depends(current_user_optional),
     reg: RegistryService = Depends(get_registry_service),
-    prompts_svc: PromptService = Depends(get_prompt_service),
-    finops_svc: FinOpsService = Depends(get_finops_service),
-    failsafe_svc: FailsafeService = Depends(get_failsafe_service),
 ):
     if not user:
         return RedirectResponse("/login", status_code=status.HTTP_302_FOUND)
 
     from datetime import datetime
-    from app.adapters.db.repositories.contract_repo import SqliteContractRepository
+    from app.core.services.cockpit_service import CockpitService
 
-    # ---- coleta paralela (sequencial aqui — SQLite local é instantâneo) ----
+    # Atividade pessoal do usuário logado (KPIs, heatmap, timeline, top módulos)
+    cockpit_svc = CockpitService()
+    activity = await cockpit_svc.user_activity(user_id=str(user.id), days=30)
+
+    # Módulos disponíveis (catálogo, sem custos) — só para mostrar atalhos
     modules_all = await reg.list_all()
-    prompts_all = await prompts_svc.list_all()
-    finops_totals = await finops_svc.totals()
-    finops_by_day = await finops_svc.by_day(7)
-    finops_by_model = await finops_svc.by_model()
-    finops_by_module = await finops_svc.by_module()
-    failsafe_pending = await failsafe_svc.list_pending()
-    contracts_recent = await SqliteContractRepository().list_recent(limit=8)
-
-    # ---- agregações para os KPIs ----
-    modules_active = sum(1 for m in modules_all if m.status.value == "active")
-    prompts_active = sum(1 for p in prompts_all if p.is_active)
-
-    # mapa nome → custo/calls 24h (usa context_tag que segue formato "module/...")
-    cost_by_mod = {row["module"]: row for row in finops_by_module}
-    modules_with_usage = []
-    for m in modules_all:
-        agg = cost_by_mod.get(m.name, {})
-        modules_with_usage.append({
+    modules_catalog = [
+        {
             "id": str(m.id),
             "name": m.name,
             "description": m.description,
-            "endpoint_url": m.endpoint_url,
             "status": m.status.value,
-            "calls_24h": agg.get("calls", 0),
-            "cost_24h": agg.get("cost", 0.0),
-        })
-
-    stats = {
-        "modules_active": modules_active,
-        "modules_total": len(modules_all),
-        "prompts_active": prompts_active,
-        "prompts_total": len(prompts_all),
-        "failsafe_pending": len(failsafe_pending),
-    }
+        }
+        for m in modules_all if m.status.value == "active"
+    ]
 
     return templates.TemplateResponse(
         "cockpit/index.html",
         _ctx(
             request, user,
             active_module="cockpit",
-            stats=stats,
-            finops=finops_totals,
-            cost_per_day=finops_by_day,
-            cost_per_model=finops_by_model,
-            modules_with_usage=modules_with_usage,
-            recent_contracts=contracts_recent,
+            activity=activity,
+            modules_catalog=modules_catalog,
             now=datetime.now().strftime("%d/%m/%Y %H:%M"),
         ),
     )
@@ -153,7 +125,7 @@ async def login_submit(
             token = auth.issue_token(user)
             request.session["token"] = token
             request.session["username"] = user.username
-            return RedirectResponse("/radar", status_code=status.HTTP_302_FOUND)
+            return RedirectResponse("/", status_code=status.HTTP_302_FOUND)
 
     user = await auth.authenticate(username, password)
     if not user:
@@ -165,7 +137,7 @@ async def login_submit(
     token = auth.issue_token(user)
     request.session["token"] = token
     request.session["username"] = user.username
-    return RedirectResponse("/radar", status_code=status.HTTP_302_FOUND)
+    return RedirectResponse("/", status_code=status.HTTP_302_FOUND)
 
 
 @router.get("/logout")
@@ -246,6 +218,11 @@ async def raiox_page(
         return RedirectResponse("/login")
     # Todos os usuários autenticados acessam (analista_n3 em modo leitura).
     can_edit = any(r in {"admin", "supervisor"} for r in (user.roles or []))
+    # Cache-busting do raiox.js: usa mtime do arquivo como version param,
+    # garantindo que cada deploy serve a versão atual ao browser.
+    import os
+    js_path = BASE_DIR / "static" / "js" / "raiox.js"
+    asset_v = str(int(os.path.getmtime(js_path))) if js_path.exists() else "1"
     return templates.TemplateResponse(
         "raiox/index.html",
         _ctx(
@@ -253,6 +230,7 @@ async def raiox_page(
             active_module="raiox",
             can_edit=can_edit,
             initial_board_id=board,
+            asset_v=asset_v,
         ),
     )
 
@@ -460,7 +438,17 @@ async def users_page(
         raise HTTPException(403, "apenas admin pode gerenciar usuários")
     users_raw = await svc.list_all()
     users = [
-        {"id": str(u.id), "username": u.username, "roles": u.roles, "is_active": u.is_active}
+        {
+            "id": str(u.id),
+            "username": u.username,
+            "full_name": getattr(u, "full_name", "") or "",
+            "email": getattr(u, "email", "") or "",
+            "phone": getattr(u, "phone", "") or "",
+            "department": getattr(u, "department", "") or "",
+            "title": getattr(u, "title", "") or "",
+            "roles": u.roles,
+            "is_active": u.is_active,
+        }
         for u in users_raw
     ]
     return templates.TemplateResponse(

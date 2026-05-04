@@ -17,6 +17,7 @@ from app.core.domain.entities import (
     FinOpsModelPolicy,
     Module,
     PromptBundle,
+    RaioXAnalysis,
     RaioXBoard,
     RaioXChart,
     RaioXRelationship,
@@ -45,6 +46,17 @@ class UserRepository(ABC):
 
     @abstractmethod
     async def set_password(self, user_id: UUID, hashed: str, salt: str) -> None: ...
+
+    @abstractmethod
+    async def set_profile(
+        self,
+        user_id: UUID,
+        full_name: str,
+        email: str,
+        phone: str,
+        department: str,
+        title: str,
+    ) -> None: ...
 
     @abstractmethod
     async def delete(self, user_id: UUID) -> None: ...
@@ -234,6 +246,20 @@ class RaioXChartRepository(ABC):
 
     @abstractmethod
     async def delete(self, chart_id: UUID) -> bool: ...
+
+
+class RaioXAnalysisRepository(ABC):
+    @abstractmethod
+    async def list_for_board(self, board_id: UUID, limit: int = 50) -> list[RaioXAnalysis]: ...
+
+    @abstractmethod
+    async def get(self, analysis_id: UUID) -> RaioXAnalysis | None: ...
+
+    @abstractmethod
+    async def save(self, analysis: RaioXAnalysis) -> RaioXAnalysis: ...
+
+    @abstractmethod
+    async def delete(self, analysis_id: UUID) -> bool: ...
 
 
 class RaioXRelationshipRepository(ABC):

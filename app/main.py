@@ -1,5 +1,32 @@
 """Entrypoint FastAPI da plataforma Vértice."""
 
+import logging
+import warnings
+
+# Silencia warning recorrente do Pydantic v2 ao processar TypedDicts internos
+# do deepagents/langchain que usam `typing.NotRequired`. O Pydantic gera o aviso
+# em CADA chamada que toca esses schemas — não impacta runtime, só polui logs.
+warnings.filterwarnings(
+    "ignore",
+    message=r".*typing\.NotRequired is not a Python type.*",
+    category=UserWarning,
+)
+
+
+# Silencia warning falso do deepagents.middleware.skills no Windows: o backend
+# devolve paths com `\` (backslash), mas o validador interno usa `PurePosixPath`
+# que não reconhece `\` como separador, retornando o caminho inteiro como `name`.
+# Os SKILL.md do projeto estão corretos — o aviso é só ruído de log.
+class _SkillSpecWarningFilter(logging.Filter):
+    def filter(self, record: logging.LogRecord) -> bool:
+        msg = record.getMessage()
+        if "does not follow Agent Skills specification" in msg and "must match directory name" in msg:
+            return False
+        return True
+
+
+logging.getLogger("deepagents.middleware.skills").addFilter(_SkillSpecWarningFilter())
+
 from contextlib import asynccontextmanager
 from pathlib import Path
 

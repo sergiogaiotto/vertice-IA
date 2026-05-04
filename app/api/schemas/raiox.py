@@ -17,6 +17,8 @@ class BoardOut(BaseModel):
     description: str = ""
     owner_id: str | None = None
     is_shared: bool = True
+    allowed_roles: list[str] = Field(default_factory=list)
+    allowed_departments: list[str] = Field(default_factory=list)
     layout: dict[str, Any] = Field(default_factory=dict)
     filters: dict[str, Any] = Field(default_factory=dict)
     cover_emoji: str = "🩻"
@@ -29,6 +31,8 @@ class BoardCreate(BaseModel):
     description: str = ""
     is_shared: bool = True
     cover_emoji: str = "🩻"
+    allowed_roles: list[str] = Field(default_factory=list)
+    allowed_departments: list[str] = Field(default_factory=list)
 
     @field_validator("name")
     @classmethod
@@ -47,6 +51,8 @@ class BoardUpdate(BaseModel):
     layout: dict[str, Any] | None = None
     filters: dict[str, Any] | None = None
     is_shared: bool | None = None
+    allowed_roles: list[str] | None = None
+    allowed_departments: list[str] | None = None
 
 
 # ---- Charts ----
@@ -70,10 +76,13 @@ class QuerySpec(BaseModel):
 
     - F0: table + label_col + agg + value_col opcional.
     - F1: + filters (crossfilter + globais) + joins (whitelist).
+    - F1+: + value_expr (variável calculada — expressão aritmética sobre colunas).
     """
     table: str
     label_column: str
     value_column: str = ""
+    value_expr: str = ""  # se preenchido, substitui value_column como expressão SQL aritmética
+    value_label: str = ""  # rótulo amigável da variável calculada
     aggregate: str = "count"  # 'count'|'sum'|'avg'|'min'|'max'|'none'
     order_by: str = "value_desc"  # 'value_desc'|'value_asc'|'label_asc'|'label_desc'
     limit: int = 30
@@ -90,6 +99,7 @@ class ChartIn(BaseModel):
     span_rows: int = 1
     query_spec: QuerySpec
     plotly_config: dict[str, Any] = Field(default_factory=dict)
+    skill_path: str = ""
 
 
 class ChartUpdate(BaseModel):
@@ -101,6 +111,7 @@ class ChartUpdate(BaseModel):
     span_rows: int | None = None
     query_spec: QuerySpec | None = None
     plotly_config: dict[str, Any] | None = None
+    skill_path: str | None = None
 
 
 class ChartOut(BaseModel):
@@ -114,6 +125,7 @@ class ChartOut(BaseModel):
     span_rows: int
     query_spec: dict[str, Any]
     plotly_config: dict[str, Any]
+    skill_path: str = ""
     created_by_ai: bool = False
     created_at: datetime
     updated_at: datetime

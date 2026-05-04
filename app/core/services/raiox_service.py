@@ -54,8 +54,31 @@ class RaioXService:
 
     # ---------------- Boards ----------------
 
-    async def list_boards(self, user_id: str | None) -> list[RaioXBoard]:
-        return await self._boards.list_visible(user_id)
+    async def list_boards(
+        self,
+        user_id: str | None,
+        user_roles: list[str] | None = None,
+        user_department: str | None = None,
+    ) -> list[RaioXBoard]:
+        """Devolve boards visíveis ao usuário.
+
+        Visibilidade (OR entre todas):
+          - is_shared=True
+          - owner_id == user_id
+          - alguma role do usuário está em allowed_roles
+          - department do usuário está em allowed_departments
+        """
+        all_visible = await self._boards.list_visible(user_id)
+        roles_set = set(user_roles or [])
+        return [
+            b for b in all_visible
+            if (
+                b.is_shared
+                or (user_id and b.owner_id == user_id)
+                or (b.allowed_roles and roles_set & set(b.allowed_roles))
+                or (b.allowed_departments and user_department and user_department in b.allowed_departments)
+            )
+        ]
 
     async def get_board(self, board_id: UUID) -> RaioXBoard | None:
         return await self._boards.get(board_id)
@@ -67,13 +90,22 @@ class RaioXService:
         description: str = "",
         is_shared: bool = True,
         cover_emoji: str = "🩻",
+        allowed_roles: list[str] | None = None,
+        allowed_departments: list[str] | None = None,
     ) -> RaioXBoard:
+        # Se houver restrição por papel ou dept, força is_shared=False (caso
+        # contrário a restrição seria ignorada — board público vence).
+        roles = [r.strip() for r in (allowed_roles or []) if r and r.strip()]
+        depts = [d.strip() for d in (allowed_departments or []) if d and d.strip()]
+        effective_shared = is_shared and not (roles or depts)
         board = RaioXBoard(
             id=new_uuid(),
             name=name.strip() or "Sem nome",
             description=description,
             owner_id=owner_id,
-            is_shared=is_shared,
+            is_shared=effective_shared,
+            allowed_roles=roles,
+            allowed_departments=depts,
             layout={"cols": 3, "rows": 10},
             filters={},
             cover_emoji=cover_emoji,
@@ -89,6 +121,8 @@ class RaioXService:
         layout: dict[str, Any] | None = None,
         filters: dict[str, Any] | None = None,
         is_shared: bool | None = None,
+        allowed_roles: list[str] | None = None,
+        allowed_departments: list[str] | None = None,
     ) -> RaioXBoard | None:
         board = await self._boards.get(board_id)
         if not board:
@@ -103,6 +137,13 @@ class RaioXService:
             board.filters = filters
         if is_shared is not None:
             board.is_shared = is_shared
+        if allowed_roles is not None:
+            board.allowed_roles = [r.strip() for r in allowed_roles if r and r.strip()]
+        if allowed_departments is not None:
+            board.allowed_departments = [d.strip() for d in allowed_departments if d and d.strip()]
+        # Coerência: se há restrição por papel/dept, board não pode ser shared
+        if board.allowed_roles or board.allowed_departments:
+            board.is_shared = False
         board.updated_at = datetime.utcnow()
         return await self._boards.save(board)
 
@@ -125,6 +166,7 @@ class RaioXService:
         span_cols: int = 1,
         span_rows: int = 1,
         plotly_config: dict[str, Any] | None = None,
+        skill_path: str = "",
         created_by_ai: bool = False,
     ) -> RaioXChart:
         if chart_type not in SUPPORTED_CHART_TYPES:
@@ -143,6 +185,7 @@ class RaioXService:
             span_rows=max(1, min(int(span_rows), 2)),
             query_spec=query_spec,
             plotly_config=plotly_config or {},
+            skill_path=skill_path or "",
             created_by_ai=created_by_ai,
         )
         return await self._charts.save(chart)
@@ -199,6 +242,7 @@ class RaioXService:
                 order_by=order_by,
                 limit=min(limit, 200),
                 filters=filters,
+                value_expr=query_spec.get("value_expr", ""),
             )
 
         return await self._build_series_with_joins(

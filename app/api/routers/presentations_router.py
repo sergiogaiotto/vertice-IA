@@ -587,6 +587,165 @@ class PresentationChatResponse(BaseModel):
     cost_estimated: float
 
 
+@router.delete("/{presentation_id}/chat", status_code=204)
+async def reset_chat(
+    presentation_id: str,
+    svc: PresentationService = Depends(get_presentation_service),
+    user: User = Depends(require_user),
+):
+    """Limpa o histórico de chat da apresentação. A apresentação em si
+    (título, seções, insights) é preservada — só a conversa é zerada."""
+    p = await svc.get(presentation_id)
+    if not p:
+        raise HTTPException(404, "apresentação não encontrada")
+    p.chat_history = []
+    await svc.update(p)
+
+
+class PresentationRefineRequest(BaseModel):
+    """Pedido para refletir o chat na apresentação. Histórico é opcional —
+    se vazio, usa o `chat_history` persistido da apresentação."""
+    history: list[ChatTurn] = []
+    instruction: str = ""  # instrução extra opcional do usuário
+
+
+class PresentationRefineResponse(BaseModel):
+    """Proposta de versão atualizada (NÃO persistida — o cliente confirma)."""
+    model_config = ConfigDict(protected_namespaces=())
+
+    title: str
+    subtitle: str
+    insights: list[InsightOut]
+    sections: list[SectionOut]
+    rationale: str = ""           # explicação do que mudou
+    model_used: str
+    tokens_input: int
+    tokens_output: int
+    cost_estimated: float
+
+
+@router.post("/{presentation_id}/refine", response_model=PresentationRefineResponse)
+async def refine_from_chat(
+    presentation_id: str,
+    body: PresentationRefineRequest,
+    svc: PresentationService = Depends(get_presentation_service),
+    radar: RadarService = Depends(get_radar_service),
+    user: User = Depends(require_user),
+):
+    """Gera uma proposta de versão atualizada da apresentação refletindo a
+    conversa no chat. Não persiste — o cliente revisa e confirma via PATCH."""
+    import json as _json
+
+    p = await svc.get(presentation_id)
+    if not p:
+        raise HTTPException(404, "apresentação não encontrada")
+
+    # Histórico: usa o que veio do body, ou cai no salvo
+    chat_turns = body.history or [
+        ChatTurn(role=t.get("role", ""), content=t.get("content", ""))
+        for t in (p.chat_history or [])
+    ]
+    if not chat_turns and not body.instruction.strip():
+        raise HTTPException(400, "sem conversa nem instrução para refletir")
+
+    # Snapshot atual (compactado)
+    current = {
+        "title": p.title,
+        "subtitle": p.subtitle,
+        "insights": [{"type": i.get("type", "INSIGHT"), "content": i.get("content", "")} for i in (p.insights or [])],
+        "sections": [
+            {"title": s.get("title", ""), "body": s.get("body", "")}
+            for s in (p.sections or [])
+        ],
+    }
+
+    history_lines = [f"{t.role.upper()}: {t.content}" for t in chat_turns[-30:]]
+    history_block = "\n".join(history_lines) if history_lines else "(sem histórico)"
+
+    system = (
+        "Você é editor de apresentações executivas. Recebe uma apresentação atual "
+        "(JSON) e a conversa do usuário sobre ela. Sua tarefa: PROPOR uma versão "
+        "atualizada refletindo o que foi discutido — pode reordenar/reescrever "
+        "seções, adicionar/remover insights, ajustar título e subtítulo.\n\n"
+        "Regras:\n"
+        "- Preserve a quantidade e ordem das seções salvo se a conversa pedir "
+        "  mudança explícita.\n"
+        "- Cada section.body em markdown PT-BR, conciso (3–6 bullets ou 2 parágrafos).\n"
+        "- Mantenha o número de insights próximo ao original.\n"
+        "- Não invente dados; só reorganize/reformule a partir do que está na "
+        "  apresentação atual ou foi mencionado na conversa.\n\n"
+        "Devolva APENAS JSON válido com este shape:\n"
+        '{\n'
+        '  "title": "...",\n'
+        '  "subtitle": "...",\n'
+        '  "insights": [{"type": "...", "content": "..."}],\n'
+        '  "sections": [{"title": "...", "body": "..."}],\n'
+        '  "rationale": "1-2 frases descrevendo o que mudou e por quê"\n'
+        '}'
+    )
+
+    user_prompt = (
+        f"# Apresentação atual (JSON)\n{_json.dumps(current, ensure_ascii=False)}\n\n"
+        f"# Conversa\n{history_block}\n\n"
+        + (f"# Instrução adicional\n{body.instruction.strip()}\n\n" if body.instruction.strip() else "")
+        + "Devolva APENAS o JSON da versão atualizada."
+    )
+
+    llm = await radar.router.complete(
+        system_prompt=system,
+        user_prompt=user_prompt,
+        output_type="SUMARIO",
+        max_tokens=2000,
+        temperature=0.4,
+        force_json=True,
+    )
+
+    text = (llm.text or "").strip()
+    data: dict = {}
+    try:
+        data = _json.loads(text)
+    except _json.JSONDecodeError:
+        first, last = text.find("{"), text.rfind("}")
+        if first >= 0 and last > first:
+            try:
+                data = _json.loads(text[first : last + 1])
+            except _json.JSONDecodeError:
+                data = {}
+
+    if not data or "sections" not in data:
+        raise HTTPException(502, "IA não devolveu JSON válido — tente novamente")
+
+    # Sanitiza e valida
+    insights_out = [
+        InsightOut(type=str(i.get("type", "INSIGHT"))[:32] or "INSIGHT", content=str(i.get("content", "")))
+        for i in (data.get("insights") or [])
+    ]
+    sections_out = [
+        SectionOut(title=str(s.get("title", "Sem título"))[:200], body=str(s.get("body", "")))
+        for s in (data.get("sections") or [])
+    ]
+
+    # FinOps
+    from app.core.services.finops_service import FinOpsService
+    await FinOpsService(radar.finops).record(
+        user_id=user.id, module_id=None, model_name=llm.model,
+        tokens_input=llm.tokens_input, tokens_output=llm.tokens_output,
+        cost_estimated=llm.cost_estimated, context_tag=f"presentation/{presentation_id}/refine",
+    )
+
+    return PresentationRefineResponse(
+        title=str(data.get("title") or p.title),
+        subtitle=str(data.get("subtitle") or p.subtitle or ""),
+        insights=insights_out,
+        sections=sections_out,
+        rationale=str(data.get("rationale", "") or ""),
+        model_used=llm.model,
+        tokens_input=llm.tokens_input,
+        tokens_output=llm.tokens_output,
+        cost_estimated=llm.cost_estimated,
+    )
+
+
 @router.post("/{presentation_id}/chat", response_model=PresentationChatResponse)
 async def chat_about(
     presentation_id: str,

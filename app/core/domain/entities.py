@@ -327,12 +327,21 @@ class TranscriptRecord:
 
 @dataclass
 class RaioXBoard:
-    """Prancheta do Raio X Cliente — agrega charts em um grid 3xN."""
+    """Prancheta do Raio X Cliente — agrega charts em um grid 3xN.
+
+    Visibilidade:
+      - is_shared=True: todos os usuários autenticados acessam.
+      - allowed_roles/allowed_departments: se preenchidos, restringem o board
+        a usuários cujo papel ou departamento bate (OR entre as duas listas).
+      - owner_id sempre acessa o próprio board.
+    """
     id: UUID
     name: str
     description: str = ""
     owner_id: str | None = None
     is_shared: bool = True
+    allowed_roles: list[str] = field(default_factory=list)
+    allowed_departments: list[str] = field(default_factory=list)
     layout: dict[str, Any] = field(default_factory=dict)
     filters: dict[str, Any] = field(default_factory=dict)
     cover_emoji: str = "🩻"
@@ -342,7 +351,11 @@ class RaioXBoard:
 
 @dataclass
 class RaioXChart:
-    """Tile do grid: tipo, posição, span e a query_spec que alimenta o gráfico."""
+    """Tile do grid: tipo, posição, span e a query_spec que alimenta o gráfico.
+
+    `skill_path` é o caminho opcional para um SKILL.md (ex: 'app/skills/x.md')
+    que será usado como contexto na "Análise Inteligente focada" deste chart.
+    """
     id: UUID
     board_id: UUID
     chart_type: str
@@ -353,9 +366,28 @@ class RaioXChart:
     span_cols: int = 1
     span_rows: int = 1
     plotly_config: dict[str, Any] = field(default_factory=dict)
+    skill_path: str = ""
     created_by_ai: bool = False
     created_at: datetime = field(default_factory=datetime.utcnow)
     updated_at: datetime = field(default_factory=datetime.utcnow)
+
+
+@dataclass
+class RaioXAnalysis:
+    """Snapshot persistido de uma execução de "Análises Inteligentes".
+
+    Imutável: cada Gerar análise cria um novo registro. Permite navegação
+    histórica (quem rodou, quando, com quais charts/skills, qual o resultado).
+    """
+    id: UUID
+    board_id: UUID
+    user_id: str | None = None
+    username: str = ""
+    charts_snapshot: list[dict[str, Any]] = field(default_factory=list)
+    per_chart: list[dict[str, Any]] = field(default_factory=list)
+    synthesis: dict[str, str] = field(default_factory=dict)
+    totals: dict[str, Any] = field(default_factory=dict)
+    created_at: datetime = field(default_factory=datetime.utcnow)
 
 
 @dataclass

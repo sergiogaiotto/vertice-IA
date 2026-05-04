@@ -148,16 +148,70 @@ class PresentationService:
             await db.commit()
 
     async def stats(self) -> dict:
+        """Indicadores focados no CONTEÚDO da galeria (sem custos/tokens)."""
+        from datetime import datetime, timedelta
+
         async with connect() as db:
             cur = await db.execute(
-                "SELECT COUNT(*), SUM(cost_estimated), SUM(tokens_input + tokens_output) FROM presentations"
+                "SELECT id, sections, insights, visuals, chat_history, feature, "
+                "created_at, created_by_id "
+                "FROM presentations"
             )
-            row = await cur.fetchone()
-            return {
-                "total": int(row[0] or 0),
-                "total_cost": float(row[1] or 0),
-                "total_tokens": int(row[2] or 0),
-            }
+            rows = await cur.fetchall()
+
+        total = len(rows)
+        sections_total = 0
+        insights_total = 0
+        visuals_total = 0
+        chat_messages_total = 0
+        with_chat = 0
+        last_7d = 0
+        feature_counts: dict[str, int] = {}
+        authors: set[str] = set()
+        cutoff = datetime.utcnow() - timedelta(days=7)
+
+        for r in rows:
+            try:
+                secs = json.loads(r[1]) if r[1] else []
+                ins = json.loads(r[2]) if r[2] else []
+                vis = json.loads(r[3]) if r[3] else []
+                chat = json.loads(r[4]) if r[4] else []
+            except (TypeError, json.JSONDecodeError):
+                secs, ins, vis, chat = [], [], [], []
+            sections_total += len(secs) if isinstance(secs, list) else 0
+            insights_total += len(ins) if isinstance(ins, list) else 0
+            visuals_total += len(vis) if isinstance(vis, list) else 0
+            n_chat = len(chat) if isinstance(chat, list) else 0
+            chat_messages_total += n_chat
+            if n_chat > 0:
+                with_chat += 1
+            feat = (r[5] or "outros").strip() or "outros"
+            feature_counts[feat] = feature_counts.get(feat, 0) + 1
+            created_at = r[6]
+            if isinstance(created_at, str):
+                try:
+                    created_at = datetime.fromisoformat(created_at)
+                except ValueError:
+                    created_at = None
+            if isinstance(created_at, datetime) and created_at >= cutoff:
+                last_7d += 1
+            if r[7]:
+                authors.add(r[7])
+
+        return {
+            "total": total,
+            "sections_total": sections_total,
+            "insights_total": insights_total,
+            "visuals_total": visuals_total,
+            "chat_messages_total": chat_messages_total,
+            "with_chat": with_chat,
+            "last_7d": last_7d,
+            "authors_count": len(authors),
+            "by_feature": [
+                {"feature": k, "count": v}
+                for k, v in sorted(feature_counts.items(), key=lambda x: x[1], reverse=True)
+            ],
+        }
 
     # ---------- factory ----------
 

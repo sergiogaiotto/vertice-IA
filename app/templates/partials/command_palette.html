@@ -3,6 +3,7 @@
   // aspas no x-data (tojson emite ["admin"] com aspas duplas que quebrariam o
   // atributo HTML envolvido em aspas duplas).
   window.__user_roles = {{ (user.roles if user and user.roles else []) | tojson }};
+  window.__user_username = {{ (user.username if user else '') | tojson }};
 </script>
 <div x-data="{
        open: false,
@@ -10,7 +11,7 @@
        userRoles: window.__user_roles || [],
        items: [
          { href: '/',         label: 'Cockpit (visão geral)',           color: 'bg-brand-600',   group: 'Geral',         roles: null },
-         { href: '/radar',    label: 'Radar Voz do Cliente',            color: 'bg-brand-600',   group: 'Funcionalidade', roles: null },
+         { href: '/radar',    label: 'Voz do Cliente',                  color: 'bg-brand-600',   group: 'Funcionalidade', roles: null },
          { href: '/churn',    label: 'Gestão Churn (taxonomia)',        color: 'bg-ai-600',      group: 'Funcionalidade', roles: null },
          { href: '/prompts',  label: 'Editor de Prompts',               color: 'bg-neutral-400', group: 'Configurações',  roles: ['admin', 'supervisor'] },
          { href: '/skills',   label: 'Skills (SKILL.md)',               color: 'bg-neutral-400', group: 'Configurações',  roles: ['admin', 'supervisor'] },

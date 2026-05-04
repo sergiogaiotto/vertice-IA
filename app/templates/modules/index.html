@@ -326,7 +326,7 @@
       </div>
 
       <!-- Step 2: revisar e editar sugestão -->
-      <div x-show="wizardStep === 2 && suggestion" class="px-6 py-5">
+      <div x-show="wizardStep === 2 && suggestionReady" class="px-6 py-5">
         <div class="bg-ai-50 border border-ai-50/50 rounded-lg p-3 mb-4">
           <div class="flex items-center gap-2 mb-1">
             <span class="text-[10px] uppercase tracking-wider text-ai-800 font-medium">sugestão da IA</span>
@@ -509,12 +509,20 @@ function modulesApp() {
     jsonError: '',
     availableApiEndpoints: [],
 
-    // Wizard
+    // Wizard. Inicializa `suggestion` como objeto com defaults — Alpine
+    // avalia expressões no template antes do x-show esconder, então acessar
+    // `suggestion.X` em null gera erros no console.
     wizardOpen: false,
     wizardStep: 1,
     wizardPrompt: '',
     wizardLoading: false,
-    suggestion: null,
+    suggestionReady: false,
+    suggestion: {
+      name: '', endpoint_url: '', description: '',
+      suggested_skill_path: '', source: '', reasoning: '',
+      response_type: 'text', response_config: {},
+      config_params: {},
+    },
     wizardJsonError: '',
     wizardSelectedPrompts: [],   // names dos prompts selecionados
     wizardExamples: [
@@ -785,7 +793,13 @@ function modulesApp() {
     openWizard() {
       this.wizardStep = 1;
       this.wizardPrompt = '';
-      this.suggestion = null;
+      this.suggestionReady = false;
+      this.suggestion = {
+        name: '', endpoint_url: '', description: '',
+        suggested_skill_path: '', source: '', reasoning: '',
+        response_type: 'text', response_config: {},
+        config_params: {},
+      };
       this.wizardJsonError = '';
       this.wizardSelectedPrompts = [];
       this.wizardOpen = true;
@@ -817,13 +831,20 @@ function modulesApp() {
           const found = this.availableSkills.find(s => s.name === r.suggested_skill);
           path = found ? found.skill_path : '';
         }
-        // garante defaults para response_type/config (wizard endpoint pode não devolver)
+        // garante defaults seguros (Alpine acessa as chaves no template antes
+        // do x-show; valores ausentes não podem ser undefined).
         this.suggestion = {
-          ...r,
+          name: r.name || '',
+          endpoint_url: r.endpoint_url || '',
+          description: r.description || '',
           suggested_skill_path: path,
+          source: r.source || '',
+          reasoning: r.reasoning || '',
           response_type: r.response_type || 'text',
           response_config: r.response_config || {},
+          config_params: r.config_params || {},
         };
+        this.suggestionReady = true;
         this.wizardStep = 2;
       } catch (e) { toast(e.message, 'error'); }
       finally { this.wizardLoading = false; }

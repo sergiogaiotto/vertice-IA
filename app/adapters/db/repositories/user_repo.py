@@ -131,6 +131,23 @@ class SqliteUserRepository(UserRepository):
                     )
             await db.commit()
 
+    async def set_profile(
+        self,
+        user_id: UUID,
+        full_name: str,
+        email: str,
+        phone: str,
+        department: str,
+        title: str,
+    ) -> None:
+        async with connect() as db:
+            await db.execute(
+                "UPDATE users SET full_name = ?, email = ?, phone = ?, "
+                "department = ?, title = ? WHERE id = ?",
+                (full_name, email, phone, department, title, str(user_id)),
+            )
+            await db.commit()
+
     async def set_password(self, user_id: UUID, hashed: str, salt: str) -> None:
         async with connect() as db:
             await db.execute(

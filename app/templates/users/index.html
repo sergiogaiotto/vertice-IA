@@ -2,7 +2,14 @@
 {% block title %}Usuários — Vértice{% endblock %}
 
 {% block content %}
-<div x-data="usersApp()" class="px-6 py-5 pb-12 max-w-full">
+<div x-data="usersApp()" x-init="init()" class="px-6 py-5 pb-12 max-w-full">
+
+  <!-- Datalist único reutilizado pelos inputs de departamento (Novo e Editar) -->
+  <datalist id="users-departments-list">
+    <template x-for="d in availableDepartments" :key="d">
+      <option :value="d"></option>
+    </template>
+  </datalist>
 
   <div class="flex items-center justify-between mb-5">
     <div>
@@ -120,7 +127,11 @@
         </div>
         <div>
           <label class="block text-xs text-neutral-500 mb-1">departamento</label>
-          <input x-model="form.department" class="w-full h-9 px-3 border border-neutral-200 rounded-md text-sm" />
+          <input x-model="form.department" list="users-departments-list"
+                 placeholder="escolha um existente ou digite um novo"
+                 class="w-full h-9 px-3 border border-neutral-200 rounded-md text-sm" />
+          <p class="text-[10px] text-neutral-400 mt-0.5"
+             x-text="availableDepartments.length ? `${availableDepartments.length} departamento(s) cadastrado(s) — texto livre permitido` : 'nenhum cadastrado ainda — digite o primeiro'"></p>
         </div>
 
         <div>
@@ -143,7 +154,7 @@
     </div>
   </div>
 
-  <!-- Modal: editar -->
+  <!-- Modal: editar — todos os campos do Novo (exceto senha, via reset senha) -->
   <div x-show="editing" x-cloak class="fixed inset-0 bg-black/40 flex items-center justify-center z-40">
     <div @click.outside="editing = null" class="bg-white rounded-xl p-6 w-[440px] max-w-[92vw]">
       <div class="flex items-center gap-3 mb-4">
@@ -151,25 +162,54 @@
              :style="editing && `background:${editing.avatar_color}`" x-text="editing && editing.initials"></div>
         <div>
           <h3 class="text-base font-medium" x-text="editing && editing.username"></h3>
-          <p class="text-xs text-neutral-500">Edite os papéis. Para mudar a senha, use o botão "reset senha" na lista.</p>
+          <p class="text-xs text-neutral-500">Edite os dados. Senha tem fluxo separado (botão "reset senha" na lista).</p>
         </div>
       </div>
 
-      <div>
-        <label class="block text-xs text-neutral-500 mb-1.5">papéis</label>
-        <div class="flex flex-wrap gap-1.5">
-          <template x-for="r in availableRoles" :key="r">
-            <button type="button" @click="toggleRoleEdit(r)"
-                    class="text-[11px] px-2.5 py-1 rounded-full border transition"
-                    :class="editing && editing.roles.includes(r) ? 'bg-brand-600 text-white border-brand-600' : 'border-neutral-200 text-neutral-600 hover:bg-neutral-50'"
-                    x-text="r"></button>
-          </template>
+      <div class="space-y-3" x-show="editing">
+        <div class="grid grid-cols-2 gap-3">
+          <div>
+            <label class="block text-xs text-neutral-500 mb-1">nome completo</label>
+            <input x-model="editing.full_name" class="w-full h-9 px-3 border border-neutral-200 rounded-md text-sm" />
+          </div>
+          <div>
+            <label class="block text-xs text-neutral-500 mb-1">cargo</label>
+            <input x-model="editing.title" class="w-full h-9 px-3 border border-neutral-200 rounded-md text-sm" />
+          </div>
+          <div>
+            <label class="block text-xs text-neutral-500 mb-1">e-mail</label>
+            <input x-model="editing.email" class="w-full h-9 px-3 border border-neutral-200 rounded-md text-sm" />
+          </div>
+          <div>
+            <label class="block text-xs text-neutral-500 mb-1">telefone</label>
+            <input x-model="editing.phone" class="w-full h-9 px-3 border border-neutral-200 rounded-md text-sm" />
+          </div>
+        </div>
+        <div>
+          <label class="block text-xs text-neutral-500 mb-1">departamento</label>
+          <input x-model="editing.department" list="users-departments-list"
+                 placeholder="escolha um existente ou digite um novo"
+                 class="w-full h-9 px-3 border border-neutral-200 rounded-md text-sm" />
+          <p class="text-[10px] text-neutral-400 mt-0.5"
+             x-text="availableDepartments.length ? `${availableDepartments.length} departamento(s) cadastrado(s) — texto livre permitido` : 'nenhum cadastrado ainda — digite o primeiro'"></p>
+        </div>
+
+        <div>
+          <label class="block text-xs text-neutral-500 mb-1.5">papéis</label>
+          <div class="flex flex-wrap gap-1.5">
+            <template x-for="r in availableRoles" :key="r">
+              <button type="button" @click="toggleRoleEdit(r)"
+                      class="text-[11px] px-2.5 py-1 rounded-full border transition"
+                      :class="editing && editing.roles.includes(r) ? 'bg-brand-600 text-white border-brand-600' : 'border-neutral-200 text-neutral-600 hover:bg-neutral-50'"
+                      x-text="r"></button>
+            </template>
+          </div>
         </div>
       </div>
 
       <div class="flex justify-end gap-2 pt-4 mt-4 border-t border-neutral-100">
         <button @click="editing = null" class="text-sm px-3 py-1.5 text-neutral-600 hover:bg-neutral-100 rounded-md">fechar</button>
-        <button @click="saveRoles()" class="text-sm px-3 py-1.5 bg-brand-600 hover:bg-brand-800 text-white rounded-md font-medium">salvar</button>
+        <button @click="saveEdit()" class="text-sm px-3 py-1.5 bg-brand-600 hover:bg-brand-800 text-white rounded-md font-medium">salvar</button>
       </div>
     </div>
   </div>
@@ -187,10 +227,19 @@ function usersApp() {
       ]
     })),
     availableRoles: ['root', 'admin', 'supervisor', 'analista_n3', 'finops'],
+    availableDepartments: [],
     filter: '',
     openNew: false,
     editing: null,
     form: { username: '', password: '', full_name: '', email: '', phone: '', department: '', title: '', roles: ['analista_n3'] },
+
+    async init() {
+      try {
+        this.availableDepartments = await window.api('GET', '/api/users/departments');
+      } catch (e) {
+        this.availableDepartments = [];
+      }
+    },
 
     filtered() {
       const q = this.filter.toLowerCase();
@@ -220,19 +269,36 @@ function usersApp() {
         this.users.push(created);
         toast(`Usuário ${created.username} criado.`, 'success');
         this.openNew = false;
+        // Se digitou departamento novo, refresca o datalist
+        if (this.form.department && !this.availableDepartments.includes(this.form.department)) {
+          this.availableDepartments = [...this.availableDepartments, this.form.department].sort();
+        }
         this.form = { username: '', password: '', full_name: '', email: '', phone: '', department: '', title: '', roles: ['analista_n3'] };
       } catch (e) { toast(e.message, 'error'); }
     },
 
     editUser(u) { this.editing = JSON.parse(JSON.stringify(u)); },
 
-    async saveRoles() {
+    async saveEdit() {
       if (!this.editing) return;
       try {
+        // 1) profile (full_name, email, phone, department, title)
+        await window.api('PATCH', `/api/users/${this.editing.id}/profile`, {
+          full_name: this.editing.full_name || '',
+          email: this.editing.email || '',
+          phone: this.editing.phone || '',
+          department: this.editing.department || '',
+          title: this.editing.title || '',
+        });
+        // 2) roles (chamada separada — endpoint dedicado preserva a auditoria)
         const updated = await window.api('PATCH', `/api/users/${this.editing.id}/roles`, { roles: this.editing.roles });
+        // Atualiza datalist se editou para um departamento novo
+        if (this.editing.department && !this.availableDepartments.includes(this.editing.department)) {
+          this.availableDepartments = [...this.availableDepartments, this.editing.department].sort();
+        }
         const idx = this.users.findIndex(x => x.id === updated.id);
-        if (idx >= 0) this.users[idx] = updated;
-        toast('Papéis atualizados.', 'success');
+        if (idx >= 0) this.users[idx] = { ...updated, initials: this.users[idx].initials, avatar_color: this.users[idx].avatar_color };
+        toast('Usuário atualizado.', 'success');
         this.editing = null;
       } catch (e) { toast(e.message, 'error'); }
     },

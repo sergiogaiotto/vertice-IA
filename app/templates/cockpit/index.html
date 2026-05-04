@@ -4,260 +4,224 @@
 {% block content %}
 <div class="px-6 py-5 pb-12 max-w-full">
 
-  <!-- Header -->
-  <div class="flex items-end justify-between mb-6">
+  <!-- ============================================================ -->
+  <!-- Header                                                        -->
+  <!-- ============================================================ -->
+  <div class="flex items-end justify-between mb-6 flex-wrap gap-3">
     <div>
-      <h1 class="text-xl font-medium">Cockpit</h1>
+      <h1 class="text-xl font-medium">
+        <span class="text-2xl">👋</span>
+        Olá, <span class="font-semibold">{{ user.full_name or user.username }}</span>
+      </h1>
       <p class="text-xs text-neutral-500 mt-0.5">
-        Olá, <span class="font-medium text-neutral-700">{{ user.username }}</span>.
-        Visão consolidada da plataforma — atualizado agora.
+        seu painel pessoal de produtividade — últimas análises geradas em todos os módulos
       </p>
     </div>
-    <div class="text-[10px] text-neutral-400 uppercase tracking-wider">
-      {{ now }}
-    </div>
+    <div class="text-[10px] text-neutral-400 uppercase tracking-wider">{{ now }}</div>
   </div>
 
   <!-- ============================================================ -->
-  <!-- KPIs principais                                              -->
+  <!-- KPIs pessoais                                                 -->
   <!-- ============================================================ -->
-  <div class="grid grid-cols-2 md:grid-cols-4 gap-3 mb-6">
-
+  <div class="grid grid-cols-2 md:grid-cols-5 gap-3 mb-6">
     <div class="bg-white border border-neutral-200 rounded-lg p-4 relative overflow-hidden">
-      <div class="text-[10px] uppercase tracking-wider text-neutral-500">módulos ativos</div>
-      <div class="text-2xl font-medium text-brand-700 mt-1">{{ stats.modules_active }}</div>
-      <div class="text-[11px] text-neutral-400 mt-0.5">de {{ stats.modules_total }} registrados</div>
-      <div class="absolute top-2 right-2 w-7 h-7 rounded-md bg-brand-50 flex items-center justify-center text-brand-600">
-        <svg width="14" height="14" viewBox="0 0 24 24" fill="none"><path d="M12 2 L22 7 V17 L12 22 L2 17 V7 Z" stroke="currentColor" stroke-width="1.5"/></svg>
-      </div>
+      <div class="absolute top-2 right-2 text-2xl opacity-10">🔥</div>
+      <div class="text-[11px] text-neutral-500 uppercase tracking-wider">hoje</div>
+      <div class="text-3xl font-medium mt-1 text-brand-600">{{ activity.kpis.today }}</div>
+      <div class="text-[10px] text-neutral-400 mt-0.5">análises geradas</div>
     </div>
-
     <div class="bg-white border border-neutral-200 rounded-lg p-4 relative overflow-hidden">
-      <div class="text-[10px] uppercase tracking-wider text-neutral-500">prompts ativos</div>
-      <div class="text-2xl font-medium text-ai-700 mt-1">{{ stats.prompts_active }}</div>
-      <div class="text-[11px] text-neutral-400 mt-0.5">{{ stats.prompts_total }} versões totais</div>
-      <div class="absolute top-2 right-2 w-7 h-7 rounded-md bg-ai-50 flex items-center justify-center text-ai-600">
-        <svg width="14" height="14" viewBox="0 0 24 24" fill="none"><path d="M5 4 H19 V20 H5 Z M9 9 H15 M9 13 H15" stroke="currentColor" stroke-width="1.5"/></svg>
-      </div>
+      <div class="absolute top-2 right-2 text-2xl opacity-10">📅</div>
+      <div class="text-[11px] text-neutral-500 uppercase tracking-wider">7 dias</div>
+      <div class="text-3xl font-medium mt-1">{{ activity.kpis.last_7d }}</div>
+      <div class="text-[10px] text-neutral-400 mt-0.5">últimos 7 dias</div>
     </div>
-
     <div class="bg-white border border-neutral-200 rounded-lg p-4 relative overflow-hidden">
-      <div class="text-[10px] uppercase tracking-wider text-neutral-500">custo 24h</div>
-      <div class="text-2xl font-medium text-neutral-800 mt-1">US$ {{ '%.4f'|format(finops.cost_24h) }}</div>
-      <div class="text-[11px] text-neutral-400 mt-0.5">{{ finops.calls_24h }} chamadas</div>
-      <div class="absolute top-2 right-2 w-7 h-7 rounded-md bg-neutral-100 flex items-center justify-center text-neutral-600">
-        <svg width="14" height="14" viewBox="0 0 24 24" fill="none"><path d="M12 3 V21 M7 7 Q7 4 11 4 H14 Q17 4 17 7 Q17 10 14 10 H10 Q7 10 7 13 Q7 16 10 16 H14 Q17 16 17 19 Q17 21 14 21 H11" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg>
-      </div>
+      <div class="absolute top-2 right-2 text-2xl opacity-10">📊</div>
+      <div class="text-[11px] text-neutral-500 uppercase tracking-wider">30 dias</div>
+      <div class="text-3xl font-medium mt-1">{{ activity.kpis.last_30d }}</div>
+      <div class="text-[10px] text-neutral-400 mt-0.5">total no mês</div>
     </div>
-
-    <div class="bg-white border border-neutral-200 rounded-lg p-4 relative overflow-hidden"
-         {% if stats.failsafe_pending > 0 %}style="border-color: #FBA88E;"{% endif %}>
-      <div class="text-[10px] uppercase tracking-wider {% if stats.failsafe_pending > 0 %}text-risk-700{% else %}text-neutral-500{% endif %}">failsafe pendente</div>
-      <div class="text-2xl font-medium {% if stats.failsafe_pending > 0 %}text-risk-700{% else %}text-neutral-800{% endif %} mt-1">{{ stats.failsafe_pending }}</div>
-      <div class="text-[11px] text-neutral-400 mt-0.5">
-        {% if stats.failsafe_pending > 0 %}<a href="/failsafe" class="text-risk-600 hover:underline">revisar agora →</a>{% else %}sem ações pendentes{% endif %}
+    <div class="bg-white border border-neutral-200 rounded-lg p-4 relative overflow-hidden">
+      <div class="absolute top-2 right-2 text-2xl opacity-10">⚡</div>
+      <div class="text-[11px] text-neutral-500 uppercase tracking-wider">streak</div>
+      <div class="text-3xl font-medium mt-1 text-ai-600">{{ activity.kpis.streak_days }}</div>
+      <div class="text-[10px] text-neutral-400 mt-0.5">dias seguidos</div>
+    </div>
+    <div class="bg-white border border-neutral-200 rounded-lg p-4 relative overflow-hidden">
+      <div class="absolute top-2 right-2 text-2xl opacity-10">⭐</div>
+      <div class="text-[11px] text-neutral-500 uppercase tracking-wider">favorito</div>
+      <div class="text-lg font-medium mt-1 truncate uppercase">
+        {{ activity.kpis.favorite_feature or "—" }}
       </div>
-      <div class="absolute top-2 right-2 w-7 h-7 rounded-md flex items-center justify-center
-           {% if stats.failsafe_pending > 0 %}bg-risk-50 text-risk-600{% else %}bg-neutral-100 text-neutral-600{% endif %}">
-        <svg width="14" height="14" viewBox="0 0 24 24" fill="none"><path d="M12 3 L20 6 V12 Q20 17 12 21 Q4 17 4 12 V6 Z" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round"/></svg>
-      </div>
+      <div class="text-[10px] text-neutral-400 mt-0.5">módulo mais usado</div>
     </div>
   </div>
 
-  <!-- ============================================================ -->
-  <!-- Linha principal: módulos + custo por dia                     -->
-  <!-- ============================================================ -->
-  <div class="grid grid-cols-1 lg:grid-cols-3 gap-3 mb-6">
+  <div class="grid grid-cols-1 lg:grid-cols-3 gap-4 mb-6">
 
-    <!-- Status dos módulos (2 colunas) -->
-    <div class="lg:col-span-2 bg-white border border-neutral-200 rounded-lg">
-      <header class="px-4 py-3 border-b border-neutral-100 flex items-center justify-between">
+    <!-- ============================================================ -->
+    <!-- Heatmap de atividade (estilo GitHub) — 7d × 24h              -->
+    <!-- ============================================================ -->
+    <section class="lg:col-span-2 bg-white border border-neutral-200 rounded-lg p-5">
+      <header class="flex items-start justify-between mb-3">
         <div>
-          <h2 class="text-sm font-medium">Status dos módulos</h2>
-          <p class="text-[10px] text-neutral-400">building blocks instalados e seu uso recente</p>
+          <h2 class="text-sm font-medium">Pulso de atividade</h2>
+          <p class="text-[11px] text-neutral-500">7 dias × 24 horas — quanto mais escuro, mais análises naquele bloco</p>
         </div>
-        <a href="/modules" class="text-[11px] text-brand-700 hover:underline">gerenciar →</a>
+        <div class="text-[10px] text-neutral-400">
+          pico: <span class="font-mono">{{ activity.heatmap.max }}</span> ação(ões) por hora
+        </div>
       </header>
-      <div class="divide-y divide-neutral-100">
-        {% for m in modules_with_usage %}
-        <a href="/blocks" class="flex items-center gap-3 px-4 py-2.5 hover:bg-neutral-50 transition">
-          <div class="relative w-2 h-2 shrink-0">
-            <span class="absolute inset-0 rounded-full {% if m.status == 'active' %}bg-brand-400{% elif m.status == 'paused' %}bg-amber-400{% else %}bg-neutral-300{% endif %}"></span>
-            {% if m.status == 'active' %}<span class="absolute inset-0 rounded-full bg-brand-400 animate-ping opacity-50"></span>{% endif %}
-          </div>
-          <div class="flex-1 min-w-0">
-            <div class="text-sm font-medium text-neutral-800 truncate">{{ m.name }}</div>
-            <div class="text-[11px] text-neutral-400 truncate">{{ m.description or m.endpoint_url }}</div>
-          </div>
-          <div class="flex items-center gap-3 text-[11px] text-neutral-500 shrink-0">
-            <span title="chamadas 24h">{{ m.calls_24h }} <span class="text-neutral-400">calls</span></span>
-            <span title="custo 24h">US$ {{ '%.4f'|format(m.cost_24h) }}</span>
-            <span class="text-[10px] px-1.5 py-0.5 rounded
-                  {% if m.status == 'active' %}bg-brand-50 text-brand-800{% elif m.status == 'paused' %}bg-amber-50 text-amber-800{% else %}bg-neutral-100 text-neutral-500{% endif %}">{{ m.status }}</span>
-          </div>
-        </a>
-        {% else %}
-        <div class="px-4 py-8 text-center text-sm text-neutral-400">Nenhum módulo registrado.</div>
-        {% endfor %}
-      </div>
-    </div>
 
-    <!-- Custo por dia (sparkline simples em SVG inline) -->
-    <div class="bg-white border border-neutral-200 rounded-lg">
-      <header class="px-4 py-3 border-b border-neutral-100">
-        <h2 class="text-sm font-medium">Custo por dia (7d)</h2>
-        <p class="text-[10px] text-neutral-400">soma de cost_estimated</p>
-      </header>
-      <div class="p-4">
-        {% if cost_per_day %}
-          {% set max_cost = cost_per_day | map(attribute='cost') | max %}
-          {% if max_cost == 0 %}{% set max_cost = 1 %}{% endif %}
-          <svg viewBox="0 0 280 100" class="w-full h-24" preserveAspectRatio="none">
-            {% set step = 280 / (cost_per_day|length) if cost_per_day|length > 0 else 280 %}
-            {% for d in cost_per_day | reverse %}
-              {% set h = (d.cost / max_cost) * 80 %}
-              {% set x = loop.index0 * step + 4 %}
-              <rect x="{{ x }}" y="{{ 90 - h }}" width="{{ step - 8 }}" height="{{ h }}" rx="2" fill="#DC2626" opacity="0.85"/>
+      {% set max = activity.heatmap.max or 1 %}
+      <div class="overflow-x-auto">
+        <table class="text-[9px] font-mono w-full">
+          <thead>
+            <tr class="text-neutral-300">
+              <th class="text-right pr-2 w-12"></th>
+              {% for h in range(24) %}
+                <th class="text-center w-4 {% if h % 4 == 0 %}text-neutral-400{% endif %}">
+                  {% if h % 4 == 0 %}{{ "%02d"|format(h) }}{% endif %}
+                </th>
+              {% endfor %}
+            </tr>
+          </thead>
+          <tbody>
+            {% for day in activity.heatmap.days %}
+              {% set row = activity.heatmap.matrix[loop.index0] %}
+              <tr>
+                <td class="text-right pr-2 text-neutral-400 align-middle">{{ day[5:] }}</td>
+                {% for v in row %}
+                  {% set intensity = (v / max) if max > 0 else 0 %}
+                  <td class="p-0.5 align-middle">
+                    <div class="w-3.5 h-3.5 rounded-sm"
+                         style="background-color: {% if v == 0 %}#F5F5F4{% else %}rgba(220, 38, 38, {{ 0.18 + intensity * 0.82 }}){% endif %};"
+                         title="{{ day }} {{ '%02d'|format(loop.index0) }}h · {{ v }} análise(s)">
+                    </div>
+                  </td>
+                {% endfor %}
+              </tr>
             {% endfor %}
-          </svg>
-          <div class="flex items-center justify-between mt-2 text-[10px] text-neutral-400">
-            <span>{{ cost_per_day[-1].day if cost_per_day else '' }}</span>
-            <span>hoje</span>
-          </div>
-          <div class="mt-3 pt-3 border-t border-neutral-100 grid grid-cols-2 gap-2 text-xs">
-            <div>
-              <div class="text-[10px] uppercase text-neutral-400">custo total</div>
-              <div class="font-medium">US$ {{ '%.4f'|format(finops.cost_total) }}</div>
-            </div>
-            <div>
-              <div class="text-[10px] uppercase text-neutral-400">tokens</div>
-              <div class="font-medium">{{ '{:,}'.format(finops.tokens_total).replace(',', '.') }}</div>
-            </div>
-          </div>
-        {% else %}
-          <div class="py-8 text-center text-xs text-neutral-400">
-            Sem dados de FinOps ainda.<br>
-            Use os módulos para gerar histórico.
-          </div>
-        {% endif %}
+          </tbody>
+        </table>
       </div>
-    </div>
 
-  </div>
-
-  <!-- ============================================================ -->
-  <!-- Atividade recente + custo por modelo                         -->
-  <!-- ============================================================ -->
-  <div class="grid grid-cols-1 lg:grid-cols-3 gap-3 mb-6">
-
-    <!-- Atividade: contratos recentes -->
-    <div class="lg:col-span-2 bg-white border border-neutral-200 rounded-lg">
-      <header class="px-4 py-3 border-b border-neutral-100 flex items-center justify-between">
-        <div>
-          <h2 class="text-sm font-medium">Atividade recente</h2>
-          <p class="text-[10px] text-neutral-400">últimas transcrições processadas</p>
+      <!-- Legenda -->
+      <div class="flex items-center gap-2 mt-3 text-[10px] text-neutral-400">
+        <span>menos</span>
+        <div class="flex items-center gap-0.5">
+          <div class="w-3 h-3 rounded-sm" style="background:#F5F5F4"></div>
+          <div class="w-3 h-3 rounded-sm" style="background:rgba(220,38,38,0.30)"></div>
+          <div class="w-3 h-3 rounded-sm" style="background:rgba(220,38,38,0.55)"></div>
+          <div class="w-3 h-3 rounded-sm" style="background:rgba(220,38,38,0.80)"></div>
+          <div class="w-3 h-3 rounded-sm" style="background:rgba(220,38,38,1.00)"></div>
         </div>
-        <a href="/radar" class="text-[11px] text-brand-700 hover:underline">abrir radar →</a>
-      </header>
-      <div class="divide-y divide-neutral-100">
-        {% for c in recent_contracts %}
-        <a href="/radar/{{ c.contract_number }}" class="flex items-center gap-3 px-4 py-2.5 hover:bg-neutral-50 transition">
-          <span class="w-1.5 h-1.5 rounded-full bg-brand-400 shrink-0"></span>
-          <div class="flex-1 min-w-0">
-            <div class="text-sm font-medium truncate">{{ c.contract_number }}</div>
-            <div class="text-[11px] text-neutral-400 truncate">
-              {{ c.operator or 'sem operador' }} · {{ c.segment.value if c.segment else 'residencial' }}
-            </div>
-          </div>
-          <span class="text-[10px] text-neutral-400 shrink-0 font-mono">{{ c.contact_at.strftime('%d/%m %H:%M') if c.contact_at.strftime else c.contact_at }}</span>
-        </a>
-        {% else %}
-        <div class="px-4 py-8 text-center text-xs text-neutral-400">
-          Nenhuma transcrição ainda. Faça upload em <a href="/radar" class="text-brand-700 hover:underline">Radar</a>.
-        </div>
-        {% endfor %}
+        <span>mais</span>
       </div>
-    </div>
+    </section>
 
-    <!-- Custo por modelo (lista simples ranqueada) -->
-    <div class="bg-white border border-neutral-200 rounded-lg">
-      <header class="px-4 py-3 border-b border-neutral-100 flex items-center justify-between">
-        <div>
-          <h2 class="text-sm font-medium">Custo por modelo</h2>
-          <p class="text-[10px] text-neutral-400">acumulado total</p>
-        </div>
-        <a href="/finops" class="text-[11px] text-brand-700 hover:underline">FinOps →</a>
+    <!-- ============================================================ -->
+    <!-- Top módulos pelo usuário (mini-bars)                         -->
+    <!-- ============================================================ -->
+    <section class="bg-white border border-neutral-200 rounded-lg p-5">
+      <header class="mb-3">
+        <h2 class="text-sm font-medium">Seus módulos no mês</h2>
+        <p class="text-[11px] text-neutral-500">ranking por análises geradas</p>
       </header>
-      <div class="p-3">
-        {% if cost_per_model %}
-          {% set max_model_cost = cost_per_model | map(attribute='cost') | max %}
-          {% if max_model_cost == 0 %}{% set max_model_cost = 1 %}{% endif %}
-          {% for m in cost_per_model[:6] %}
-            <div class="mb-2.5">
-              <div class="flex items-center justify-between mb-1">
-                <span class="text-xs font-mono text-neutral-700 truncate" title="{{ m.model }}">{{ m.model }}</span>
-                <span class="text-[10px] text-neutral-500 shrink-0">US$ {{ '%.4f'|format(m.cost) }}</span>
+
+      {% if activity.top_features %}
+        {% set top_max = activity.top_features[0].count or 1 %}
+        <div class="space-y-2.5">
+          {% for f in activity.top_features %}
+            <div>
+              <div class="flex items-center justify-between text-xs mb-1">
+                <span class="font-medium uppercase tracking-wider">{{ f.feature }}</span>
+                <span class="text-neutral-500 tabular">{{ f.count }}</span>
               </div>
-              <div class="h-1.5 bg-neutral-100 rounded-full overflow-hidden">
-                <div class="h-full bg-ai-600 rounded-full" style="width: {{ (m.cost / max_model_cost * 100)|round(0) }}%"></div>
+              <div class="h-2 bg-neutral-100 rounded-full overflow-hidden">
+                <div class="h-full bg-gradient-to-r from-brand-400 to-brand-600 rounded-full"
+                     style="width: {{ ((f.count / top_max) * 100)|round(0) }}%"></div>
               </div>
             </div>
           {% endfor %}
-        {% else %}
-          <div class="py-6 text-center text-xs text-neutral-400">Sem chamadas registradas.</div>
-        {% endif %}
-      </div>
-    </div>
-
-  </div>
-
-  <!-- ============================================================ -->
-  <!-- Quick actions                                                -->
-  <!-- ============================================================ -->
-  {% set _privileged = ('admin' in (user.roles or []) or 'supervisor' in (user.roles or [])) %}
-  <div class="bg-white border border-neutral-200 rounded-lg p-4">
-    <h2 class="text-xs uppercase tracking-wider text-neutral-500 mb-3">ações rápidas</h2>
-    <div class="grid grid-cols-2 {% if _privileged %}md:grid-cols-4{% else %}md:grid-cols-2{% endif %} gap-2">
-      <a href="/radar" class="flex items-center gap-3 px-3 py-2.5 rounded-md border border-neutral-200 hover:bg-brand-50 hover:border-brand-400/40 transition">
-        <div class="w-8 h-8 rounded bg-brand-50 text-brand-600 flex items-center justify-center">
-          <svg width="14" height="14" viewBox="0 0 24 24" fill="none"><path d="M9 9 L15 9 M9 13 L13 13 M3 5 H21 V19 H3 Z" stroke="currentColor" stroke-width="1.5"/></svg>
         </div>
-        <div class="min-w-0">
-          <div class="text-sm font-medium">Analisar transcrição</div>
-          <div class="text-[10px] text-neutral-400">abrir Radar</div>
+      {% else %}
+        <div class="text-center py-8 text-xs text-neutral-400">
+          <div class="text-3xl mb-2 opacity-50">📭</div>
+          Sem atividade nos últimos 30 dias.<br>
+          Comece por um módulo abaixo.
         </div>
-      </a>
-      <a href="/churn" class="flex items-center gap-3 px-3 py-2.5 rounded-md border border-neutral-200 hover:bg-brand-50 hover:border-brand-400/40 transition">
-        <div class="w-8 h-8 rounded bg-brand-50 text-brand-600 flex items-center justify-center">
-          <svg width="14" height="14" viewBox="0 0 24 24" fill="none"><path d="M3 17 L8 12 L12 14 L21 5" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg>
-        </div>
-        <div class="min-w-0">
-          <div class="text-sm font-medium">Classificar churn</div>
-          <div class="text-[10px] text-neutral-400">taxonomia hierárquica</div>
-        </div>
-      </a>
-      {% if _privileged %}
-      <a href="/modules" class="flex items-center gap-3 px-3 py-2.5 rounded-md border border-neutral-200 hover:bg-ai-50 hover:border-ai-400/40 transition">
-        <div class="w-8 h-8 rounded bg-ai-50 text-ai-600 flex items-center justify-center">
-          <svg width="14" height="14" viewBox="0 0 24 24" fill="none"><path d="M12 2 L13.5 8.5 L20 10 L13.5 11.5 L12 18 L10.5 11.5 L4 10 L10.5 8.5 Z" stroke="currentColor" stroke-width="1.5"/></svg>
-        </div>
-        <div class="min-w-0">
-          <div class="text-sm font-medium">Novo módulo (IA)</div>
-          <div class="text-[10px] text-neutral-400">wizard guiado</div>
-        </div>
-      </a>
-      <a href="/prompts" class="flex items-center gap-3 px-3 py-2.5 rounded-md border border-neutral-200 hover:bg-neutral-50 transition">
-        <div class="w-8 h-8 rounded bg-neutral-100 text-neutral-700 flex items-center justify-center">
-          <svg width="14" height="14" viewBox="0 0 24 24" fill="none"><path d="M5 4 H19 V20 H5 Z M9 9 H15 M9 13 H15 M9 17 H13" stroke="currentColor" stroke-width="1.5"/></svg>
-        </div>
-        <div class="min-w-0">
-          <div class="text-sm font-medium">Editar prompts</div>
-          <div class="text-[10px] text-neutral-400">versionamento + diff</div>
-        </div>
-      </a>
       {% endif %}
-    </div>
+    </section>
   </div>
+
+  <!-- ============================================================ -->
+  <!-- Timeline (últimas 12 análises)                                -->
+  <!-- ============================================================ -->
+  <section class="bg-white border border-neutral-200 rounded-lg p-5 mb-6">
+    <header class="flex items-center justify-between mb-4">
+      <div>
+        <h2 class="text-sm font-medium">Suas últimas análises</h2>
+        <p class="text-[11px] text-neutral-500">stream cronológico do que você gerou nos módulos da plataforma</p>
+      </div>
+      <a href="/audit" class="text-[11px] text-brand-700 hover:underline">ver tudo →</a>
+    </header>
+
+    {% if activity.timeline %}
+      <ol class="relative border-l-2 border-neutral-100 ml-2">
+        {% for ev in activity.timeline %}
+          <li class="ml-6 mb-4 last:mb-0">
+            <span class="absolute -left-[7px] w-3 h-3 rounded-full
+                         {% if ev.feature == 'radar' %}bg-brand-500{% elif ev.feature == 'churn' %}bg-ai-600{% elif ev.feature == 'raiox' %}bg-warn-400{% elif ev.feature == 'modules' %}bg-info-600{% else %}bg-neutral-400{% endif %}
+                         ring-2 ring-white"></span>
+            <div class="flex items-start justify-between gap-3">
+              <div class="min-w-0 flex-1">
+                <div class="text-xs font-medium">{{ ev.label }}</div>
+                <div class="text-[10px] text-neutral-400 font-mono truncate" title="{{ ev.target }}">{{ ev.target }}</div>
+              </div>
+              <span class="text-[10px] text-neutral-500 shrink-0 tabular">{{ ev.relative }}</span>
+            </div>
+          </li>
+        {% endfor %}
+      </ol>
+    {% else %}
+      <div class="text-center py-10 text-sm text-neutral-400">
+        <div class="text-4xl mb-3 opacity-50">🌱</div>
+        Nenhuma análise gerada ainda.<br>
+        <span class="text-xs">Use os módulos abaixo para começar a construir seu histórico.</span>
+      </div>
+    {% endif %}
+  </section>
+
+  <!-- ============================================================ -->
+  <!-- Atalhos para módulos ativos                                   -->
+  <!-- ============================================================ -->
+  <section>
+    <h2 class="text-sm font-medium mb-3">Módulos disponíveis</h2>
+    <div class="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-3">
+      <a href="/raiox"
+         class="bg-white border border-neutral-200 rounded-lg p-4 hover:border-brand-400 hover:shadow-sm transition group">
+        <div class="text-2xl mb-2">🩻</div>
+        <div class="text-sm font-medium group-hover:text-brand-700">Raio X Cliente</div>
+        <div class="text-[11px] text-neutral-500 mt-0.5">pranchetas com gráficos Plotly interativos</div>
+      </a>
+      <a href="/radar"
+         class="bg-white border border-neutral-200 rounded-lg p-4 hover:border-brand-400 hover:shadow-sm transition group">
+        <div class="text-2xl mb-2">📞</div>
+        <div class="text-sm font-medium group-hover:text-brand-700">Voz do Cliente</div>
+        <div class="text-[11px] text-neutral-500 mt-0.5">cards de análise sobre transcrições</div>
+      </a>
+      {% for m in modules_catalog if m.name not in ['radar','raiox'] %}
+        <a href="/modules"
+           class="bg-white border border-neutral-200 rounded-lg p-4 hover:border-brand-400 hover:shadow-sm transition group">
+          <div class="text-2xl mb-2">⚙️</div>
+          <div class="text-sm font-medium group-hover:text-brand-700">{{ m.name }}</div>
+          <div class="text-[11px] text-neutral-500 mt-0.5 truncate">{{ m.description or 'módulo configurável' }}</div>
+        </a>
+      {% endfor %}
+    </div>
+  </section>
 
 </div>
 {% endblock %}

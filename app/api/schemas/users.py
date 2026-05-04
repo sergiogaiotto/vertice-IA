@@ -20,6 +20,18 @@ class UpdateRolesRequest(BaseModel):
     roles: list[str]
 
 
+class UpdateProfileRequest(BaseModel):
+    """Atualização dos campos do perfil (não inclui senha nem roles).
+
+    Roles são alterados via /roles separadamente. Senha via /reset-password.
+    """
+    full_name: str = ""
+    email: str = ""
+    phone: str = ""
+    department: str = ""
+    title: str = ""
+
+
 class UpdateActiveRequest(BaseModel):
     active: bool
 

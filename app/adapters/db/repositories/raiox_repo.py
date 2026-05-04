@@ -7,8 +7,9 @@ from datetime import datetime
 from uuid import UUID
 
 from app.adapters.db.sqlite import connect
-from app.core.domain.entities import RaioXBoard, RaioXChart, RaioXRelationship
+from app.core.domain.entities import RaioXAnalysis, RaioXBoard, RaioXChart, RaioXRelationship
 from app.core.ports.repositories import (
+    RaioXAnalysisRepository,
     RaioXBoardRepository,
     RaioXChartRepository,
     RaioXRelationshipRepository,
@@ -47,6 +48,8 @@ def _row_to_board(row) -> RaioXBoard:
         cover_emoji=row[7] or "🩻",
         created_at=_ts(row[8]),
         updated_at=_ts(row[9]),
+        allowed_roles=_loads(row[10] if len(row) > 10 else None, []),
+        allowed_departments=_loads(row[11] if len(row) > 11 else None, []),
     )
 
 
@@ -65,6 +68,7 @@ def _row_to_chart(row) -> RaioXChart:
         created_by_ai=bool(row[10]),
         created_at=_ts(row[11]),
         updated_at=_ts(row[12]),
+        skill_path=row[13] if len(row) > 13 and row[13] else "",
     )
 
 
@@ -84,32 +88,36 @@ def _row_to_rel(row) -> RaioXRelationship:
 
 
 class SqliteRaioXBoardRepository(RaioXBoardRepository):
+    _COLS = (
+        "id, name, description, owner_id, is_shared, layout_json, "
+        "filters_json, cover_emoji, created_at, updated_at, "
+        "allowed_roles, allowed_departments"
+    )
 
     async def list_visible(self, user_id: str | None) -> list[RaioXBoard]:
+        # Visibilidade fina (papel/departamento) é aplicada no service —
+        # aqui devolvemos shared + owned, e o service refina com user.roles/department.
         async with connect() as db:
             if user_id:
                 cur = await db.execute(
-                    "SELECT id, name, description, owner_id, is_shared, layout_json, "
-                    "filters_json, cover_emoji, created_at, updated_at "
-                    "FROM raiox_boards "
+                    f"SELECT {self._COLS} FROM raiox_boards "
                     "WHERE is_shared = 1 OR owner_id = ? "
+                    "OR (allowed_roles IS NOT NULL AND allowed_roles != '[]') "
+                    "OR (allowed_departments IS NOT NULL AND allowed_departments != '[]') "
                     "ORDER BY updated_at DESC",
                     (user_id,),
                 )
             else:
                 cur = await db.execute(
-                    "SELECT id, name, description, owner_id, is_shared, layout_json, "
-                    "filters_json, cover_emoji, created_at, updated_at "
-                    "FROM raiox_boards WHERE is_shared = 1 ORDER BY updated_at DESC"
+                    f"SELECT {self._COLS} FROM raiox_boards "
+                    "WHERE is_shared = 1 ORDER BY updated_at DESC"
                 )
             return [_row_to_board(r) for r in await cur.fetchall()]
 
     async def get(self, board_id: UUID) -> RaioXBoard | None:
         async with connect() as db:
             cur = await db.execute(
-                "SELECT id, name, description, owner_id, is_shared, layout_json, "
-                "filters_json, cover_emoji, created_at, updated_at "
-                "FROM raiox_boards WHERE id = ?",
+                f"SELECT {self._COLS} FROM raiox_boards WHERE id = ?",
                 (str(board_id),),
             )
             row = await cur.fetchone()
@@ -119,8 +127,9 @@ class SqliteRaioXBoardRepository(RaioXBoardRepository):
         async with connect() as db:
             await db.execute(
                 "INSERT INTO raiox_boards "
-                "(id, name, description, owner_id, is_shared, layout_json, filters_json, cover_emoji) "
-                "VALUES (?, ?, ?, ?, ?, ?, ?, ?) "
+                "(id, name, description, owner_id, is_shared, layout_json, filters_json, "
+                " cover_emoji, allowed_roles, allowed_departments) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?) "
                 "ON CONFLICT(id) DO UPDATE SET "
                 "  name = excluded.name, "
                 "  description = excluded.description, "
@@ -128,6 +137,8 @@ class SqliteRaioXBoardRepository(RaioXBoardRepository):
                 "  layout_json = excluded.layout_json, "
                 "  filters_json = excluded.filters_json, "
                 "  cover_emoji = excluded.cover_emoji, "
+                "  allowed_roles = excluded.allowed_roles, "
+                "  allowed_departments = excluded.allowed_departments, "
                 "  updated_at = CURRENT_TIMESTAMP",
                 (
                     str(board.id),
@@ -138,6 +149,8 @@ class SqliteRaioXBoardRepository(RaioXBoardRepository):
                     json.dumps(board.layout, ensure_ascii=False),
                     json.dumps(board.filters, ensure_ascii=False),
                     board.cover_emoji,
+                    json.dumps(board.allowed_roles, ensure_ascii=False),
+                    json.dumps(board.allowed_departments, ensure_ascii=False),
                 ),
             )
             await db.commit()
@@ -151,14 +164,16 @@ class SqliteRaioXBoardRepository(RaioXBoardRepository):
 
 
 class SqliteRaioXChartRepository(RaioXChartRepository):
+    _COLS = (
+        "id, board_id, title, chart_type, position_row, position_col, "
+        "span_cols, span_rows, query_spec_json, plotly_config_json, "
+        "created_by_ai, created_at, updated_at, skill_path"
+    )
 
     async def list_for_board(self, board_id: UUID) -> list[RaioXChart]:
         async with connect() as db:
             cur = await db.execute(
-                "SELECT id, board_id, title, chart_type, position_row, position_col, "
-                "span_cols, span_rows, query_spec_json, plotly_config_json, "
-                "created_by_ai, created_at, updated_at "
-                "FROM raiox_charts WHERE board_id = ? "
+                f"SELECT {self._COLS} FROM raiox_charts WHERE board_id = ? "
                 "ORDER BY position_row, position_col",
                 (str(board_id),),
             )
@@ -167,10 +182,7 @@ class SqliteRaioXChartRepository(RaioXChartRepository):
     async def get(self, chart_id: UUID) -> RaioXChart | None:
         async with connect() as db:
             cur = await db.execute(
-                "SELECT id, board_id, title, chart_type, position_row, position_col, "
-                "span_cols, span_rows, query_spec_json, plotly_config_json, "
-                "created_by_ai, created_at, updated_at "
-                "FROM raiox_charts WHERE id = ?",
+                f"SELECT {self._COLS} FROM raiox_charts WHERE id = ?",
                 (str(chart_id),),
             )
             row = await cur.fetchone()
@@ -181,8 +193,9 @@ class SqliteRaioXChartRepository(RaioXChartRepository):
             await db.execute(
                 "INSERT INTO raiox_charts "
                 "(id, board_id, title, chart_type, position_row, position_col, "
-                " span_cols, span_rows, query_spec_json, plotly_config_json, created_by_ai) "
-                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) "
+                " span_cols, span_rows, query_spec_json, plotly_config_json, "
+                " created_by_ai, skill_path) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) "
                 "ON CONFLICT(id) DO UPDATE SET "
                 "  title = excluded.title, "
                 "  chart_type = excluded.chart_type, "
@@ -192,6 +205,7 @@ class SqliteRaioXChartRepository(RaioXChartRepository):
                 "  span_rows = excluded.span_rows, "
                 "  query_spec_json = excluded.query_spec_json, "
                 "  plotly_config_json = excluded.plotly_config_json, "
+                "  skill_path = excluded.skill_path, "
                 "  updated_at = CURRENT_TIMESTAMP",
                 (
                     str(chart.id),
@@ -205,6 +219,7 @@ class SqliteRaioXChartRepository(RaioXChartRepository):
                     json.dumps(chart.query_spec, ensure_ascii=False),
                     json.dumps(chart.plotly_config, ensure_ascii=False),
                     1 if chart.created_by_ai else 0,
+                    chart.skill_path or None,
                 ),
             )
             await db.commit()
@@ -213,6 +228,74 @@ class SqliteRaioXChartRepository(RaioXChartRepository):
     async def delete(self, chart_id: UUID) -> bool:
         async with connect() as db:
             cur = await db.execute("DELETE FROM raiox_charts WHERE id = ?", (str(chart_id),))
+            await db.commit()
+            return cur.rowcount > 0
+
+
+def _row_to_analysis(row) -> RaioXAnalysis:
+    return RaioXAnalysis(
+        id=UUID(row[0]),
+        board_id=UUID(row[1]),
+        user_id=row[2],
+        username=row[3] or "",
+        charts_snapshot=_loads(row[4], []),
+        per_chart=_loads(row[5], []),
+        synthesis=_loads(row[6], {}),
+        totals=_loads(row[7], {}),
+        created_at=_ts(row[8]),
+    )
+
+
+class SqliteRaioXAnalysisRepository(RaioXAnalysisRepository):
+    _COLS = (
+        "id, board_id, user_id, username, charts_snapshot, "
+        "per_chart_json, synthesis_json, totals_json, created_at"
+    )
+
+    async def list_for_board(self, board_id: UUID, limit: int = 50) -> list[RaioXAnalysis]:
+        async with connect() as db:
+            cur = await db.execute(
+                f"SELECT {self._COLS} FROM raiox_analyses "
+                "WHERE board_id = ? ORDER BY created_at DESC LIMIT ?",
+                (str(board_id), limit),
+            )
+            return [_row_to_analysis(r) for r in await cur.fetchall()]
+
+    async def get(self, analysis_id: UUID) -> RaioXAnalysis | None:
+        async with connect() as db:
+            cur = await db.execute(
+                f"SELECT {self._COLS} FROM raiox_analyses WHERE id = ?",
+                (str(analysis_id),),
+            )
+            row = await cur.fetchone()
+            return _row_to_analysis(row) if row else None
+
+    async def save(self, a: RaioXAnalysis) -> RaioXAnalysis:
+        async with connect() as db:
+            await db.execute(
+                "INSERT INTO raiox_analyses "
+                "(id, board_id, user_id, username, charts_snapshot, "
+                " per_chart_json, synthesis_json, totals_json) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                (
+                    str(a.id),
+                    str(a.board_id),
+                    a.user_id,
+                    a.username,
+                    json.dumps(a.charts_snapshot, ensure_ascii=False),
+                    json.dumps(a.per_chart, ensure_ascii=False),
+                    json.dumps(a.synthesis, ensure_ascii=False),
+                    json.dumps(a.totals, ensure_ascii=False),
+                ),
+            )
+            await db.commit()
+            return a
+
+    async def delete(self, analysis_id: UUID) -> bool:
+        async with connect() as db:
+            cur = await db.execute(
+                "DELETE FROM raiox_analyses WHERE id = ?", (str(analysis_id),)
+            )
             await db.commit()
             return cur.rowcount > 0
 

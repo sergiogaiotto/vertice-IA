@@ -1,7 +1,13 @@
 {% extends "base.html" %}
-{% block title %}Radar Voz do Cliente — Vértice{% endblock %}
+{% block title %}Voz do Cliente — Vértice{% endblock %}
 
 {% block content %}
+<script>
+  // Caso/registro posicionado e usuário logado — usados pelo Text-to-SQL como
+  // filtros de contexto obrigatórios.
+  window.__current_case_number = {{ (selected_case.case_number if selected_case else '') | tojson }};
+  window.__current_username = {{ (user.username if user else '') | tojson }};
+</script>
 <div x-data="radarApp()" x-init="init()" class="px-6 py-5 pb-12 max-w-full">
 
   <!-- ============================================================ -->
@@ -43,7 +49,7 @@
           <div class="flex items-center justify-between mt-1 text-[10px] text-neutral-400">
             <span>
               <span x-show="caseSearchLoading" class="text-brand-700">buscando...</span>
-              <span x-show="!caseSearchLoading" x-text="`${caseResults.length} resultado(s)${caseFilter ? ' para \"' + caseFilter + '\"' : ''}`"></span>
+              <span x-show="!caseSearchLoading" x-text='caseResults.length + " resultado(s)" + (caseFilter ? " para \"" + caseFilter + "\"" : "")'></span>
             </span>
             <span x-show="caseFilter" class="text-brand-700 cursor-pointer" @click="caseFilter = ''; refreshCases()">limpar</span>
           </div>
@@ -692,6 +698,11 @@
               Contexto atual
               <span class="text-[10px] text-neutral-400 ml-1" x-text="`(${availableFields.length})`"></span>
             </button>
+            <button x-show="!isChatPicker" @click="pickerTab = 'modules'" class="text-xs px-3 py-2 border-b-2 transition"
+                    :class="pickerTab === 'modules' ? 'border-brand-600 text-brand-700 font-medium' : 'border-transparent text-neutral-500 hover:text-neutral-800'">
+              Módulos
+              <span class="text-[10px] text-neutral-400 ml-1" x-text="`(${executedModuleCards.length})`"></span>
+            </button>
             <button x-show="!isChatPicker" @click="pickerTab = 'tables'" class="text-xs px-3 py-2 border-b-2 transition"
                     :class="pickerTab === 'tables' ? 'border-brand-600 text-brand-700 font-medium' : 'border-transparent text-neutral-500 hover:text-neutral-800'">
               Tabelas da funcionalidade
@@ -740,6 +751,37 @@
               <div x-show="availableFields.length === 0" class="text-center py-8 text-xs text-neutral-400 italic">
                 <span x-show="!isChatPicker">nenhum caso/transcrição selecionada — use a aba "Tabelas" ou "Input livre"</span>
                 <span x-show="isChatPicker">nenhum campo de contexto disponível — selecione um caso primeiro</span>
+              </div>
+            </div>
+
+            <!-- Tab: Módulos (outputs de cards já executados na tela) -->
+            <div x-show="pickerTab === 'modules'" class="flex-1 overflow-y-auto p-4 space-y-1.5">
+              <template x-for="c in executedModuleCards" :key="c.uid">
+                <label class="block border rounded-md transition cursor-pointer"
+                       :class="selectedField === '__module__:' + c.uid ? 'border-ai-600 bg-ai-50/30' : 'border-neutral-200 hover:bg-neutral-50'">
+                  <div class="flex items-start gap-3 p-3">
+                    <input type="radio" name="field-pick-module" :value="'__module__:' + c.uid"
+                           x-model="selectedField" class="mt-0.5 text-ai-600 focus:ring-ai-600" />
+                    <div class="flex-1 min-w-0">
+                      <div class="flex items-center gap-2">
+                        <span class="text-[10px] px-1.5 py-0 bg-ai-50 text-ai-800 rounded font-mono shrink-0" x-text="c.module_name"></span>
+                        <span class="text-sm font-medium truncate" x-text="c.module_description || c.module_name"></span>
+                        <span class="text-[10px] text-neutral-400 ml-auto" x-text="`${(c.result || '').length} chars`"></span>
+                      </div>
+                      <div class="text-[10px] text-neutral-400 mt-0.5 flex items-center gap-1">
+                        <span>grupo</span>
+                        <span class="font-mono" x-text="c._groupTitle"></span>
+                        <span>·</span>
+                        <span class="font-mono" x-text="c.input_label"></span>
+                      </div>
+                      <div class="text-[11px] text-neutral-600 mt-1.5 italic line-clamp-2 font-mono"
+                           x-text="(c.result || '').length > 220 ? c.result.substring(0, 220) + '…' : c.result"></div>
+                    </div>
+                  </div>
+                </label>
+              </template>
+              <div x-show="executedModuleCards.length === 0" class="text-center py-8 text-xs text-neutral-400 italic">
+                nenhum módulo executado nesta tela ainda — execute um módulo primeiro para usá-lo como entrada de outro
               </div>
             </div>
 
@@ -1365,13 +1407,13 @@
       </div>
 
       <!-- Step 2: preview editável -->
-      <div x-show="presentationModal.step === 2 && presentationModal.preview" class="flex-1 flex flex-col overflow-hidden">
+      <div x-show="presentationModal.step === 2 && presentationModal.previewReady" class="flex-1 flex flex-col overflow-hidden">
         <div class="px-6 py-2.5 border-b border-neutral-100 bg-neutral-25 flex items-center gap-3 text-[11px]">
           <span class="text-neutral-500">preview</span>
           <span class="text-neutral-300">·</span>
-          <span x-show="presentationModal.preview" x-text="`${(presentationModal.preview.insights || []).length} insights · ${(presentationModal.preview.sections || []).length} seções`"></span>
+          <span x-show="presentationModal.previewReady" x-text="`${(presentationModal.preview.insights || []).length} insights · ${(presentationModal.preview.sections || []).length} seções`"></span>
           <span class="text-neutral-300">·</span>
-          <span x-show="presentationModal.preview" x-text="`${presentationModal.preview.model_used} · US$ ${(presentationModal.preview.cost_estimated || 0).toFixed(5)}`"></span>
+          <span x-show="presentationModal.previewReady" x-text="`${presentationModal.preview.model_used} · US$ ${(presentationModal.preview.cost_estimated || 0).toFixed(5)}`"></span>
           <div class="flex-1"></div>
           <button @click="presentationModal.step = 1" class="text-brand-700 hover:underline">← config</button>
           <button @click="generatePresentation()" class="text-brand-700 hover:underline">↻ regenerar</button>
@@ -1781,18 +1823,28 @@ function radarApp() {
       loading: false,
     },
 
-    // Apresentação VIP (módulo virtual __present__)
+    // Apresentação VIP (módulo virtual __present__).
+    // Todas as props têm defaults seguros porque Alpine avalia expressões
+    // do template ANTES do x-show esconder, então acessar `.preview.X` ou
+    // `.visuals.length` em null/undefined dispara warnings/erros no console.
     presentationModal: {
       open: false,
       step: 1,           // 1 = config, 2 = preview
       groupIdx: null,
       cards: [],         // cards-fonte capturados ao abrir
+      visuals: [],       // imagens capturadas dos charts (para DOCX/PPTX)
+      capturingVisuals: false,
       audience: 'Cliente VIP',
       tone: 'executivo',
       title_hint: '',
       loading: false,
       saving: false,
-      preview: null,     // { title, subtitle, insights[], sections[], model_used, cost_estimated }
+      previewReady: false,
+      preview: {
+        title: '', subtitle: '',
+        insights: [], sections: [], visuals: [],
+        model_used: '', cost_estimated: 0,
+      },
     },
 
     // Geração de skill a partir do chat
@@ -2639,8 +2691,18 @@ function radarApp() {
       if (!svgEl) { toast('Nada para baixar.', 'warn'); return; }
       const filename = `diagrama_${this.diagramFullscreen.type}_${Date.now()}.${format}`;
 
-      // serializa SVG
-      const svgString = new XMLSerializer().serializeToString(svgEl);
+      // 1) Clona e normaliza o SVG: dimensões explícitas + xmlns obrigatórios.
+      //    Sem isso, browsers carregam a Image com 0×0 e o canvas sai vazio.
+      const clone = svgEl.cloneNode(true);
+      const vb = svgEl.viewBox && svgEl.viewBox.baseVal;
+      const w = (vb && vb.width) || svgEl.clientWidth || svgEl.getBoundingClientRect().width || 800;
+      const h = (vb && vb.height) || svgEl.clientHeight || svgEl.getBoundingClientRect().height || 600;
+      clone.setAttribute('xmlns', 'http://www.w3.org/2000/svg');
+      clone.setAttribute('xmlns:xlink', 'http://www.w3.org/1999/xlink');
+      clone.setAttribute('width', String(w));
+      clone.setAttribute('height', String(h));
+
+      const svgString = new XMLSerializer().serializeToString(clone);
       const svgBlob = new Blob(
         ['<?xml version="1.0" encoding="UTF-8"?>\n' + svgString],
         { type: 'image/svg+xml;charset=utf-8' }
@@ -2651,31 +2713,43 @@ function radarApp() {
         return;
       }
 
-      // PNG: rasteriza em canvas
+      // 2) PNG: rasteriza em canvas. Mermaid usa <foreignObject> com HTML — isso
+      //    tainta o canvas em alguns browsers, fazendo canvas.toBlob retornar null.
+      //    Estratégia: data URI (base64) em vez de blob: URL — evita CORS/tainting,
+      //    e tratamos toBlob === null como erro explícito.
       try {
-        const url = URL.createObjectURL(svgBlob);
+        const utf8 = new TextEncoder().encode(svgString);
+        let binary = '';
+        utf8.forEach(b => { binary += String.fromCharCode(b); });
+        const dataUri = 'data:image/svg+xml;base64,' + btoa(binary);
+
         const img = new Image();
+        img.crossOrigin = 'anonymous';
         await new Promise((resolve, reject) => {
           img.onload = resolve;
-          img.onerror = reject;
-          img.src = url;
+          img.onerror = () => reject(new Error('falha ao carregar SVG no <img>'));
+          img.src = dataUri;
         });
+
         const scale = 2;
-        const w = (svgEl.viewBox && svgEl.viewBox.baseVal && svgEl.viewBox.baseVal.width) || svgEl.clientWidth || 800;
-        const h = (svgEl.viewBox && svgEl.viewBox.baseVal && svgEl.viewBox.baseVal.height) || svgEl.clientHeight || 600;
         const canvas = document.createElement('canvas');
-        canvas.width = w * scale;
-        canvas.height = h * scale;
+        canvas.width = Math.max(1, Math.round(w * scale));
+        canvas.height = Math.max(1, Math.round(h * scale));
         const ctx = canvas.getContext('2d');
-        ctx.fillStyle = '#FAFAF9';   // fundo igual à app (não-transparente)
+        ctx.fillStyle = '#FAFAF9';
         ctx.fillRect(0, 0, canvas.width, canvas.height);
         ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
-        canvas.toBlob(blob => {
-          this._triggerDownload(URL.createObjectURL(blob), filename);
-        }, 'image/png');
-        URL.revokeObjectURL(url);
+
+        const blob = await new Promise((resolve) => canvas.toBlob(resolve, 'image/png'));
+        if (!blob) {
+          throw new Error(
+            'canvas tainted (provavelmente por <foreignObject> ou recursos externos no SVG). ' +
+            'Use o botão SVG e converta externamente.'
+          );
+        }
+        this._triggerDownload(URL.createObjectURL(blob), filename);
       } catch (e) {
-        toast('Falha ao gerar PNG: ' + e.message, 'error');
+        toast('Falha ao gerar PNG: ' + (e.message || e), 'error');
       }
     },
 
@@ -2791,11 +2865,17 @@ function radarApp() {
       });
 
       try {
+        // Contexto: caso posicionado em tela + usuário logado.
+        // O backend injeta isso como filtros obrigatórios no Deep Agent.
+        const caseNumber = (window.__current_case_number || '').toString();
+        const username = (window.__current_username || window.__user_username || '').toString();
         const r = await window.api('POST', '/api/radar/sql/ask', {
           question: text,
           tables: card.sql_tables,
           history: historySnapshot.slice(0, -1),  // histórico SEM a pergunta atual
           feature: 'radar',
+          case_number: caseNumber,
+          username: username,
         });
         const c = this._findCard(uid);
         if (c) {
@@ -2932,7 +3012,12 @@ function radarApp() {
         title_hint: '',
         loading: false,
         saving: false,
-        preview: null,
+        previewReady: false,
+        preview: {
+          title: '', subtitle: '',
+          insights: [], sections: [], visuals: [],
+          model_used: '', cost_estimated: 0,
+        },
       };
 
       // captura assíncrona (não bloqueia abertura do modal)
@@ -3106,7 +3191,16 @@ function radarApp() {
           cards: m.cards,
           visuals: m.visuals,
         });
-        m.preview = r;
+        m.preview = {
+          title: r?.title || '',
+          subtitle: r?.subtitle || '',
+          insights: r?.insights || [],
+          sections: r?.sections || [],
+          visuals: r?.visuals || [],
+          model_used: r?.model_used || '',
+          cost_estimated: r?.cost_estimated || 0,
+        };
+        m.previewReady = true;
         m.step = 2;
       } catch (e) {
         toast('Falha ao gerar: ' + e.message, 'error');
@@ -3116,12 +3210,12 @@ function radarApp() {
     },
 
     addPresInsight() {
-      if (!this.presentationModal.preview) return;
+      if (!this.presentationModal.previewReady) return;
       this.presentationModal.preview.insights.push({ type: 'INSIGHT', content: '' });
     },
 
     addPresSection() {
-      if (!this.presentationModal.preview) return;
+      if (!this.presentationModal.previewReady) return;
       this.presentationModal.preview.sections.push({ title: 'Nova seção', body: '## Subtítulo\n\nConteúdo em **markdown**...' });
     },
 
@@ -3653,6 +3747,11 @@ function radarApp() {
       if (this.pickerTab === 'tables' || this.selectedField === '__schema__') {
         return this.schemaSelected.value !== null && this.schemaSelected.value !== '';
       }
+      if ((this.selectedField || '').startsWith('__module__:')) {
+        const uid = this.selectedField.slice('__module__:'.length);
+        const c = this.executedModuleCards.find(x => x.uid === uid);
+        return !!(c && c.result && c.result.length > 0);
+      }
       const f = this.availableFields.find(x => x.key === this.selectedField);
       return f && f.value && f.value.length > 0;
     },
@@ -3663,8 +3762,29 @@ function radarApp() {
         const pk = this.schemaSelected.pk_value ? `[${this.schemaSelected.pk_value}]` : '';
         return `${this.schemaSelected.table}.${this.schemaSelected.column}${pk}`;
       }
+      if ((this.selectedField || '').startsWith('__module__:')) {
+        const uid = this.selectedField.slice('__module__:'.length);
+        const c = this.executedModuleCards.find(x => x.uid === uid);
+        return c ? `módulo · ${c.module_name}` : '—';
+      }
       const f = this.availableFields.find(x => x.key === this.selectedField);
       return f ? f.label : '—';
+    },
+
+    /** Cards já executados em todos os grupos (com result preenchido), exceto
+     *  cards virtuais (__chat__, __chart__, __diagram__, __sql__) que não têm
+     *  output textual reaproveitável. Usado pela aba "Módulos" do field picker. */
+    get executedModuleCards() {
+      const VIRTUAL = new Set(['__chat__', '__chart__', '__diagram__', '__sql__', '__present__']);
+      const out = [];
+      for (const g of (this.groups || [])) {
+        for (const c of (g.cards || [])) {
+          if (VIRTUAL.has(c.module_id)) continue;
+          if (!c.result || !c.result.length) continue;
+          out.push({ ...c, _groupTitle: g.title || '(sem nome)' });
+        }
+      }
+      return out;
     },
 
     // ---------- schema treeview ----------
@@ -3800,6 +3920,13 @@ function radarApp() {
         fieldKey = `${sel.table}.${sel.column}`;
         fieldLabel = `${sel.table}.${sel.column}[${sel.pk_value}]`;
         fieldValue = sel.value;
+      } else if ((this.selectedField || '').startsWith('__module__:')) {
+        // Encadeamento: usa o output de outro módulo como input deste
+        const uid = this.selectedField.slice('__module__:'.length);
+        const sourceCard = this.executedModuleCards.find(x => x.uid === uid);
+        fieldKey = this.selectedField;
+        fieldLabel = `← ${sourceCard?.module_name || 'módulo'}`;
+        fieldValue = sourceCard?.result || '';
       } else {
         const f = this.availableFields.find(x => x.key === this.selectedField);
         fieldKey = f.key;
@@ -4113,6 +4240,13 @@ function radarApp() {
 </script>
 
 <style>
+/* Conteúdo do card respeita a largura disponível: quebra palavras longas,
+   URLs, e força elementos potencialmente largos (tabelas, pre, imagens) a
+   caberem no container. Evita scrollbar horizontal quando o card está em grid. */
+.prose-vertice { overflow-wrap: anywhere; word-break: break-word; min-width: 0; max-width: 100%; }
+.prose-vertice img { max-width: 100%; height: auto; }
+.prose-vertice table { display: block; overflow-x: auto; max-width: 100%; }
+.prose-vertice pre, .prose-vertice code { white-space: pre-wrap; word-break: break-word; }
 .prose-vertice h1, .prose-vertice h2, .prose-vertice h3, .prose-vertice h4 { font-weight: 500; color: #111; }
 .prose-vertice h1 { font-size: 1.1rem; margin: 0.5rem 0 0.3rem; }
 .prose-vertice h2 { font-size: 0.95rem; margin: 0.6rem 0 0.3rem; border-bottom: 1px solid #e5e5e5; padding-bottom: 0.15rem; }

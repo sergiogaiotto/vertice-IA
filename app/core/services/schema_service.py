@@ -177,6 +177,7 @@ class SchemaService:
         order_by: str = "label_asc",
         limit: int = 50,
         filters: list[dict] | None = None,
+        value_expr: str = "",
     ) -> dict:
         """Devolve {labels, values, agg, total_rows} para alimentar Chart.js.
 
@@ -200,16 +201,26 @@ class SchemaService:
         if agg not in {"sum", "count", "avg", "min", "max", "none"}:
             raise ValueError(f"aggregate inválido: {aggregate}")
 
-        # construção da expressão de valor
+        # Variável calculada: expressão crua validada contra whitelist de colunas
+        # da tabela + operadores aritméticos + funções permitidas.
+        raw_value_expr = (value_expr or "").strip()
+        if raw_value_expr:
+            await _validate_value_expr(raw_value_expr, table)
+
         if agg == "count":
-            value_expr = "COUNT(*)"
+            sql_value_expr = "COUNT(*)"
         elif agg == "none":
-            value_expr = f'"{value_column}"' if value_column else "1"
+            if raw_value_expr:
+                sql_value_expr = raw_value_expr
+            else:
+                sql_value_expr = f'"{value_column}"' if value_column else "1"
         else:
-            if not value_column:
-                raise ValueError(f"aggregate={agg} requer value_column")
-            # CAST para REAL para evitar erro com TEXT numérico
-            value_expr = f'{agg.upper()}(CAST("{value_column}" AS REAL))'
+            if raw_value_expr:
+                sql_value_expr = f'{agg.upper()}(CAST(({raw_value_expr}) AS REAL))'
+            elif value_column:
+                sql_value_expr = f'{agg.upper()}(CAST("{value_column}" AS REAL))'
+            else:
+                raise ValueError(f"aggregate={agg} requer value_column ou value_expr")
 
         # ordenação
         order_clauses = {
@@ -238,14 +249,14 @@ class SchemaService:
         async with connect() as db:
             if agg == "none":
                 sql = (
-                    f'SELECT "{label_column}" AS "_label", {value_expr} AS "_value" '
+                    f'SELECT "{label_column}" AS "_label", {sql_value_expr} AS "_value" '
                     f'FROM "{table}" '
                     f'WHERE "{label_column}" IS NOT NULL{extra_where} '
                     f'ORDER BY {order_clause} LIMIT ?'
                 )
             else:
                 sql = (
-                    f'SELECT "{label_column}" AS "_label", {value_expr} AS "_value" '
+                    f'SELECT "{label_column}" AS "_label", {sql_value_expr} AS "_value" '
                     f'FROM "{table}" '
                     f'WHERE "{label_column}" IS NOT NULL{extra_where} '
                     f'GROUP BY "{label_column}" '
@@ -289,3 +300,35 @@ def _is_safe_ident(name: str) -> bool:
     if not name or len(name) > 64:
         return False
     return all(c.isalnum() or c == "_" for c in name)
+
+
+# Whitelist de palavras-chave permitidas em variáveis calculadas
+_EXPR_KEYWORDS = {"CAST", "AS", "REAL", "INTEGER", "TEXT", "ROUND", "ABS", "COALESCE"}
+import re as _re  # local alias
+
+_EXPR_TOKEN_RE = _re.compile(r"[A-Za-z_][A-Za-z0-9_]*")
+_EXPR_ALLOWED_CHARS = _re.compile(r"^[A-Za-z0-9_+\-*/().,\s]+$")
+
+
+async def _validate_value_expr(expr: str, table: str) -> None:
+    """Valida `expr` (variável calculada) contra:
+       - whitelist de caracteres (apenas alfanuméricos + + - * / ( ) , espaços)
+       - tamanho máximo (200 chars)
+       - identificadores devem ser palavras-chave permitidas OU colunas reais da tabela
+
+    Levanta ValueError se inválido. Não executa SQL."""
+    if len(expr) > 200:
+        raise ValueError("expressão muito longa (máx 200)")
+    if not _EXPR_ALLOWED_CHARS.match(expr):
+        raise ValueError("expressão contém caracteres não permitidos")
+    if not _is_safe_ident(table):
+        raise ValueError("nome de tabela inválido")
+    async with connect() as db:
+        cur = await db.execute(f'PRAGMA table_info("{table}")')
+        cols = {row[1] for row in await cur.fetchall()}
+    for tok in _EXPR_TOKEN_RE.findall(expr):
+        if tok.upper() in _EXPR_KEYWORDS:
+            continue
+        if tok in cols and tok not in _HIDDEN_COLUMNS:
+            continue
+        raise ValueError(f"identificador '{tok}' não é coluna da tabela ou função permitida")

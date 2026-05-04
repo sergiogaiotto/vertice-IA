@@ -17,19 +17,63 @@
     </div>
   </div>
 
-  <!-- KPIs -->
-  <div class="grid grid-cols-3 gap-3 mb-5">
+  <!-- KPIs (foco em conteúdo: o que existe na galeria, sem custos/tokens) -->
+  <div class="grid grid-cols-2 md:grid-cols-4 gap-3 mb-3">
     <div class="kpi-card">
       <div class="kpi-label">apresentações</div>
       <div class="kpi-value" x-text="(stats.total || 0).toLocaleString('pt-BR')"></div>
+      <div class="text-[10px] text-neutral-400 mt-0.5"
+           x-text="`${(stats.last_7d || 0)} novas nos últimos 7 dias`"></div>
     </div>
     <div class="kpi-card">
-      <div class="kpi-label">custo total acumulado</div>
-      <div class="kpi-value" x-text="`US$ ${(stats.total_cost || 0).toFixed(4)}`"></div>
+      <div class="kpi-label">seções no acervo</div>
+      <div class="kpi-value" x-text="(stats.sections_total || 0).toLocaleString('pt-BR')"></div>
+      <div class="text-[10px] text-neutral-400 mt-0.5"
+           x-text="stats.total ? `~${Math.round((stats.sections_total || 0) / stats.total)} por apresentação` : '—'"></div>
     </div>
     <div class="kpi-card">
-      <div class="kpi-label">tokens consumidos</div>
-      <div class="kpi-value" x-text="(stats.total_tokens || 0).toLocaleString('pt-BR')"></div>
+      <div class="kpi-label">insights documentados</div>
+      <div class="kpi-value" x-text="(stats.insights_total || 0).toLocaleString('pt-BR')"></div>
+      <div class="text-[10px] text-neutral-400 mt-0.5"
+           x-text="stats.total ? `~${Math.round((stats.insights_total || 0) / stats.total)} por apresentação` : '—'"></div>
+    </div>
+    <div class="kpi-card">
+      <div class="kpi-label">visuais embutidos</div>
+      <div class="kpi-value" x-text="(stats.visuals_total || 0).toLocaleString('pt-BR')"></div>
+      <div class="text-[10px] text-neutral-400 mt-0.5">gráficos · diagramas</div>
+    </div>
+  </div>
+
+  <!-- Linha secundária: engajamento + autores + breakdown por origem -->
+  <div class="grid grid-cols-1 md:grid-cols-3 gap-3 mb-5">
+    <div class="kpi-card">
+      <div class="kpi-label">conversas no chat</div>
+      <div class="flex items-baseline gap-2">
+        <div class="kpi-value" x-text="(stats.chat_messages_total || 0).toLocaleString('pt-BR')"></div>
+        <span class="text-[11px] text-neutral-400" x-text="`em ${stats.with_chat || 0} apres.`"></span>
+      </div>
+      <div class="text-[10px] text-neutral-400 mt-0.5">mensagens trocadas pelos usuários</div>
+    </div>
+    <div class="kpi-card">
+      <div class="kpi-label">autores únicos</div>
+      <div class="kpi-value" x-text="(stats.authors_count || 0).toLocaleString('pt-BR')"></div>
+      <div class="text-[10px] text-neutral-400 mt-0.5">pessoas que criaram apresentações</div>
+    </div>
+    <div class="kpi-card">
+      <div class="kpi-label">por origem</div>
+      <div x-show="(stats.by_feature || []).length" class="space-y-1 mt-1">
+        <template x-for="f in (stats.by_feature || []).slice(0, 4)" :key="f.feature">
+          <div class="flex items-center gap-2 text-[11px]">
+            <span class="font-mono uppercase text-neutral-700 w-16 truncate" x-text="f.feature"></span>
+            <div class="flex-1 h-1.5 bg-neutral-100 rounded-full overflow-hidden">
+              <div class="h-full bg-gradient-to-r from-brand-400 to-brand-600 rounded-full"
+                   :style="`width: ${stats.total ? Math.round((f.count / stats.total) * 100) : 0}%`"></div>
+            </div>
+            <span class="text-neutral-500 tabular text-[10px] w-8 text-right" x-text="f.count"></span>
+          </div>
+        </template>
+      </div>
+      <div x-show="!(stats.by_feature || []).length" class="text-[10px] text-neutral-400 italic mt-1">sem origens registradas</div>
     </div>
   </div>
 

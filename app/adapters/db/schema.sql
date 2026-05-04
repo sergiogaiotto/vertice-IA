@@ -346,6 +346,8 @@ CREATE TABLE IF NOT EXISTS raiox_boards (
     description TEXT DEFAULT '',
     owner_id TEXT,
     is_shared INTEGER NOT NULL DEFAULT 1,        -- 0=privado, 1=visível pra todos
+    allowed_roles TEXT,                           -- JSON array: ["admin","supervisor"] (vazio/NULL = sem restrição por papel)
+    allowed_departments TEXT,                     -- JSON array: ["customer-care","tech"] (vazio/NULL = sem restrição por dept)
     layout_json TEXT,                             -- JSON com layout/posições
     filters_json TEXT,                            -- JSON com filtros globais persistidos
     cover_emoji TEXT DEFAULT '🩻',
@@ -366,12 +368,31 @@ CREATE TABLE IF NOT EXISTS raiox_charts (
     span_rows INTEGER NOT NULL DEFAULT 1,
     query_spec_json TEXT NOT NULL,                -- JSON: tabela, colunas, agg, filtros
     plotly_config_json TEXT,                      -- overrides do tema/layout Plotly
+    skill_path TEXT,                              -- opcional: SKILL.md para "análise focada"
     created_by_ai INTEGER NOT NULL DEFAULT 0,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     FOREIGN KEY (board_id) REFERENCES raiox_boards(id) ON DELETE CASCADE
 );
 CREATE INDEX IF NOT EXISTS idx_raiox_charts_board ON raiox_charts(board_id);
+
+-- Histórico de Análises Inteligentes geradas pelo Raio X Cliente.
+-- Cada execução do botão "Gerar análises inteligentes" persiste o snapshot
+-- completo: charts analisados, análises per_chart, síntese conjunta, custos.
+CREATE TABLE IF NOT EXISTS raiox_analyses (
+    id TEXT PRIMARY KEY,
+    board_id TEXT NOT NULL,
+    user_id TEXT,                    -- UUID do usuário que rodou
+    username TEXT,                   -- snapshot do username (sobrevive a deletes)
+    charts_snapshot TEXT,            -- JSON: [{chart_id, title, chart_type, skill_path}, ...]
+    per_chart_json TEXT,             -- JSON: [{chart_id, title, analysis, ...}, ...]
+    synthesis_json TEXT,             -- JSON: {correlations, patterns, risks, opportunities}
+    totals_json TEXT,                -- JSON: {cost, tokens_input, tokens_output, model_used}
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (board_id) REFERENCES raiox_boards(id) ON DELETE CASCADE
+);
+CREATE INDEX IF NOT EXISTS idx_raiox_analyses_board ON raiox_analyses(board_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_raiox_analyses_user ON raiox_analyses(user_id, created_at DESC);
 
 -- Relacionamentos entre tabelas: detectados (confidence>0) ou confirmados pelo usuário.
 CREATE TABLE IF NOT EXISTS raiox_relationships (

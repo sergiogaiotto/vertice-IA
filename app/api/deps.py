@@ -232,6 +232,11 @@ def get_raiox_rel_repo():
     return SqliteRaioXRelationshipRepository()
 
 
+def get_raiox_analysis_repo():
+    from app.adapters.db.repositories.raiox_repo import SqliteRaioXAnalysisRepository
+    return SqliteRaioXAnalysisRepository()
+
+
 def get_raiox_service(
     boards=Depends(get_raiox_board_repo),
     charts=Depends(get_raiox_chart_repo),

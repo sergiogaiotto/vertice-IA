@@ -159,7 +159,7 @@
       </div>
 
       <!-- STEP 2: preview/edit -->
-      <div x-show="wizardStep === 2 && wizardSuggestion" class="flex-1 overflow-y-auto px-6 py-5 space-y-3">
+      <div x-show="wizardStep === 2 && wizardReady" class="flex-1 overflow-y-auto px-6 py-5 space-y-3">
         <div class="bg-ai-50 border border-ai-50 rounded-md p-3">
           <div class="flex items-center gap-2 mb-1">
             <span class="text-[9px] uppercase font-bold text-ai-800">Sugestão da IA</span>
@@ -270,11 +270,17 @@ function skillsApp() {
     view: 'split',
     filter: '',
 
-    // Wizard "IA, me ajuda!"
+    // Wizard "IA, me ajuda!" — usa defaults seguros porque Alpine avalia
+    // expressões `wizardSuggestion.X` no template antes do x-show esconder.
     wizardOpen: false,
     wizardStep: 1,
     wizardPrompt: '',
-    wizardSuggestion: null,
+    wizardReady: false,
+    wizardSuggestion: {
+      name: '', title: '', content: '', output_format: 'markdown',
+      reasoning: '', source: '',
+      tokens_input: 0, tokens_output: 0, cost_estimated: 0,
+    },
     wizardLoading: false,
 
     init() {
@@ -316,7 +322,12 @@ function skillsApp() {
       this.wizardOpen = true;
       this.wizardStep = 1;
       this.wizardPrompt = '';
-      this.wizardSuggestion = null;
+      this.wizardReady = false;
+      this.wizardSuggestion = {
+        name: '', title: '', content: '', output_format: 'markdown',
+        reasoning: '', source: '',
+        tokens_input: 0, tokens_output: 0, cost_estimated: 0,
+      };
       this.wizardLoading = false;
     },
 
@@ -326,7 +337,18 @@ function skillsApp() {
       this.wizardLoading = true;
       try {
         const r = await window.api('POST', '/api/skills/wizard/suggest', { prompt: text });
-        this.wizardSuggestion = r;
+        this.wizardSuggestion = {
+          name: r?.name || '',
+          title: r?.title || '',
+          content: r?.content || '',
+          output_format: r?.output_format || 'markdown',
+          reasoning: r?.reasoning || '',
+          source: r?.source || '',
+          tokens_input: r?.tokens_input || 0,
+          tokens_output: r?.tokens_output || 0,
+          cost_estimated: r?.cost_estimated || 0,
+        };
+        this.wizardReady = true;
         this.wizardStep = 2;
       } catch (e) {
         toast('Falha ao gerar sugestão: ' + (e.message || ''), 'error');

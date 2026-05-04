@@ -878,6 +878,9 @@ class Text2SqlAskRequest(BaseModel):
     tables: list[str]                       # tabelas autorizadas no escopo
     history: list[Text2SqlChatTurn] = []
     feature: str = "radar"
+    # Filtros de contexto: o agente DEVE limitar resultados a estes valores
+    case_number: str = ""
+    username: str = ""
 
 
 class Text2SqlAskResponse(BaseModel):
@@ -969,6 +972,8 @@ async def sql_ask(
             history=[t.model_dump() for t in body.history],
             feature=body.feature,
             user_id=str(user.id) if user.id else None,
+            case_number=body.case_number or "",
+            username=body.username or user.username or "",
         )
     except ImportError as e:
         # fallback caso check_dependencies tenha passado mas algum import lazy falhar

@@ -67,6 +67,22 @@ async def init_db() -> None:
             await db.execute("ALTER TABLE modules ADD COLUMN response_config TEXT")
             await db.commit()
 
+        # ---- migração idempotente: raiox_charts.skill_path ----
+        cur = await db.execute("PRAGMA table_info(raiox_charts)")
+        rc_cols = {row[1] for row in await cur.fetchall()}
+        if rc_cols and "skill_path" not in rc_cols:
+            await db.execute("ALTER TABLE raiox_charts ADD COLUMN skill_path TEXT")
+        await db.commit()
+
+        # ---- migração idempotente: raiox_boards.allowed_roles / allowed_departments ----
+        cur = await db.execute("PRAGMA table_info(raiox_boards)")
+        rb_cols = {row[1] for row in await cur.fetchall()}
+        if rb_cols and "allowed_roles" not in rb_cols:
+            await db.execute("ALTER TABLE raiox_boards ADD COLUMN allowed_roles TEXT")
+        if rb_cols and "allowed_departments" not in rb_cols:
+            await db.execute("ALTER TABLE raiox_boards ADD COLUMN allowed_departments TEXT")
+        await db.commit()
+
         # ---- migração idempotente: dimensões finops modernas no ledger ----
         # Cada dimensão é nullable: gravações antigas continuam válidas. A UI
         # do Cockpit FinOps trata NULL como "sem rateio" (bucket 'outros').

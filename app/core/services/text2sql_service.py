@@ -113,8 +113,13 @@ class Text2SqlService:
         toolkit = SQLDatabaseToolkit(db=db, llm=model)
         sql_tools = toolkit.get_tools()
 
-        agents_md = os.path.join(self._base_dir, "AGENTS.md")
-        skills_dir = os.path.join(self._base_dir, "skills") + "/"
+        # Bug do deepagents: usa PurePosixPath em paths Windows, e PurePosixPath('C:\\…\\skills\\name').name
+        # devolve o caminho INTEIRO em vez do último componente. Isso quebra o
+        # _validate_skill_name e gera warning falso "name must match directory name '<path>'".
+        # Workaround: passamos paths POSIX (forward slashes), assim PurePosixPath funciona
+        # corretamente independente do SO.
+        agents_md = os.path.join(self._base_dir, "AGENTS.md").replace("\\", "/")
+        skills_dir = (os.path.join(self._base_dir, "skills") + "/").replace("\\", "/")
 
         agent = create_deep_agent(
             model=model,
@@ -122,7 +127,7 @@ class Text2SqlService:
             skills=[skills_dir],
             tools=sql_tools,
             subagents=[],
-            backend=FilesystemBackend(root_dir=self._base_dir),
+            backend=FilesystemBackend(root_dir=self._base_dir.replace("\\", "/")),
         )
         return agent
 
@@ -168,11 +173,17 @@ class Text2SqlService:
         history: list[dict] | None = None,
         feature: str = "radar",
         user_id: str | None = None,
+        case_number: str = "",
+        username: str = "",
     ) -> SqlAgentResult:
         """Roda o Deep Agent para uma pergunta com contexto de conversa.
 
         Histórico é uma lista [{role: 'user'|'assistant', content: str}, ...]
         que é prepended ao prompt como contexto.
+
+        case_number/username: filtros de contexto que o agente é instruído a
+        aplicar como WHERE obrigatório (caso/transcript posicionado em tela
+        e usuário logado). Se vazios, nenhuma restrição extra é injetada.
         """
         from app.config import get_settings
         model_used_str = get_settings().openai_model
@@ -201,6 +212,44 @@ class Text2SqlService:
         scope_section = "# Escopo autorizado\n\nVocê SÓ pode consultar estas tabelas:\n" + \
                         "\n".join(f"- `{t}`" for t in valid)
 
+        # ----- Filtros de CONTEXTO -----
+        # As tabelas dinâmicas (geradas por módulos response_type='table') sempre
+        # têm as colunas de auditoria _case_number e _username. As tabelas
+        # estáticas do Radar têm equivalentes: bko_cases.case_number,
+        # transcripts.verint_nr_contrato (= case), contracts.contract_number.
+        # Pedimos ao agente para aplicar WHERE quando essas colunas existirem.
+        ctx_clauses: list[str] = []
+        case_clean = (case_number or "").strip()
+        user_clean = (username or "").strip()
+        if case_clean:
+            ctx_clauses.append(
+                f"- O usuário está posicionado no caso/registro `{case_clean}`. "
+                f"SEMPRE filtre os resultados por esse caso quando a tabela "
+                f"tiver uma coluna que o identifique. Convenções por tabela:\n"
+                f"  - dinâmicas (`*__radar`): WHERE `_case_number` = '{case_clean}'\n"
+                f"  - `bko_cases`: WHERE `case_number` = '{case_clean}'\n"
+                f"  - `transcripts`: WHERE `verint_nr_contrato` = '{case_clean}'\n"
+                f"  - `contracts`: WHERE `contract_number` = '{case_clean}'\n"
+                f"  - `analysis_cards`: WHERE `contract_number` = '{case_clean}'\n"
+                f"Se a tabela não tiver coluna correspondente, NÃO use a tabela."
+            )
+        if user_clean:
+            ctx_clauses.append(
+                f"- O usuário logado é `{user_clean}`. Para tabelas dinâmicas "
+                f"(`*__radar`) com a coluna `_username`, adicione "
+                f"`AND _username = '{user_clean}'`. Não filtre por usuário em "
+                f"tabelas estáticas (bko_cases, transcripts, contracts, "
+                f"analysis_cards) — elas não têm essa coluna."
+            )
+        context_section = ""
+        if ctx_clauses:
+            context_section = (
+                "# Filtros de contexto OBRIGATÓRIOS\n\n"
+                "Aplique estas restrições no SQL gerado (são imutáveis):\n\n"
+                + "\n\n".join(ctx_clauses)
+                + "\n\n"
+            )
+
         history_section = ""
         if history:
             lines = ["# Histórico da conversa (para contexto/refinamento)\n"]
@@ -212,6 +261,7 @@ class Text2SqlService:
 
         full_prompt = (
             f"{scope_section}\n\n"
+            f"{context_section}"
             f"{history_section}"
             f"# Pergunta atual\n{question.strip()}\n\n"
             "Devolva APENAS o JSON estrito conforme AGENTS.md."

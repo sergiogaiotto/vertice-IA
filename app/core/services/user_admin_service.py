@@ -55,6 +55,17 @@ class UserAdminService:
     async def update_roles(self, user_id: UUID, roles: list[str]) -> None:
         await self.users.set_roles(user_id, roles)
 
+    async def update_profile(
+        self,
+        user_id: UUID,
+        full_name: str = "",
+        email: str = "",
+        phone: str = "",
+        department: str = "",
+        title: str = "",
+    ) -> None:
+        await self.users.set_profile(user_id, full_name, email, phone, department, title)
+
     async def set_active(self, user_id: UUID, active: bool) -> None:
         await self.users.set_active(user_id, active)
 
