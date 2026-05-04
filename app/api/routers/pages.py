@@ -584,3 +584,38 @@ async def blocks_page(
         "blocks/index.html",
         _ctx(request, user, active_module="blocks", blocks=blocks),
     )
+
+
+# ---------- Cards em tela (Administrativo) ----------
+# Listagem global de TODOS os cards na tela "Voz do Cliente" — criadores,
+# nível de visibilidade e quem pode ver. Apenas admin/supervisor.
+
+@router.get("/admin/cards-em-tela", response_class=HTMLResponse)
+async def cards_em_tela_page(
+    request: Request,
+    user: User | None = Depends(current_user_optional),
+):
+    if not user:
+        return RedirectResponse("/login")
+    _require_any_role(user, ['admin', 'supervisor'])
+
+    from app.adapters.db.repositories.radar_card_visibility_repo import (
+        SqliteRadarCardVisibilityRepository,
+    )
+    repo = SqliteRadarCardVisibilityRepository()
+    rows = await repo.list_all()
+    # enriquece com `who_can_see` igual ao endpoint /api/radar/admin/cards
+    for r in rows:
+        v = r.get("visibility") or "private"
+        if v == "private":
+            r["who_can_see"] = ["dono"]
+        elif v == "public_lideranca":
+            r["who_can_see"] = ["dono", "admin", "supervisor"]
+        elif v == "public_analista":
+            r["who_can_see"] = ["dono", "admin", "supervisor", "analista"]
+        else:
+            r["who_can_see"] = ["dono"]
+    return templates.TemplateResponse(
+        "admin/cards_em_tela.html",
+        _ctx(request, user, active_module="cards_em_tela", cards=rows),
+    )

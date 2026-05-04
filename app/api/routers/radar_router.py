@@ -10,6 +10,7 @@ from pydantic import BaseModel, ConfigDict
 from app.api.deps import (
     get_bko_service,
     get_prompt_service,
+    get_radar_card_visibility_repo,
     get_radar_service,
     get_radar_state_repo,
     get_registry_service,
@@ -89,14 +90,55 @@ class RadarStatePutResponse(BaseModel):
     current_version: int | None = None
 
 
+def _is_lideranca(user: User) -> bool:
+    return any(r in {"admin", "supervisor", "root"} for r in (user.roles or []))
+
+
+def _is_analista(user: User) -> bool:
+    return any(r.startswith("analista") for r in (user.roles or []))
+
+
+def _extract_cards_for_sync(state: list) -> list[dict]:
+    """Achata `state = [{id, title, cards:[...]}, ...]` para upsert no
+    radar_card_visibility. Inclui o card_json snapshot completo.
+    """
+    out = []
+    for group in (state or []):
+        if not isinstance(group, dict):
+            continue
+        gid = group.get("id")
+        gtitle = group.get("title")
+        for card in (group.get("cards") or []):
+            if not isinstance(card, dict):
+                continue
+            uid = card.get("uid")
+            if not uid:
+                continue
+            out.append({
+                "uid": uid,
+                "group_id": gid,
+                "group_title": gtitle,
+                "module_id": str(card.get("module_id") or ""),
+                "module_name": card.get("module_name"),
+                "module_description": card.get("module_description"),
+                "visibility": card.get("visibility"),
+                "card_json": card,
+                "feature": "radar",
+            })
+    return out
+
+
 @router.get("/state", response_model=RadarStateOut)
 async def get_radar_state(
     repo=Depends(get_radar_state_repo),
+    visibility_repo=Depends(get_radar_card_visibility_repo),
     user: User = Depends(require_user),
 ):
     """Devolve o estado dos grupos/módulos do usuário (sync cross-device).
 
-    Se o usuário nunca salvou, retorna estado vazio com `version=0`.
+    Sobrescreve o `visibility` inline em cada card com o valor canônico do
+    `radar_card_visibility` — assim mudanças feitas por admin/supervisor em
+    cards do usuário aparecem corretamente sem precisar PUT do dono.
     """
     import json as _json
     record = await repo.get(str(user.id))
@@ -108,6 +150,21 @@ async def get_radar_state(
             state_arr = []
     except Exception:
         state_arr = []
+
+    # Override inline: visibility canônica vem da tabela sidecar.
+    vis_map = await visibility_repo.list_for_owner(str(user.id))
+    for group in state_arr:
+        if not isinstance(group, dict):
+            continue
+        for card in (group.get("cards") or []):
+            if not isinstance(card, dict):
+                continue
+            uid = card.get("uid")
+            if uid and uid in vis_map:
+                card["visibility"] = vis_map[uid]["visibility"]
+            elif "visibility" not in card:
+                card["visibility"] = "private"
+
     return RadarStateOut(
         state=state_arr,
         version=record["version"],
@@ -119,14 +176,12 @@ async def get_radar_state(
 async def put_radar_state(
     body: RadarStatePutRequest,
     repo=Depends(get_radar_state_repo),
+    visibility_repo=Depends(get_radar_card_visibility_repo),
     user: User = Depends(require_user),
 ):
-    """Persiste o estado completo dos grupos/módulos do usuário.
-
-    Recebe o array `state` (estrutura opaca para o servidor) e grava como
-    JSON. Se `expected_version` for enviado, falha com `conflict=true`
-    quando outra aba já avançou a versão — o cliente decide se sobrescreve
-    ou recarrega.
+    """Persiste o estado completo dos grupos/módulos do usuário e SINCRONIZA
+    a tabela sidecar de visibilidade (upsert dos cards atuais, delete dos que
+    sumiram). Cards novos entram como `private` por default.
     """
     import json as _json
     try:
@@ -148,6 +203,21 @@ async def put_radar_state(
             conflict=result.get("conflict", False),
             current_version=result.get("current_version"),
         )
+    # Sync sidecar de visibility — best-effort: não falha o PUT do estado se
+    # o sync der erro (loga, segue). Em produção, qualquer divergência seria
+    # reconciliada no próximo PUT.
+    try:
+        cards = _extract_cards_for_sync(body.state)
+        await visibility_repo.sync_owner_cards(
+            owner_id=str(user.id),
+            owner_username=user.username,
+            cards=cards,
+        )
+    except Exception as e:  # noqa: BLE001
+        # não derruba o save do estado por falha no sidecar
+        import logging
+        logging.exception("sync radar_card_visibility falhou: %s", e)
+
     return RadarStatePutResponse(ok=True, version=result["version"])
 
 
@@ -159,6 +229,121 @@ async def delete_radar_state(
     """Apaga o estado salvo do usuário (reset)."""
     await repo.delete(str(user.id))
     return {"ok": True}
+
+
+# ============================================================
+# Visibilidade dos cards — gating por role
+# ============================================================
+
+
+class CardVisibilityUpdateRequest(BaseModel):
+    visibility: str  # 'private' | 'public_lideranca' | 'public_analista'
+
+
+@router.put("/cards/{card_uid}/visibility")
+async def set_card_visibility(
+    card_uid: str,
+    body: CardVisibilityUpdateRequest,
+    visibility_repo=Depends(get_radar_card_visibility_repo),
+    user: User = Depends(require_user),
+):
+    """Atualiza a visibilidade de um card.
+
+    Regras:
+    - Default sempre é `private`.
+    - Apenas o **dono** pode setar `private` (resetar para privado um card
+      que ele mesmo havia compartilhado).
+    - Apenas **admin/supervisor/root** podem setar `public_lideranca` ou
+      `public_analista` — em cards próprios OU em cards de outros usuários.
+    """
+    new_vis = (body.visibility or "").strip()
+    if new_vis not in ("private", "public_lideranca", "public_analista"):
+        raise HTTPException(400, "visibility inválida")
+
+    record = await visibility_repo.get(card_uid)
+    if not record:
+        raise HTTPException(404, "card não encontrado em radar_card_visibility")
+
+    is_owner = record["owner_id"] == str(user.id)
+    lideranca = _is_lideranca(user)
+
+    if new_vis == "private":
+        # somente dono pode reverter para privado
+        if not is_owner and not lideranca:
+            raise HTTPException(403, "apenas o dono ou liderança pode reverter para privado")
+    else:
+        # public_* exige liderança
+        if not lideranca:
+            raise HTTPException(
+                403, "apenas admin/supervisor pode tornar um card público"
+            )
+
+    ok = await visibility_repo.update_visibility(card_uid, new_vis)
+    if not ok:
+        raise HTTPException(500, "falha ao atualizar visibility")
+    return {"ok": True, "card_uid": card_uid, "visibility": new_vis}
+
+
+@router.get("/cards/shared")
+async def list_shared_cards(
+    visibility_repo=Depends(get_radar_card_visibility_repo),
+    user: User = Depends(require_user),
+):
+    """Cards de OUTROS usuários que o usuário atual pode ver.
+
+    Filtragem por role:
+    - admin/supervisor/root → public_lideranca + public_analista
+    - analista (e demais) → apenas public_analista
+    """
+    rows = await visibility_repo.list_visible_to(
+        user_id=str(user.id),
+        user_roles=user.roles or [],
+    )
+    return {"items": rows, "count": len(rows)}
+
+
+@router.get("/cards/visibility")
+async def list_visibility_for_owner(
+    visibility_repo=Depends(get_radar_card_visibility_repo),
+    user: User = Depends(require_user),
+):
+    """Lista a visibility de todos os cards do usuário atual — usado pelo
+    frontend para popular o estado dos botões/badges sem precisar parsear o
+    state inteiro.
+    """
+    rows = await visibility_repo.list_for_owner(str(user.id))
+    out = [
+        {"card_uid": uid, "visibility": v["visibility"]}
+        for uid, v in rows.items()
+    ]
+    return {"items": out, "count": len(out)}
+
+
+@router.get("/admin/cards")
+async def admin_list_all_cards(
+    visibility_repo=Depends(get_radar_card_visibility_repo),
+    user: User = Depends(require_user),
+):
+    """Listagem administrativa de TODOS os cards na tela Voz do Cliente.
+
+    Retorna criador, nível de visibilidade e conjunto de roles que podem
+    visualizar (calculado a partir da visibility). Apenas admin/supervisor/root.
+    """
+    if not _is_lideranca(user):
+        raise HTTPException(403, "apenas admin/supervisor")
+    rows = await visibility_repo.list_all()
+    # enriquece cada linha com `who_can_see` para a tela administrativa
+    for r in rows:
+        v = r.get("visibility") or "private"
+        if v == "private":
+            r["who_can_see"] = ["dono"]
+        elif v == "public_lideranca":
+            r["who_can_see"] = ["dono", "admin", "supervisor"]
+        elif v == "public_analista":
+            r["who_can_see"] = ["dono", "admin", "supervisor", "analista"]
+        else:
+            r["who_can_see"] = ["dono"]
+    return {"items": rows, "count": len(rows)}
 
 
 @router.get("/cases")

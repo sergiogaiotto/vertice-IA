@@ -128,6 +128,127 @@ async def test_radar_state_repo_version_conflict():
 
 
 @pytest.mark.asyncio
+async def test_card_visibility_repo_default_private():
+    """Cards novos sincronizados sem visibility explícita entram como 'private'."""
+    from app.adapters.db.repositories.radar_card_visibility_repo import (
+        SqliteRadarCardVisibilityRepository,
+    )
+    await init_db()
+    repo = SqliteRadarCardVisibilityRepository()
+    user_id = "user-vis-1"
+
+    # limpa resíduo
+    cards = list((await repo.list_for_owner(user_id)).keys())
+    for uid in cards:
+        await repo.delete(uid)
+
+    await repo.sync_owner_cards(
+        owner_id=user_id,
+        owner_username="alice",
+        cards=[
+            {"uid": "card-A", "module_name": "churn", "card_json": {"x": 1}},
+            {"uid": "card-B", "module_name": "radar", "card_json": {"y": 2}, "visibility": "public_analista"},
+        ],
+    )
+    rows = await repo.list_for_owner(user_id)
+    assert rows["card-A"]["visibility"] == "private"
+    assert rows["card-B"]["visibility"] == "public_analista"
+
+
+@pytest.mark.asyncio
+async def test_card_visibility_repo_role_filtering():
+    """list_visible_to filtra conforme roles do consultor."""
+    from app.adapters.db.repositories.radar_card_visibility_repo import (
+        SqliteRadarCardVisibilityRepository,
+    )
+    await init_db()
+    repo = SqliteRadarCardVisibilityRepository()
+    owner = "user-vis-owner"
+    viewer = "user-vis-viewer"
+
+    # limpa
+    for uid in list((await repo.list_for_owner(owner)).keys()):
+        await repo.delete(uid)
+
+    await repo.sync_owner_cards(
+        owner_id=owner,
+        owner_username="bob",
+        cards=[
+            {"uid": "vis-priv",  "module_name": "m1", "visibility": "private"},
+            {"uid": "vis-lider", "module_name": "m2", "visibility": "public_lideranca"},
+            {"uid": "vis-anal",  "module_name": "m3", "visibility": "public_analista"},
+        ],
+    )
+
+    # Analista só vê public_analista — filtra para os uids deste teste
+    seen_analista = await repo.list_visible_to(viewer, ["analista_n3"])
+    uids = sorted([r["card_uid"] for r in seen_analista if r["card_uid"].startswith("vis-")])
+    assert uids == ["vis-anal"]
+
+    # Admin vê public_lideranca + public_analista
+    seen_admin = await repo.list_visible_to(viewer, ["admin"])
+    uids = sorted([r["card_uid"] for r in seen_admin if r["card_uid"].startswith("vis-")])
+    assert uids == ["vis-anal", "vis-lider"]
+
+    # Próprio dono NÃO aparece em list_visible_to (excluído por design)
+    seen_owner = await repo.list_visible_to(owner, ["analista_n3"])
+    assert all(r["card_uid"] != "vis-anal" or r["owner_id"] != owner for r in seen_owner)
+
+
+@pytest.mark.asyncio
+async def test_card_visibility_repo_sync_removes_stale():
+    """sync_owner_cards apaga cards do dono que sumiram do payload."""
+    from app.adapters.db.repositories.radar_card_visibility_repo import (
+        SqliteRadarCardVisibilityRepository,
+    )
+    await init_db()
+    repo = SqliteRadarCardVisibilityRepository()
+    owner = "user-vis-stale"
+    for uid in list((await repo.list_for_owner(owner)).keys()):
+        await repo.delete(uid)
+
+    await repo.sync_owner_cards(
+        owner_id=owner, owner_username="carol",
+        cards=[{"uid": "k1"}, {"uid": "k2"}, {"uid": "k3"}],
+    )
+    assert set((await repo.list_for_owner(owner)).keys()) == {"k1", "k2", "k3"}
+
+    # k2 some
+    await repo.sync_owner_cards(
+        owner_id=owner, owner_username="carol",
+        cards=[{"uid": "k1"}, {"uid": "k3"}],
+    )
+    assert set((await repo.list_for_owner(owner)).keys()) == {"k1", "k3"}
+
+
+@pytest.mark.asyncio
+async def test_card_visibility_repo_preserves_visibility_on_resync():
+    """Resync sem campo `visibility` no payload preserva o valor anterior."""
+    from app.adapters.db.repositories.radar_card_visibility_repo import (
+        SqliteRadarCardVisibilityRepository,
+    )
+    await init_db()
+    repo = SqliteRadarCardVisibilityRepository()
+    owner = "user-vis-preserve"
+    for uid in list((await repo.list_for_owner(owner)).keys()):
+        await repo.delete(uid)
+
+    # 1) cria como public_analista
+    await repo.sync_owner_cards(
+        owner_id=owner, owner_username="dave",
+        cards=[{"uid": "p1", "visibility": "public_analista"}],
+    )
+    # 2) re-sync sem visibility — deve PRESERVAR
+    await repo.sync_owner_cards(
+        owner_id=owner, owner_username="dave",
+        cards=[{"uid": "p1", "module_name": "novo nome"}],
+    )
+    rows = await repo.list_for_owner(owner)
+    assert rows["p1"]["visibility"] == "public_analista"
+    assert rows["p1"]["module_name"] == "novo nome"
+
+
+@pytest.mark.asyncio
 async def test_list_cards_for_contract():
     await init_db()
     svc = _make_service()

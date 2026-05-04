@@ -430,6 +430,36 @@ CREATE TABLE IF NOT EXISTS radar_user_state (
     FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
 );
 
+-- ===== Radar Voz do Cliente — visibilidade por card =====
+-- Sidecar do `radar_user_state`. Cada card colocado na tela tem uma linha
+-- aqui registrando dono + nível de visibilidade. Permite:
+--   1) Filtrar cards compartilhados visíveis para o usuário atual.
+--   2) Auditar via tela administrativa qual card pertence a quem.
+--
+-- Visibility states:
+--   - 'private'           → só o dono vê (default)
+--   - 'public_lideranca'  → admin + supervisor + dono
+--   - 'public_analista'   → todos os analistas (analista_n3) + admin + supervisor + dono
+-- Apenas admin/supervisor podem alterar para os estados públicos.
+CREATE TABLE IF NOT EXISTS radar_card_visibility (
+    card_uid TEXT PRIMARY KEY,           -- mesmo uid usado pelo frontend
+    owner_id TEXT NOT NULL,              -- usuário que adicionou o card em tela
+    owner_username TEXT,                 -- snapshot para listagem sobreviver a deletes
+    group_id TEXT,                       -- grupo do dono onde vive (referência para UX)
+    group_title TEXT,                    -- snapshot do título
+    module_id TEXT,                      -- id do módulo (ou virtual: __chat__, __chart__, etc.)
+    module_name TEXT,                    -- snapshot p/ listagem
+    module_description TEXT,             -- snapshot
+    visibility TEXT NOT NULL DEFAULT 'private',  -- 'private'|'public_lideranca'|'public_analista'
+    card_json TEXT,                      -- snapshot completo do card (renderizar em outras telas)
+    feature TEXT DEFAULT 'radar',
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (owner_id) REFERENCES users(id) ON DELETE CASCADE
+);
+CREATE INDEX IF NOT EXISTS idx_radar_card_vis_owner ON radar_card_visibility(owner_id);
+CREATE INDEX IF NOT EXISTS idx_radar_card_vis_visibility ON radar_card_visibility(visibility);
+
 -- Failsafe inbox
 CREATE TABLE IF NOT EXISTS failsafe_actions (
     id TEXT PRIMARY KEY,
