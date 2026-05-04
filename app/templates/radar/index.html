@@ -2023,12 +2023,6 @@ function radarApp() {
       let regeneratedDiagrams = 0;
       let clearedChats = 0;
       let clearedSql = 0;
-      let replayedSql = 0;
-      // Cards SQL que tinham pergunta anterior — vão ser re-perguntados ao Deep
-      // Agent já com o `case_number` novo, atendendo "todos os módulos
-      // cadastrados devem passar por reprocessamento". Lista de {uid, question}
-      // para evitar re-disparo dentro do forEach (askSqlQuestion é async).
-      const sqlReplays = [];
 
       // FASE 0: Chats — limpa histórico (conversa do contexto anterior não faz sentido aqui)
       this.groups.forEach(group => {
@@ -2051,25 +2045,20 @@ function radarApp() {
             if (hadHistory) clearedChats++;
           }
 
-          // FASE 0.5: SQL — apenas detecta os cards que precisam ser
-          // limpos+reprocessados. O clear-and-replay é executado em
-          // FASE 4 via `clearAndReprocessSql`, garantindo um único caminho
-          // de código (mesma função do botão manual no card).
+          // FASE 0.5: SQL — limpa POR INTEIRO ao trocar de caso e PRESERVA
+          // apenas o escopo de tabelas configurado. Não re-pergunta
+          // automaticamente: o reprocessamento é manual via botão `🔄
+          // reprocessar` no card (decisão de UX — re-perguntar sem confirmação
+          // gerava queries vazias quando o agente perdia contexto da pergunta
+          // anterior). Sem replay automático aqui.
           if (card.module_id === '__sql__') {
             const hadHistory = (card.sql_history || []).length > 0;
-            const hadQuestion = (card.sql_history || []).some(t => t.role === 'user' && t.content);
-            const hasTables = (card.sql_tables || []).length > 0;
+            card.sql_history = [];
+            card.sql_total_cost = 0;
+            card.sql_draft = '';
+            card.error = null;
+            card.loading = false;
             if (hadHistory) clearedSql++;
-            if (hadQuestion && hasTables) {
-              sqlReplays.push({ uid: card.uid });
-            } else if (hadHistory) {
-              // sem pergunta ou sem escopo: só limpa, não tem como replay
-              card.sql_history = [];
-              card.sql_total_cost = 0;
-              card.sql_draft = '';
-              card.error = null;
-              card.loading = false;
-            }
           }
         });
       });
@@ -2141,27 +2130,17 @@ function radarApp() {
         }, 1500);
       }
 
-      // FASE 4: SQL — limpa e re-pergunta a última question ao Deep Agent com
-      // o novo case_number (lido por askSqlQuestion via
-      // window.__current_case_number, populado pelo template no reload da
-      // página). Mesma função do botão manual `🔄` no card → único caminho de
-      // código garante consistência entre auto-replay e replay manual.
-      const sqlPromises = sqlReplays.map(({ uid }) => {
-        replayedSql++;
-        return this.clearAndReprocessSql(uid, { silent: true });
-      });
-
-      const totalExecuted = executedModules + executedCharts + regeneratedDiagrams + replayedSql;
+      const totalExecuted = executedModules + executedCharts + regeneratedDiagrams;
       const totalCleared = clearedChats + clearedSql;
       if (totalExecuted > 0 || totalCleared > 0) {
         const parts = [];
         if (executedModules > 0)     parts.push(`${executedModules} módulo(s)`);
         if (executedCharts > 0)      parts.push(`${executedCharts} gráfico(s)`);
         if (regeneratedDiagrams > 0) parts.push(`${regeneratedDiagrams} diagrama(s)`);
-        if (replayedSql > 0)         parts.push(`${replayedSql} SQL`);
 
         const cleared = [];
         if (clearedChats > 0) cleared.push(`${clearedChats} chat(s)`);
+        if (clearedSql > 0)   cleared.push(`${clearedSql} SQL`);
 
         let msg;
         if (totalExecuted > 0 && totalCleared > 0) {
@@ -2174,16 +2153,17 @@ function radarApp() {
         toast(msg, 'info', 4500);
       }
 
-      // Espera todas as execuções (módulos + charts + sql) terminarem para
-      // garantir que o estado salvo no servidor já contém os resultados
-      // frescos. Sem este await, o saveState debounced subia um snapshot com
-      // loading=true / result vazio, e o `same-context` skip impedia
-      // re-execução depois. Cada executeCard/rerun/askSqlQuestion também
-      // chama saveState no `finally`, então mesmo se o usuário sair antes do
-      // Promise.all completar, o que tiver finalizado já está persistido.
+      // Espera todas as execuções (módulos + charts) terminarem para garantir
+      // que o estado salvo no servidor já contém os resultados frescos. Sem
+      // este await, o saveState debounced subia um snapshot com loading=true
+      // / result vazio, e o `same-context` skip impedia re-execução depois.
+      // Cada executeCard/rerun também chama saveState no `finally`, então
+      // mesmo se o usuário sair antes do Promise.all completar, o que tiver
+      // finalizado já está persistido. SQL não entra aqui — é só limpo
+      // (reprocessamento manual via botão `🔄 reprocessar` no card).
       try {
-        await Promise.all([...modulePromises, ...chartPromises, ...sqlPromises]);
-      } catch (_) { /* erros individuais já tratados em executeCard/rerun/askSqlQuestion */ }
+        await Promise.all([...modulePromises, ...chartPromises]);
+      } catch (_) { /* erros individuais já tratados em executeCard/rerun */ }
       // saveState final — coalesça via debounce em uma única gravação no
       // servidor mesmo após N execuções paralelas.
       if (totalExecuted > 0 || totalCleared > 0) {
