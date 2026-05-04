@@ -447,6 +447,14 @@
                       <div class="px-2.5 py-1.5 border-b border-neutral-100 bg-neutral-25 flex items-center gap-2 text-[10px]">
                         <span class="pill pill-info" style="padding:0 6px;font-size:9px;">DEEP AGENT</span>
                         <span class="text-neutral-500 truncate flex-1" x-text="`escopo: ${(card.sql_tables || []).join(', ')}`"></span>
+                        <!-- Reprocessar: limpa o histórico e re-pergunta a última question
+                             ao Deep Agent com o case_number atual. Mesmo fluxo disparado
+                             automaticamente pelo autoRunIfContextChanged ao trocar de caso. -->
+                        <button x-show="(card.sql_history || []).some(t => t.role === 'user') && (card.sql_tables || []).length > 0"
+                                @click="clearAndReprocessSql(card.uid)"
+                                :disabled="card.loading"
+                                class="text-[9px] text-brand-700 hover:bg-brand-50 px-1.5 py-0.5 rounded disabled:opacity-40 disabled:cursor-not-allowed"
+                                title="limpa o histórico e reprocessa a última pergunta com o caso atual">🔄 reprocessar</button>
                         <button x-show="(card.sql_history || []).length > 0"
                                 @click="clearSqlHistory(card.uid)"
                                 class="text-[9px] text-neutral-500 hover:bg-neutral-100 px-1 py-0.5 rounded"
@@ -2043,25 +2051,24 @@ function radarApp() {
             if (hadHistory) clearedChats++;
           }
 
-          // FASE 0.5: SQL — limpa histórico de conversa com o agente e
-          // PRESERVA o escopo de tabelas. Captura a ÚLTIMA pergunta do
-          // usuário antes de limpar para reprocessá-la depois com o novo
-          // `case_number` (atende o pedido de "todos os módulos cadastrados
-          // devem reprocessar ao trocar caso"; antes só limpava e ficava
-          // esperando o usuário re-digitar a pergunta manualmente).
+          // FASE 0.5: SQL — apenas detecta os cards que precisam ser
+          // limpos+reprocessados. O clear-and-replay é executado em
+          // FASE 4 via `clearAndReprocessSql`, garantindo um único caminho
+          // de código (mesma função do botão manual no card).
           if (card.module_id === '__sql__') {
-            const prev = (card.sql_history || []).slice().reverse().find(t => t.role === 'user');
-            const lastQuestion = prev && typeof prev.content === 'string' ? prev.content.trim() : '';
             const hadHistory = (card.sql_history || []).length > 0;
-            card.sql_history = [];
-            card.sql_total_cost = 0;
-            card.sql_draft = '';
-            card.error = null;
-            card.loading = false;
+            const hadQuestion = (card.sql_history || []).some(t => t.role === 'user' && t.content);
+            const hasTables = (card.sql_tables || []).length > 0;
             if (hadHistory) clearedSql++;
-            // só replay se houver pergunta E escopo de tabelas configurado
-            if (lastQuestion && (card.sql_tables || []).length > 0) {
-              sqlReplays.push({ uid: card.uid, question: lastQuestion });
+            if (hadQuestion && hasTables) {
+              sqlReplays.push({ uid: card.uid });
+            } else if (hadHistory) {
+              // sem pergunta ou sem escopo: só limpa, não tem como replay
+              card.sql_history = [];
+              card.sql_total_cost = 0;
+              card.sql_draft = '';
+              card.error = null;
+              card.loading = false;
             }
           }
         });
@@ -2134,13 +2141,14 @@ function radarApp() {
         }, 1500);
       }
 
-      // FASE 4: SQL — re-pergunta a última question ao Deep Agent com o novo
-      // case_number (já refletido em window.__current_case_number, populado
-      // pelo template no reload da página). Cada askSqlQuestion já salva
-      // estado no `finally`.
-      const sqlPromises = sqlReplays.map(({ uid, question }) => {
+      // FASE 4: SQL — limpa e re-pergunta a última question ao Deep Agent com
+      // o novo case_number (lido por askSqlQuestion via
+      // window.__current_case_number, populado pelo template no reload da
+      // página). Mesma função do botão manual `🔄` no card → único caminho de
+      // código garante consistência entre auto-replay e replay manual.
+      const sqlPromises = sqlReplays.map(({ uid }) => {
         replayedSql++;
-        return this.askSqlQuestion(uid, question);
+        return this.clearAndReprocessSql(uid, { silent: true });
       });
 
       const totalExecuted = executedModules + executedCharts + regeneratedDiagrams + replayedSql;
@@ -3040,6 +3048,41 @@ function radarApp() {
       card.sql_total_cost = 0;
       card.error = null;
       this.saveState();
+    },
+
+    /**
+     * Limpa o histórico e re-pergunta a ÚLTIMA question do usuário ao Deep
+     * Agent com o `case_number` corrente. É o fluxo esperado quando o
+     * usuário troca de caso ou aperta "reprocessar": primeiro limpar,
+     * depois reprocessar considerando o registro posicionado.
+     *
+     * Usado tanto no botão manual do card quanto no auto-replay disparado
+     * por `autoRunIfContextChanged` ao trocar de caso — assim só existe
+     * um único caminho de código garantindo consistência.
+     */
+    async clearAndReprocessSql(uid, opts = {}) {
+      const card = this._findCard(uid);
+      if (!card) return;
+      // captura ANTES de limpar
+      const prev = (card.sql_history || []).slice().reverse().find(t => t.role === 'user');
+      const lastQuestion = prev && typeof prev.content === 'string' ? prev.content.trim() : '';
+      card.sql_history = [];
+      card.sql_total_cost = 0;
+      card.sql_draft = '';
+      card.error = null;
+      card.loading = false;
+      this.saveState();
+      if (!lastQuestion) {
+        if (opts.silent !== true) toast('Nenhuma pergunta anterior para reprocessar.', 'info');
+        return;
+      }
+      if ((card.sql_tables || []).length === 0) {
+        if (opts.silent !== true) toast('Configure ao menos 1 tabela no escopo antes de reprocessar.', 'warn');
+        return;
+      }
+      // dispara a re-pergunta com o case_number atual (lido por
+      // askSqlQuestion via window.__current_case_number)
+      await this.askSqlQuestion(uid, lastQuestion);
     },
 
     async copySqlText(sql) {
