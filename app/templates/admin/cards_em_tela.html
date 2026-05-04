@@ -1,0 +1,173 @@
+{% extends "base.html" %}
+{% block title %}Cards em tela — Vértice{% endblock %}
+
+{% block content %}
+<div x-data="cardsAdminApp()" class="px-6 py-5 pb-12 max-w-full">
+
+  <div class="flex items-center justify-between mb-5">
+    <div>
+      <h1 class="text-lg font-medium">Cards em tela · Voz do Cliente</h1>
+      <p class="text-xs text-neutral-500">
+        Listagem global de todos os cards adicionados em tela por todos os usuários — criador,
+        nível de visibilidade e quem pode ver. Filtro por dono, módulo ou estado.
+      </p>
+    </div>
+    <div class="flex items-center gap-2">
+      <input x-model="filter" type="text" placeholder="filtrar por dono, módulo ou estado…"
+             class="h-9 pl-3 pr-3 w-72 border border-neutral-200 rounded-md text-sm focus:border-brand-600 focus:ring-2 focus:ring-brand-50 outline-none" />
+      <span class="text-[10px] text-neutral-400" x-text="`${filteredCards.length}/${cards.length}`"></span>
+    </div>
+  </div>
+
+  <!-- Stats compactos por estado -->
+  <div class="grid grid-cols-4 gap-3 mb-5">
+    <div class="bg-white border border-neutral-200 rounded-lg p-3">
+      <div class="text-[10px] text-neutral-500 uppercase tracking-wider">total</div>
+      <div class="text-xl font-medium" x-text="cards.length"></div>
+    </div>
+    <div class="bg-white border border-neutral-200 rounded-lg p-3">
+      <div class="text-[10px] text-neutral-500 uppercase tracking-wider">privados</div>
+      <div class="text-xl font-medium" x-text="countByVisibility('private')"></div>
+    </div>
+    <div class="bg-white border border-neutral-200 rounded-lg p-3">
+      <div class="text-[10px] text-neutral-500 uppercase tracking-wider">públicos liderança</div>
+      <div class="text-xl font-medium text-info-700" x-text="countByVisibility('public_lideranca')"></div>
+    </div>
+    <div class="bg-white border border-neutral-200 rounded-lg p-3">
+      <div class="text-[10px] text-neutral-500 uppercase tracking-wider">públicos analista</div>
+      <div class="text-xl font-medium text-emerald-700" x-text="countByVisibility('public_analista')"></div>
+    </div>
+  </div>
+
+  <!-- Tabela -->
+  <div class="bg-white border border-neutral-200 rounded-lg overflow-hidden">
+    <div class="overflow-x-auto">
+      <table class="w-full text-sm">
+        <thead class="bg-neutral-50 text-[10px] uppercase tracking-wider text-neutral-500">
+          <tr>
+            <th class="text-left px-3 py-2.5">Módulo</th>
+            <th class="text-left px-3 py-2.5">Dono</th>
+            <th class="text-left px-3 py-2.5">Grupo</th>
+            <th class="text-left px-3 py-2.5">Estado</th>
+            <th class="text-left px-3 py-2.5">Quem pode ver</th>
+            <th class="text-right px-3 py-2.5">Atualizado em</th>
+            <th class="px-2 py-2.5"></th>
+          </tr>
+        </thead>
+        <tbody>
+          <template x-for="c in filteredCards" :key="c.card_uid">
+            <tr class="border-t border-neutral-100 hover:bg-neutral-50/40">
+              <td class="px-3 py-2">
+                <div class="font-medium text-[13px]" x-text="c.module_name || '(módulo)'"></div>
+                <div class="text-[10.5px] text-neutral-500 truncate max-w-md" x-text="c.module_description || ''"></div>
+              </td>
+              <td class="px-3 py-2 text-[12px]" x-text="c.owner_username || c.owner_id"></td>
+              <td class="px-3 py-2 text-[12px] text-neutral-600" x-text="c.group_title || '?'"></td>
+              <td class="px-3 py-2">
+                <span class="text-[10.5px] px-1.5 py-0.5 rounded inline-flex items-center gap-1"
+                      :class="visibilityClass(c.visibility)">
+                  <span x-text="visibilityIcon(c.visibility)"></span>
+                  <span x-text="visibilityLabel(c.visibility)"></span>
+                </span>
+              </td>
+              <td class="px-3 py-2 text-[10.5px] text-neutral-600">
+                <span x-text="(c.who_can_see || []).join(', ')"></span>
+              </td>
+              <td class="px-3 py-2 text-right text-[10.5px] text-neutral-400 whitespace-nowrap"
+                  x-text="c.updated_at ? new Date(c.updated_at).toLocaleString('pt-BR') : ''"></td>
+              <td class="px-2 py-2 text-right">
+                <select @change="changeVisibility(c.card_uid, $event.target.value); $event.target.value = ''"
+                        class="text-[10.5px] h-7 px-1.5 border border-neutral-200 rounded text-neutral-600">
+                  <option value="" disabled selected>alterar…</option>
+                  <option value="private">🔒 privado</option>
+                  <option value="public_lideranca">👔 público liderança</option>
+                  <option value="public_analista">👥 público analista</option>
+                </select>
+              </td>
+            </tr>
+          </template>
+          <tr x-show="filteredCards.length === 0">
+            <td colspan="7" class="text-center py-8 text-neutral-400 italic text-xs">
+              <span x-show="cards.length === 0">Nenhum card em tela ainda.</span>
+              <span x-show="cards.length > 0">Sem resultados para o filtro atual.</span>
+            </td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+
+</div>
+
+<script>
+function cardsAdminApp() {
+  const initialCards = {{ cards | tojson }};
+  return {
+    cards: initialCards,
+    filter: '',
+    get filteredCards() {
+      const q = (this.filter || '').toLowerCase().trim();
+      if (!q) return this.cards;
+      return this.cards.filter(c =>
+        (c.owner_username || '').toLowerCase().includes(q) ||
+        (c.module_name || '').toLowerCase().includes(q) ||
+        (c.module_description || '').toLowerCase().includes(q) ||
+        (c.group_title || '').toLowerCase().includes(q) ||
+        (c.visibility || '').toLowerCase().includes(q) ||
+        this.visibilityLabel(c.visibility).toLowerCase().includes(q)
+      );
+    },
+    countByVisibility(v) {
+      return this.cards.filter(c => (c.visibility || 'private') === v).length;
+    },
+    visibilityLabel(v) {
+      switch (v) {
+        case 'public_lideranca': return 'público liderança';
+        case 'public_analista':  return 'público analista';
+        default:                 return 'privado';
+      }
+    },
+    visibilityIcon(v) {
+      switch (v) {
+        case 'public_lideranca': return '👔';
+        case 'public_analista':  return '👥';
+        default:                 return '🔒';
+      }
+    },
+    visibilityClass(v) {
+      switch (v) {
+        case 'public_lideranca': return 'bg-info-50 text-info-700';
+        case 'public_analista':  return 'bg-emerald-50 text-emerald-700';
+        default:                 return 'bg-neutral-100 text-neutral-600';
+      }
+    },
+    async changeVisibility(uid, value) {
+      if (!value) return;
+      try {
+        const r = await fetch(`/api/radar/cards/${encodeURIComponent(uid)}/visibility`, {
+          method: 'PUT',
+          credentials: 'same-origin',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ visibility: value }),
+        });
+        if (!r.ok) {
+          let msg = `HTTP ${r.status}`;
+          try { const j = await r.json(); if (j && j.detail) msg = j.detail; } catch (_) {}
+          throw new Error(msg);
+        }
+        // atualiza localmente
+        const card = this.cards.find(c => c.card_uid === uid);
+        if (card) {
+          card.visibility = value;
+          if (value === 'private')              card.who_can_see = ['dono'];
+          else if (value === 'public_lideranca') card.who_can_see = ['dono', 'admin', 'supervisor'];
+          else                                   card.who_can_see = ['dono', 'admin', 'supervisor', 'analista'];
+        }
+      } catch (e) {
+        alert('Falha ao alterar visibilidade: ' + (e.message || ''));
+      }
+    },
+  };
+}
+</script>
+{% endblock %}

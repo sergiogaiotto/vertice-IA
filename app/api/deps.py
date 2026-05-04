@@ -113,6 +113,13 @@ def get_radar_state_repo():
     return SqliteRadarStateRepository()
 
 
+def get_radar_card_visibility_repo():
+    from app.adapters.db.repositories.radar_card_visibility_repo import (
+        SqliteRadarCardVisibilityRepository,
+    )
+    return SqliteRadarCardVisibilityRepository()
+
+
 # ---------- services ----------
 
 def get_auth_service(users=Depends(get_user_repo)) -> AuthService:

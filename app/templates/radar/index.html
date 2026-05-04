@@ -246,6 +246,45 @@
                             <span class="truncate" x-text="card.module_description || '(sem descrição)'"></span>
                           </div>
                         </div>
+                        <!-- Botão de visibilidade: badge com ícone + dropdown com 3 níveis.
+                             Sempre visível (mesmo para cards compartilhados não-canEdit, em modo somente leitura). -->
+                        <div class="relative shrink-0" x-data="{ open: false }">
+                          <button @click="open = !open"
+                                  class="text-[10px] px-1.5 h-5 rounded flex items-center gap-1 transition"
+                                  :class="visibilityClass(card.visibility || 'private')"
+                                  :title="`visibilidade: ${visibilityLabel(card.visibility || 'private')}${canEditVisibility(card) ? '' : ' (somente liderança altera)'}`">
+                            <span x-text="visibilityIcon(card.visibility || 'private')"></span>
+                            <svg width="6" height="6" viewBox="0 0 8 8" class="opacity-60"><path d="M1 2 L4 6 L7 2" stroke="currentColor" fill="none" stroke-width="1.5"/></svg>
+                          </button>
+                          <div x-show="open" @click.outside="open = false"
+                               x-cloak
+                               class="absolute right-0 top-6 z-30 w-56 bg-white border border-neutral-200 rounded-md shadow-lg py-1 text-[11px]">
+                            <div class="px-2.5 py-1 text-[9px] uppercase tracking-wider text-neutral-400 font-medium">Visibilidade do card</div>
+                            <button @click="setCardVisibility(card.uid, 'private'); open = false"
+                                    :disabled="!canSetPrivate(card)"
+                                    class="w-full text-left px-2.5 py-1.5 hover:bg-neutral-50 flex items-center gap-2 disabled:opacity-40 disabled:cursor-not-allowed">
+                              <span>🔒</span><span class="flex-1">Privado</span>
+                              <span x-show="(card.visibility || 'private') === 'private'" class="text-brand-600">✓</span>
+                            </button>
+                            <button @click="setCardVisibility(card.uid, 'public_lideranca'); open = false"
+                                    :disabled="!isLideranca"
+                                    class="w-full text-left px-2.5 py-1.5 hover:bg-neutral-50 flex items-center gap-2 disabled:opacity-40 disabled:cursor-not-allowed"
+                                    :title="isLideranca ? '' : 'apenas admin/supervisor pode setar'">
+                              <span>👔</span><span class="flex-1">Público liderança</span>
+                              <span x-show="card.visibility === 'public_lideranca'" class="text-brand-600">✓</span>
+                            </button>
+                            <button @click="setCardVisibility(card.uid, 'public_analista'); open = false"
+                                    :disabled="!isLideranca"
+                                    class="w-full text-left px-2.5 py-1.5 hover:bg-neutral-50 flex items-center gap-2 disabled:opacity-40 disabled:cursor-not-allowed"
+                                    :title="isLideranca ? '' : 'apenas admin/supervisor pode setar'">
+                              <span>👥</span><span class="flex-1">Público analista</span>
+                              <span x-show="card.visibility === 'public_analista'" class="text-brand-600">✓</span>
+                            </button>
+                            <div x-show="!isLideranca" class="px-2.5 py-1 text-[9.5px] text-neutral-400 border-t border-neutral-100 mt-1">
+                              Apenas admin/supervisor pode alterar para os estados públicos.
+                            </div>
+                          </div>
+                        </div>
                         <template x-if="canEdit">
                           <div class="flex items-center gap-0.5 shrink-0">
                             <button @click="moveCardUp(gIdx, card.uid)"
@@ -953,6 +992,53 @@
 
 
     </section>
+
+  <!-- ============================================================ -->
+  <!-- 3. Compartilhados comigo (read-only) — cards de outros       -->
+  <!--    usuários que o usuário atual pode ver, conforme role.     -->
+  <!-- ============================================================ -->
+  <section x-show="(sharedCards || []).length > 0" class="mt-6">
+    <header class="flex items-center justify-between mb-3">
+      <div>
+        <h2 class="text-sm font-medium">Compartilhados comigo</h2>
+        <p class="text-[11px] text-neutral-500">cards que outros usuários tornaram visíveis para você (somente leitura).</p>
+      </div>
+      <span class="text-[10px] text-neutral-400" x-text="`${sharedCards.length} card(s)`"></span>
+    </header>
+    <div class="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-3">
+      <template x-for="sc in sharedCards" :key="sc.card_uid">
+        <div class="bg-white border border-neutral-200 rounded-lg overflow-hidden flex flex-col">
+          <header class="px-3 py-2 border-b border-neutral-100 bg-neutral-50/40 flex items-center gap-2">
+            <span class="w-1.5 h-1.5 rounded-full shrink-0 bg-neutral-300"></span>
+            <div class="flex-1 min-w-0">
+              <div class="text-[12px] font-medium truncate" x-text="sc.module_name || '(módulo)'"></div>
+              <div class="text-[10px] text-neutral-400 truncate flex items-center gap-1.5">
+                <span class="text-[9px] px-1 py-0 bg-neutral-100 text-neutral-600 rounded shrink-0" x-text="`por ${sc.owner_username || '?'}`"></span>
+                <span class="truncate" x-text="sc.module_description || '(sem descrição)'"></span>
+              </div>
+            </div>
+            <span class="text-[10px] px-1.5 h-5 rounded flex items-center gap-1 shrink-0"
+                  :class="visibilityClass(sc.visibility)"
+                  :title="visibilityLabel(sc.visibility)">
+              <span x-text="visibilityIcon(sc.visibility)"></span>
+            </span>
+          </header>
+          <div class="p-3 text-[11.5px] text-neutral-700 leading-relaxed max-h-64 overflow-y-auto">
+            <template x-if="sc.card_json && sc.card_json.result">
+              <pre class="whitespace-pre-wrap font-mono text-[11px]" x-text="String(sc.card_json.result).substring(0, 1200)"></pre>
+            </template>
+            <template x-if="!(sc.card_json && sc.card_json.result)">
+              <p class="text-neutral-400 italic">(sem resultado salvo)</p>
+            </template>
+          </div>
+          <footer class="px-3 py-1.5 border-t border-neutral-100 bg-neutral-50/40 text-[10px] text-neutral-400 flex items-center gap-2">
+            <span x-text="`grupo: ${sc.group_title || '?'}`"></span>
+            <span class="ml-auto" x-text="sc.updated_at ? new Date(sc.updated_at).toLocaleString('pt-BR') : ''"></span>
+          </footer>
+        </div>
+      </template>
+    </div>
+  </section>
 
   <!-- ============================================================ -->
   <!-- Modal: Configuração de Gráfico                               -->
@@ -1778,6 +1864,13 @@ function radarApp() {
     availableFields,
     groups: [],
     canEdit: userRoles.includes('admin') || userRoles.includes('supervisor'),
+    // Liderança (admin/supervisor/root) — único papel que pode setar cards
+    // como público (lideranca/analista). Default `private` para todos.
+    isLideranca: userRoles.includes('admin') || userRoles.includes('supervisor') || userRoles.includes('root'),
+    // Cards compartilhados visíveis (de OUTROS usuários) — populados pelo
+    // GET /api/radar/cards/shared. Renderizados em painel separado read-only.
+    sharedCards: [],
+    sharedCardsLoading: false,
 
     // case dropdown
     caseDropdownOpen: false,
@@ -1956,6 +2049,7 @@ function radarApp() {
         this.loadModules(),
         this.refreshCases(),
         this.loadSchema(),
+        this.loadSharedCards(),
         this._loadStatePromise || Promise.resolve(),
       ]);
       // dispara em background — não bloqueia o init nem o primeiro render dos
@@ -2586,6 +2680,89 @@ function radarApp() {
         if (c) return c;
       }
       return null;
+    },
+
+    // ===== Visibilidade dos cards =====
+    // Mantém UI consistente entre o badge no header do card, o popover de
+    // troca, o painel de compartilhados e a tela administrativa.
+    visibilityLabel(v) {
+      switch (v) {
+        case 'public_lideranca': return 'público liderança';
+        case 'public_analista':  return 'público analista';
+        default:                 return 'privado';
+      }
+    },
+    visibilityIcon(v) {
+      switch (v) {
+        case 'public_lideranca': return '👔';
+        case 'public_analista':  return '👥';
+        default:                 return '🔒';
+      }
+    },
+    visibilityClass(v) {
+      switch (v) {
+        case 'public_lideranca': return 'bg-info-50 text-info-700 hover:bg-info-100';
+        case 'public_analista':  return 'bg-emerald-50 text-emerald-700 hover:bg-emerald-100';
+        default:                 return 'bg-neutral-100 text-neutral-600 hover:bg-neutral-200';
+      }
+    },
+    canEditVisibility(card) {
+      // Card próprio: dono pode setar/reverter para privado; liderança pode
+      // tudo. Card compartilhado de outro: apenas liderança pode mudar.
+      if (this.isLideranca) return true;
+      return !!(card && (card._isOwn === undefined ? true : card._isOwn));
+    },
+    canSetPrivate(card) {
+      // private exige ser dono OU liderança
+      if (this.isLideranca) return true;
+      return !!(card && (card._isOwn === undefined ? true : card._isOwn));
+    },
+
+    async setCardVisibility(uid, visibility) {
+      const card = this._findCard(uid);
+      if (!card) return;
+      // Otimismo: aplica localmente; se falhar, reverte.
+      const previous = card.visibility || 'private';
+      if (previous === visibility) return;
+      card.visibility = visibility;
+      this.saveState();
+      try {
+        const r = await fetch(`/api/radar/cards/${encodeURIComponent(uid)}/visibility`, {
+          method: 'PUT',
+          credentials: 'same-origin',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ visibility }),
+        });
+        if (!r.ok) {
+          let msg = `HTTP ${r.status}`;
+          try { const j = await r.json(); if (j && j.detail) msg = j.detail; } catch (_) {}
+          throw new Error(msg);
+        }
+        toast(`Visibilidade: ${this.visibilityLabel(visibility)}`, 'info', 2500);
+      } catch (e) {
+        // reverte
+        card.visibility = previous;
+        this.saveState();
+        toast('Falha ao alterar visibilidade: ' + (e.message || ''), 'error');
+      }
+    },
+
+    async loadSharedCards() {
+      this.sharedCardsLoading = true;
+      try {
+        const r = await fetch('/api/radar/cards/shared', { credentials: 'same-origin' });
+        if (!r.ok) return;
+        const body = await r.json();
+        this.sharedCards = (body.items || []).map(it => ({
+          ...it,
+          // marca como NÃO próprio para os helpers de visibilidade.
+          _isOwn: false,
+        }));
+      } catch (_) {
+        // silencioso — painel só não aparece se a chamada falhar
+      } finally {
+        this.sharedCardsLoading = false;
+      }
     },
 
     _extractSourceText(card) {
