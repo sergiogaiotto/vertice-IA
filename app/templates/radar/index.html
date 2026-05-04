@@ -2369,22 +2369,18 @@ function radarApp() {
     },
 
     /**
-     * Limpa o histórico de conversa dos módulos padrão de plataforma
-     * (__chat__ e __sql__) sempre que o `caseNumber` muda em relação à
-     * última seleção persistida. Independe de transactionId — fica
-     * correto inclusive quando o caso novo não tem transcrição ou o
-     * mesmo transactionId é reusado entre casos.
+     * Safety-net que zera conversas residuais no in-memory state DEPOIS do
+     * remote-load reconciliar com o servidor. A limpeza primária já acontece
+     * em `_hydrateGroups` (paint inicial e remote-load), mas se o servidor
+     * tiver conversa de um caso anterior e o paint inicial não tiver detectado
+     * (ex.: localStorage zerado, primeiro acesso no dispositivo), reaplicamos
+     * a regra aqui para garantir.
      *
-     * F5 no mesmo caso → lastCase === caseNumber → não limpa, preservando
-     * a conversa em andamento do usuário.
-     *
-     * Persistido em localStorage `radar:lastChatCase` para sobreviver a
-     * reload completo. O saveState propaga ao servidor (sync cross-device).
+     * Usa `_caseChangedSinceLastLoad` (setado em loadState) para decidir.
+     * Sem efeito quando o caso não mudou (preserva conversa em F5).
      */
     _clearConversationsOnCaseChange() {
-      const key = 'radar:lastChatCase';
-      const lastCase = localStorage.getItem(key) || '';
-      if (lastCase === (caseNumber || '')) return;
+      if (this._caseChangedSinceLastLoad !== true) return;
       let cleared = 0;
       this.groups.forEach(group => {
         group.cards.forEach(card => {
@@ -2395,8 +2391,6 @@ function radarApp() {
             card.chat_draft = '';
             card.error = null;
             card.loading = false;
-            // refresca os campos selecionados com valores frescos do novo
-            // contexto — preserva escopo escolhido pelo usuário.
             if (Array.isArray(card.chat_fields)) {
               card.chat_fields = card.chat_fields.map(f => {
                 const fresh = this.availableFields.find(x => x.key === f.key);
@@ -2416,7 +2410,6 @@ function radarApp() {
           }
         });
       });
-      localStorage.setItem(key, caseNumber || '');
       if (cleared > 0) {
         this.saveState();
       }
@@ -3968,21 +3961,50 @@ function radarApp() {
     // Flags de UI para mostrar status de sync no header.
     stateSync: { loading: false, saving: false, error: null, lastSavedAt: null },
 
-    _hydrateGroups(parsed) {
+    _hydrateGroups(parsed, opts = {}) {
       // Cards restaurados (de qualquer fonte) NUNCA podem voltar com loading=true,
       // senão ficam presos em "processando..." quando o auto-run não dispara.
+      // Se `opts.clearConversations` for true (troca de caso detectada), limpa
+      // chat_history/sql_history JÁ na hidratação para evitar flash de
+      // conversa antiga antes do auto-run rodar.
+      const clearConv = opts.clearConversations === true;
       return parsed.map(g => ({
         ...g,
         _newModuleId: '',
-        cards: (g.cards || []).map(c => ({
-          ...c,
-          loading: false,
-          error: c.error || null,
-        })),
+        cards: (g.cards || []).map(c => {
+          const out = {
+            ...c,
+            loading: false,
+            error: c.error || null,
+          };
+          if (clearConv && (c.module_id === '__chat__' || c.module_id === '__sql__')) {
+            out.chat_history = [];
+            out.chat_total_cost = 0;
+            out.chat_draft = '';
+            out.sql_history = [];
+            out.sql_total_cost = 0;
+            out.sql_draft = '';
+          }
+          return out;
+        }),
       }));
     },
 
     loadState() {
+      // 0) Detecta troca de caso ANTES de hidratar — se mudou, marca a flag
+      //    para o _hydrateGroups limpar chat_history/sql_history JÁ no
+      //    primeiro paint. Sem isso, a UI mostraria a conversa antiga por
+      //    alguns ms até o auto-run rodar (e em alguns casos o auto-run nem
+      //    chega a rodar — F5 mesmo caso = same-context skip).
+      const lastChatCaseKey = 'radar:lastChatCase';
+      const lastChatCase = localStorage.getItem(lastChatCaseKey) || '';
+      this._caseChangedSinceLastLoad = (lastChatCase !== (caseNumber || ''));
+      // Já marca o novo caso para evitar duplo-clear em saves intermediários.
+      // O clear efetivo só acontece quando _hydrateGroups recebe a flag.
+      if (this._caseChangedSinceLastLoad) {
+        localStorage.setItem(lastChatCaseKey, caseNumber || '');
+      }
+
       // 1) Pinta imediatamente do localStorage (cache offline) — UX instantânea
       //    em F5 e em ambientes sem rede momentânea.
       try {
@@ -3990,7 +4012,9 @@ function radarApp() {
         if (raw) {
           const parsed = JSON.parse(raw);
           if (Array.isArray(parsed) && parsed.length > 0) {
-            this.groups = this._hydrateGroups(parsed);
+            this.groups = this._hydrateGroups(parsed, {
+              clearConversations: this._caseChangedSinceLastLoad,
+            });
           }
         }
       } catch (_) {}
@@ -4004,6 +4028,17 @@ function radarApp() {
       //    Exposto como `_loadStatePromise` para o init() poder aguardar
       //    antes de rodar o auto-run.
       this._loadStatePromise = this._loadStateRemote();
+
+      // 3) Se a hidratação local já limpou conversas, persistir essa limpeza
+      //    no servidor agora (não esperar saveState debounce do auto-run).
+      //    Importante: o saveState abaixo só faz PUT depois que
+      //    `_stateRemoteReady` virar true, para não sobrescrever o servidor
+      //    com state estale antes do remote-load reconciliar.
+      if (this._caseChangedSinceLastLoad) {
+        // dispara depois do remote-load completar; o saveState debounce
+        // garante que serão coalescidos com saves do auto-run.
+        this._loadStatePromise.then(() => this.saveState());
+      }
     },
 
     async _loadStateRemote() {
@@ -4030,7 +4065,11 @@ function radarApp() {
         const remoteSerialized = JSON.stringify(remote);
 
         if (remote.length > 0 && remoteSerialized !== localSerialized) {
-          this.groups = this._hydrateGroups(remote);
+          // Mesmo flag do paint inicial — se o caso mudou, o estado canônico
+          // também precisa ter conversas zeradas antes de pintar.
+          this.groups = this._hydrateGroups(remote, {
+            clearConversations: this._caseChangedSinceLastLoad === true,
+          });
           // Atualiza cache local com a versão canônica.
           try { localStorage.setItem(storageKey, remoteSerialized); } catch (_) {}
           // Re-renderiza charts/mermaid pois o DOM mudou de cards.
