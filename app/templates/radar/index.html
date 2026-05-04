@@ -2051,20 +2051,39 @@ function radarApp() {
         });
       });
 
-      // FASE 1: módulos cadastrados que usam campos do contexto.
+      // FASE 1: TODOS os módulos cadastrados reprocessam ao trocar de caso.
+      // Para cards context-bound (input_field é campo do contexto), atualiza
+      // input_value com o valor do novo caso antes de executar. Para cards
+      // com input __custom__ (texto livre) ou schema-bound (table.col),
+      // re-executa com o input_value persistido — atende o pedido explícito
+      // de "todos os módulos cadastrados devem passar por reprocessamento
+      // considerando o registro posicionado".
       // Coleta as Promises para conseguir esperar todas terminarem antes
       // do saveState final — caso contrário o servidor recebia um snapshot
       // com cards ainda em loading=true e result vazio.
       const modulePromises = [];
       this.groups.forEach((group, gIdx) => {
         group.cards.forEach((card, cIdx) => {
-          if (this.cardDependsOnCurrentContext(card)) {
+          if (!this.cardShouldRerunOnCaseChange(card)) return;
+
+          // context-bound: refresca input_value do novo caso/transcrição
+          if (card.input_field &&
+              card.input_field !== '__custom__' &&
+              !card.input_field.includes('.')) {
             const fresh = this.availableFields.find(f => f.key === card.input_field);
-            if (fresh && fresh.value) {
-              card.input_value = fresh.value;
-              modulePromises.push(this.executeCard(gIdx, cIdx));
-              executedModules++;
-            }
+            if (!fresh || !fresh.value) return;  // campo ausente no novo contexto
+            card.input_value = fresh.value;
+            modulePromises.push(this.executeCard(gIdx, cIdx));
+            executedModules++;
+            return;
+          }
+
+          // __custom__ ou schema-bound: re-executa com o input_value salvo.
+          // input_value é obrigatório — sem ele, /run-module cairia no
+          // fallback de transcrição e mascararia o erro do usuário.
+          if (card.input_value && String(card.input_value).trim() !== '') {
+            modulePromises.push(this.executeCard(gIdx, cIdx));
+            executedModules++;
           }
         });
       });
@@ -2237,6 +2256,22 @@ function radarApp() {
       if (card.input_field === '__custom__') return false;
       if (card.input_field.includes('.')) return false;
       return this.availableFields.some(f => f.key === card.input_field);
+    },
+
+    /**
+     * Cards que devem reprocessar ao trocar de caso, considerando o pedido
+     * explícito de "todos os módulos cadastrados". Inclui contexto, custom
+     * e schema-bound — exclui apenas virtuais sem semântica de re-run único:
+     *   - __chart__/__diagram__ → FASES 2/3 dedicadas
+     *   - __chat__/__sql__      → só limpam histórico (FASE 0)
+     *   - __present__           → gerada sob demanda pelo usuário
+     */
+    cardShouldRerunOnCaseChange(card) {
+      if (['__chat__', '__chart__', '__diagram__', '__sql__', '__present__'].includes(card.module_id)) {
+        return false;
+      }
+      // qualquer card de módulo cadastrado (com module_id real) entra aqui
+      return Boolean(card.module_id);
     },
 
     // ---------- Chart (módulo virtual __chart__) ----------
