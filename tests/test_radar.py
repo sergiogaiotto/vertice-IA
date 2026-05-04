@@ -75,6 +75,57 @@ async def test_card_creation_blocks_injection():
 
 
 @pytest.mark.asyncio
+async def test_radar_state_repo_roundtrip():
+    """Estado por usuário: GET vazio, PUT, GET retorna o que foi salvo."""
+    from app.adapters.db.repositories.radar_state_repo import SqliteRadarStateRepository
+    await init_db()
+    repo = SqliteRadarStateRepository()
+    user_id = "user-test-state-1"
+
+    # estado inicial: nada
+    assert await repo.get(user_id) is None
+
+    # put → version 1
+    res = await repo.put(user_id, '[{"id":"g1","title":"Análise principal","cards":[]}]')
+    assert res["ok"] is True
+    assert res["version"] == 1
+
+    # get traz exatamente o que foi gravado
+    rec = await repo.get(user_id)
+    assert rec is not None
+    assert rec["version"] == 1
+    assert "Análise principal" in rec["state_json"]
+
+    # put com expected_version correta → version 2
+    res2 = await repo.put(user_id, '[]', expected_version=1)
+    assert res2["ok"] is True
+    assert res2["version"] == 2
+
+
+@pytest.mark.asyncio
+async def test_radar_state_repo_version_conflict():
+    """PUT com expected_version desatualizada → conflict, sem sobrescrever."""
+    from app.adapters.db.repositories.radar_state_repo import SqliteRadarStateRepository
+    await init_db()
+    repo = SqliteRadarStateRepository()
+    user_id = "user-test-state-2"
+
+    await repo.put(user_id, '[{"a":1}]')  # version 1
+    await repo.put(user_id, '[{"a":2}]')  # version 2
+
+    # cliente acha que está em v1 mas servidor já avançou pra v2
+    conflict = await repo.put(user_id, '[{"a":3}]', expected_version=1)
+    assert conflict["ok"] is False
+    assert conflict["conflict"] is True
+    assert conflict["current_version"] == 2
+
+    # estado salvo permanece o de v2 (não sobrescrito)
+    rec = await repo.get(user_id)
+    assert '"a": 2' in rec["state_json"] or '"a":2' in rec["state_json"]
+    assert rec["version"] == 2
+
+
+@pytest.mark.asyncio
 async def test_list_cards_for_contract():
     await init_db()
     svc = _make_service()

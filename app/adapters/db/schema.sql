@@ -411,6 +411,25 @@ CREATE TABLE IF NOT EXISTS raiox_relationships (
 CREATE INDEX IF NOT EXISTS idx_raiox_rel_a ON raiox_relationships(table_a);
 CREATE INDEX IF NOT EXISTS idx_raiox_rel_b ON raiox_relationships(table_b);
 
+-- ===== Radar Voz do Cliente — estado por usuário (sync cross-device) =====
+-- Persiste a configuração de grupos/módulos/cards que o usuário monta na
+-- tela "Análise por módulos". Antes ficava só em localStorage do navegador,
+-- o que impedia ver o mesmo estado em outro computador. Agora o navegador
+-- ainda usa localStorage como cache offline, mas a fonte de verdade é o
+-- servidor: GET /api/radar/state ao carregar, PUT /api/radar/state ao mudar.
+--
+-- A coluna `state_json` carrega o array completo de groups (mesma forma
+-- que o front gravava em localStorage com a chave 'radar:groups'). Mantém
+-- também `version` para evitar sobrescrita cega entre abas concorrentes
+-- e `updated_at` para diagnóstico.
+CREATE TABLE IF NOT EXISTS radar_user_state (
+    user_id TEXT PRIMARY KEY,
+    state_json TEXT NOT NULL DEFAULT '[]',
+    version INTEGER NOT NULL DEFAULT 1,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+);
+
 -- Failsafe inbox
 CREATE TABLE IF NOT EXISTS failsafe_actions (
     id TEXT PRIMARY KEY,

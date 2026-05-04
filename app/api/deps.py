@@ -108,6 +108,11 @@ def get_failsafe_repo():
     return SqliteFailsafeRepository()
 
 
+def get_radar_state_repo():
+    from app.adapters.db.repositories.radar_state_repo import SqliteRadarStateRepository
+    return SqliteRadarStateRepository()
+
+
 # ---------- services ----------
 
 def get_auth_service(users=Depends(get_user_repo)) -> AuthService:
