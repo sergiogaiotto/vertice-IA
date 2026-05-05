@@ -2141,6 +2141,8 @@ function radarApp() {
       let regeneratedDiagrams = 0;
       let clearedChats = 0;
       let clearedSql = 0;
+      let replayedSql = 0;
+      const sqlReplayPromises = [];
 
       // FASE 0: Chats — limpa histórico (conversa do contexto anterior não faz sentido aqui)
       this.groups.forEach(group => {
@@ -2163,20 +2165,35 @@ function radarApp() {
             if (hadHistory) clearedChats++;
           }
 
-          // FASE 0.5: SQL — limpa POR INTEIRO ao trocar de caso e PRESERVA
-          // apenas o escopo de tabelas configurado. Não re-pergunta
-          // automaticamente: o reprocessamento é manual via botão `🔄
-          // reprocessar` no card (decisão de UX — re-perguntar sem confirmação
-          // gerava queries vazias quando o agente perdia contexto da pergunta
-          // anterior). Sem replay automático aqui.
+          // FASE 0.5: SQL — limpa POR INTEIRO ao trocar de caso, PRESERVA
+          // o escopo de tabelas configurado e dispara AUTO-REPLAY da última
+          // pergunta do usuário contra o novo case_number. Reaproveita
+          // `clearAndReprocessSql` (mesmo caminho do botão `🔄 reprocessar`)
+          // com `silent:true` para não emitir toasts redundantes — o resumo
+          // do auto-run consolida a mensagem ao usuário.
           if (card.module_id === '__sql__') {
             const hadHistory = (card.sql_history || []).length > 0;
-            card.sql_history = [];
-            card.sql_total_cost = 0;
-            card.sql_draft = '';
-            card.error = null;
-            card.loading = false;
-            if (hadHistory) clearedSql++;
+            const lastUser = hadHistory
+              ? (card.sql_history || []).slice().reverse().find(t => t.role === 'user')
+              : null;
+            const lastQuestion = lastUser && typeof lastUser.content === 'string'
+              ? lastUser.content.trim()
+              : '';
+            const canReplay = hadHistory
+              && lastQuestion
+              && Array.isArray(card.sql_tables)
+              && card.sql_tables.length > 0;
+            if (canReplay) {
+              sqlReplayPromises.push(this.clearAndReprocessSql(card.uid, { silent: true }));
+              replayedSql++;
+            } else if (hadHistory) {
+              card.sql_history = [];
+              card.sql_total_cost = 0;
+              card.sql_draft = '';
+              card.error = null;
+              card.loading = false;
+              clearedSql++;
+            }
           }
         });
       });
@@ -2248,13 +2265,14 @@ function radarApp() {
         }, 1500);
       }
 
-      const totalExecuted = executedModules + executedCharts + regeneratedDiagrams;
+      const totalExecuted = executedModules + executedCharts + regeneratedDiagrams + replayedSql;
       const totalCleared = clearedChats + clearedSql;
       if (totalExecuted > 0 || totalCleared > 0) {
         const parts = [];
         if (executedModules > 0)     parts.push(`${executedModules} módulo(s)`);
         if (executedCharts > 0)      parts.push(`${executedCharts} gráfico(s)`);
         if (regeneratedDiagrams > 0) parts.push(`${regeneratedDiagrams} diagrama(s)`);
+        if (replayedSql > 0)         parts.push(`${replayedSql} SQL (auto-replay)`);
 
         const cleared = [];
         if (clearedChats > 0) cleared.push(`${clearedChats} chat(s)`);
@@ -2271,17 +2289,17 @@ function radarApp() {
         toast(msg, 'info', 4500);
       }
 
-      // Espera todas as execuções (módulos + charts) terminarem para garantir
-      // que o estado salvo no servidor já contém os resultados frescos. Sem
-      // este await, o saveState debounced subia um snapshot com loading=true
-      // / result vazio, e o `same-context` skip impedia re-execução depois.
-      // Cada executeCard/rerun também chama saveState no `finally`, então
-      // mesmo se o usuário sair antes do Promise.all completar, o que tiver
-      // finalizado já está persistido. SQL não entra aqui — é só limpo
-      // (reprocessamento manual via botão `🔄 reprocessar` no card).
+      // Espera todas as execuções (módulos + charts + SQL replay) terminarem
+      // para garantir que o estado salvo no servidor já contém os resultados
+      // frescos. Sem este await, o saveState debounced subia um snapshot
+      // com loading=true / result vazio, e o `same-context` skip impedia
+      // re-execução depois. Cada executeCard/rerun/clearAndReprocessSql
+      // também chama saveState no `finally`, então mesmo se o usuário sair
+      // antes do Promise.all completar, o que tiver finalizado já está
+      // persistido.
       try {
-        await Promise.all([...modulePromises, ...chartPromises]);
-      } catch (_) { /* erros individuais já tratados em executeCard/rerun */ }
+        await Promise.all([...modulePromises, ...chartPromises, ...sqlReplayPromises]);
+      } catch (_) { /* erros individuais já tratados em executeCard/rerun/clearAndReprocessSql */ }
       // saveState final — coalesça via debounce em uma única gravação no
       // servidor mesmo após N execuções paralelas.
       if (totalExecuted > 0 || totalCleared > 0) {
@@ -2390,6 +2408,12 @@ function radarApp() {
      *
      * Usa `_caseChangedSinceLastLoad` (setado em loadState) para decidir.
      * Sem efeito quando o caso não mudou (preserva conversa em F5).
+     *
+     * SQL: NÃO limpa aqui. O `autoRunIfContextChanged` faz auto-replay da
+     * última pergunta contra o novo case_number e precisa do `sql_history`
+     * intacto para lê-la. A limpeza efetiva do SQL acontece dentro do
+     * `clearAndReprocessSql` (re-pergunta) ou no fallback da FASE 0.5
+     * quando não há pergunta replicável.
      */
     _clearConversationsOnCaseChange() {
       if (this._caseChangedSinceLastLoad !== true) return;
@@ -2409,15 +2433,6 @@ function radarApp() {
                 return fresh ? { ...f, value: fresh.value || '' } : f;
               });
             }
-            if (had) cleared++;
-          }
-          if (card.module_id === '__sql__') {
-            const had = (card.sql_history || []).length > 0;
-            card.sql_history = [];
-            card.sql_total_cost = 0;
-            card.sql_draft = '';
-            card.error = null;
-            card.loading = false;
             if (had) cleared++;
           }
         });
@@ -3977,8 +3992,14 @@ function radarApp() {
       // Cards restaurados (de qualquer fonte) NUNCA podem voltar com loading=true,
       // senão ficam presos em "processando..." quando o auto-run não dispara.
       // Se `opts.clearConversations` for true (troca de caso detectada), limpa
-      // chat_history/sql_history JÁ na hidratação para evitar flash de
-      // conversa antiga antes do auto-run rodar.
+      // chat_history JÁ na hidratação para evitar flash de conversa antiga
+      // antes do auto-run rodar.
+      //
+      // SQL: NÃO limpa aqui. O auto-run executa replay da última pergunta
+      // contra o novo case_number e precisa do `sql_history` intacto. O
+      // próprio `clearAndReprocessSql` zera o histórico antes de re-perguntar,
+      // então o flash visual fica restrito aos ms entre o paint e o disparo
+      // do replay (aceitável dado o ganho de UX do auto-replay).
       const clearConv = opts.clearConversations === true;
       return parsed.map(g => ({
         ...g,
@@ -3989,13 +4010,10 @@ function radarApp() {
             loading: false,
             error: c.error || null,
           };
-          if (clearConv && (c.module_id === '__chat__' || c.module_id === '__sql__')) {
+          if (clearConv && c.module_id === '__chat__') {
             out.chat_history = [];
             out.chat_total_cost = 0;
             out.chat_draft = '';
-            out.sql_history = [];
-            out.sql_total_cost = 0;
-            out.sql_draft = '';
           }
           return out;
         }),
