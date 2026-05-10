@@ -87,13 +87,30 @@ class PgRadarCardVisibilityRepository:
         visibility: str,
         card_json: dict | None,
         feature: str = "radar",
-    ) -> None:
+    ) -> bool:
         """Upsert do card. Em INSERTs, snapshota o criador (owner=criador inicial).
-        Em UPDATEs, NUNCA sobrescreve created_by_*. Não altera previous_visibility.
+        Em UPDATEs do MESMO dono, atualiza metadados (group, module, card_json).
+        Se o `card_uid` já pertence a OUTRO dono, NÃO faz upsert — é tentativa
+        de roubo cross-user (ex.: localStorage residual de outro usuário no
+        mesmo browser). Devolve True se upsert ocorreu, False se foi rejeitado.
+
+        ``created_by_*`` é snapshot do criador e NUNCA é sobrescrito.
+        ``previous_visibility`` também é preservado (transição vai pelo
+        ``update_visibility`` separado).
         """
         if visibility not in VALID_VISIBILITY:
             visibility = "private"
         async with connect() as db:
+            # Defense-in-depth: rejeita atualização cross-user. O frontend
+            # também é fixado (storageKey namespaced por user_id), mas se um
+            # cliente velho mandar dados de outro dono, não corromper o DB.
+            current_owner = await db.fetchval(
+                "SELECT owner_id FROM radar_card_visibility WHERE card_uid = $1",
+                card_uid,
+            )
+            if current_owner is not None and current_owner != owner_id:
+                return False
+
             await db.execute(
                 """
                 INSERT INTO radar_card_visibility
@@ -119,6 +136,7 @@ class PgRadarCardVisibilityRepository:
                 group_id, group_title, module_id, module_name,
                 module_description, visibility, card_json, feature,
             )
+            return True
 
     async def update_visibility(
         self,

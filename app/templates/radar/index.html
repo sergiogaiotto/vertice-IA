@@ -1845,11 +1845,18 @@
 <script>
 function radarApp() {
   const userRoles = {{ (user.roles or []) | tojson }};
+  const userId = "{{ user.id if user else '' }}";
   const transactionId = "{{ transcript.transaction_id if transcript else '' }}";
   const caseNumber = "{{ selected_case.case_number if selected_case else '' }}";
-  // Storage por FUNCIONALIDADE (não por caso) — os módulos configurados
-  // permanecem disponíveis ao trocar de caso/transcrição.
-  const storageKey = 'radar:groups';
+  // Storage por USUÁRIO e funcionalidade. CRÍTICO incluir userId — sem isso,
+  // se dois usuários (ex.: sergio.gaiotto e analista) usam o mesmo browser,
+  // o localStorage do anterior é lido pelo próximo e os cards "vazam" entre
+  // contas, com o `sync_owner_cards` reescrevendo donos de cards alheios.
+  const storageKey = userId ? `radar:groups:${userId}` : 'radar:groups:anon';
+
+  // Compat: limpa o key antigo sem user_id se ainda existir no browser do
+  // user. Evita que cache cross-user remanescente reaparece após o fix.
+  try { localStorage.removeItem('radar:groups'); } catch (_) {}
 
   // Campos textuais disponíveis nesta tela (caso BKO + transcrição Verint)
   // Construídos no servidor para refletir os valores reais do contexto
@@ -4228,12 +4235,15 @@ function radarApp() {
           try { localStorage.setItem(storageKey, remoteSerialized); } catch (_) {}
           // Re-renderiza charts/mermaid pois o DOM mudou de cards.
           this.$nextTick(() => this._rerenderAllCharts && this._rerenderAllCharts());
-        } else if (remote.length === 0 && localSerialized.length > 2) {
-          // Servidor vazio mas o cliente tem groups: faz upload imediato como
-          // bootstrap (caso de usuário que já vinha usando antes do sync).
-          this._stateRemoteReady = true;
-          this._scheduleStateSave(0);
-          return;
+        } else if (remote.length === 0) {
+          // Servidor vazio = usuário novo (ou reset). NÃO usa o local como
+          // bootstrap — antes fazíamos isso e isso vazava cards entre usuários
+          // que dividiam o mesmo browser (localStorage residual virava state
+          // canônico no servidor da próxima conta). Sempre vence o servidor.
+          if (localSerialized.length > 2) {
+            try { localStorage.removeItem(storageKey); } catch (_) {}
+          }
+          this.groups = [this.makeGroup('Análise principal')];
         }
       } catch (e) {
         this.stateSync.error = String(e && e.message || e);

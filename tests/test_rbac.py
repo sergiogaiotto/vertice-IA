@@ -159,6 +159,57 @@ async def test_sem_token_recebe_401(client: AsyncClient):
     assert not falhas, "Endpoints sem auth-gate:\n" + "\n".join(falhas)
 
 
+# ---- Anti-leak: upsert NÃO sobrescreve dono entre usuários --------------
+
+@pytest.mark.asyncio
+async def test_upsert_rejeita_cross_user(client: AsyncClient):
+    """Quando user A cria um card e user B tenta upsert do mesmo UID, o repo
+    rejeita silenciosamente (retorna False) e o `owner_*` continua sendo A.
+
+    Bug original: dois usuários compartilhando o mesmo browser; o segundo
+    fazia PUT /api/radar/state contendo cards do primeiro (residuais em
+    localStorage). O sync_owner_cards chamava upsert que executava
+    ``ON CONFLICT DO UPDATE SET owner_username = EXCLUDED.owner_username`` —
+    `owner_id` ficava inalterado mas `owner_username` virava o invasor.
+    """
+    from app.adapters.db.repositories.radar_card_visibility_repo import (
+        PgRadarCardVisibilityRepository,
+    )
+
+    await init_db()
+    auth = AuthService(PgUserRepository())
+    a = await auth.register("leak_a", "vertice2026", roles=["analista_n3"])
+    b = await auth.register("leak_b", "vertice2026", roles=["analista_n3"])
+
+    repo = PgRadarCardVisibilityRepository()
+    card_uid = "uid-leak-test"
+
+    # A cria o card.
+    ok_a = await repo.upsert(
+        card_uid=card_uid, owner_id=str(a.id), owner_username=a.username,
+        group_id=None, group_title=None,
+        module_id=None, module_name=None, module_description=None,
+        visibility="private", card_json={"x": 1},
+    )
+    assert ok_a is True
+
+    # B tenta upsert (simula vazamento via localStorage compartilhado).
+    ok_b = await repo.upsert(
+        card_uid=card_uid, owner_id=str(b.id), owner_username=b.username,
+        group_id=None, group_title=None,
+        module_id=None, module_name=None, module_description=None,
+        visibility="private", card_json={"x": 2},
+    )
+    assert ok_b is False, "upsert cross-user deveria ser rejeitado"
+
+    # Estado no DB: ainda é de A, sem corrupção.
+    record = await repo.get(card_uid)
+    assert record["owner_id"] == str(a.id)
+    assert record["owner_username"] == a.username
+    assert record["created_by_id"] == str(a.id)
+    assert record["card_json"] == {"x": 1}, "card_json de A não pode ser tocado"
+
+
 # ---- Preferências do Radar persistidas no Postgres (PR-3) ---------------
 
 @pytest.mark.asyncio
