@@ -1,11 +1,19 @@
--- Vértice — seed inicial
+-- Vértice — seed inicial (PostgreSQL)
+--
+-- ON CONFLICT DO NOTHING substitui o INSERT OR IGNORE do SQLite.
 
--- Roles e permissões base
-INSERT OR IGNORE INTO roles (name) VALUES ('root'), ('admin'), ('analista_n3'), ('supervisor'), ('finops');
+INSERT INTO roles (name) VALUES
+    ('root'),
+    ('admin'),
+    ('analista_n3'),
+    ('supervisor'),
+    ('finops')
+ON CONFLICT (name) DO NOTHING;
 
-INSERT OR IGNORE INTO permissions (code) VALUES
+INSERT INTO permissions (code) VALUES
     ('execute:agent_analysis'),
     ('manage:prompts'),
     ('manage:modules'),
     ('approve:failsafe'),
-    ('view:finops');
+    ('view:finops')
+ON CONFLICT (code) DO NOTHING;

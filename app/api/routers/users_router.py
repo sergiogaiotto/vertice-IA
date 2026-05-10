@@ -76,15 +76,14 @@ async def list_departments(user: User = Depends(require_user)):
     combobox dos modais Novo/Editar usuário (input + datalist HTML5).
     Aceita texto livre na UI; este endpoint só sugere os existentes."""
     _require_admin(user)
-    from app.adapters.db.sqlite import connect
+    from app.adapters.db.postgres import connect
     async with connect() as db:
-        cur = await db.execute(
+        rows = await db.fetch(
             "SELECT DISTINCT department FROM users "
-            "WHERE department IS NOT NULL AND department != '' "
+            "WHERE department IS NOT NULL AND department <> '' "
             "ORDER BY department"
         )
-        rows = await cur.fetchall()
-    return [r[0] for r in rows]
+    return [r["department"] for r in rows]
 
 
 @router.get("/{user_id}", response_model=UserDetail)

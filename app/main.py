@@ -36,7 +36,7 @@ from fastapi.staticfiles import StaticFiles
 from starlette.middleware.sessions import SessionMiddleware
 
 from app import __version__
-from app.adapters.db.sqlite import init_db
+from app.adapters.db.postgres import close_pool, init_db
 from app.api.routers import (
     api_endpoints_router,
     auth_router,
@@ -62,9 +62,14 @@ BASE_DIR = Path(__file__).resolve().parent
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    # bootstrap: garante schema, seed e admin user
+    # bootstrap: garante schema, seed, módulos default e taxonomia churn.
+    # `init_db()` também inicializa o pool asyncpg.
     await init_db()
-    yield
+    try:
+        yield
+    finally:
+        # Fecha o pool — espera conexões ativas drenarem (max 30s default).
+        await close_pool()
 
 
 app = FastAPI(

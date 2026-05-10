@@ -16,7 +16,7 @@ from dataclasses import dataclass
 from datetime import datetime
 from typing import Any
 
-from app.adapters.db.sqlite import connect
+from app.adapters.db.postgres import connect
 
 
 # Identidade visual Vértice (RGB)
@@ -50,32 +50,35 @@ class Presentation:
 
 
 def _row_to_presentation(row) -> Presentation:
+    def _list(v):
+        return v if isinstance(v, list) else []
     return Presentation(
-        id=row[0],
-        title=row[1],
-        subtitle=row[2] or "",
-        feature=row[3] or "",
-        case_number=row[4] or "",
-        sections=json.loads(row[5]) if row[5] else [],
-        insights=json.loads(row[6]) if row[6] else [],
-        chat_history=json.loads(row[7]) if row[7] else [],
-        created_by_user=row[8] or "",
-        created_by_id=row[9],
-        created_at=datetime.fromisoformat(row[10]) if isinstance(row[10], str) else (row[10] or datetime.utcnow()),
-        updated_at=datetime.fromisoformat(row[11]) if isinstance(row[11], str) else (row[11] or datetime.utcnow()),
-        cost_estimated=float(row[12] or 0),
-        tokens_input=int(row[13] or 0),
-        tokens_output=int(row[14] or 0),
-        model_used=row[15] or "",
-        visuals=json.loads(row[16]) if (len(row) > 16 and row[16]) else [],
+        id=row["id"],
+        title=row["title"],
+        subtitle=row["subtitle"] or "",
+        feature=row["feature"] or "",
+        case_number=row["case_number"] or "",
+        sections=_list(row["sections"]),
+        insights=_list(row["insights"]),
+        chat_history=_list(row["chat_history"]),
+        created_by_user=row["created_by_user"] or "",
+        created_by_id=row["created_by_id"],
+        created_at=row["created_at"] if isinstance(row["created_at"], datetime) else datetime.utcnow(),
+        updated_at=row["updated_at"] if isinstance(row["updated_at"], datetime) else datetime.utcnow(),
+        cost_estimated=float(row["cost_estimated"] or 0),
+        tokens_input=int(row["tokens_input"] or 0),
+        tokens_output=int(row["tokens_output"] or 0),
+        model_used=row["model_used"] or "",
+        visuals=_list(row["visuals"]),
     )
 
 
 _SELECT = (
-    "SELECT id, title, subtitle, feature, case_number, sections, insights, "
-    "chat_history, created_by_user, created_by_id, created_at, updated_at, "
-    "cost_estimated, tokens_input, tokens_output, model_used, visuals "
-    "FROM presentations"
+    "SELECT id::text AS id, title, subtitle, feature, case_number, sections, "
+    "insights, chat_history, created_by_user, "
+    "created_by_id::text AS created_by_id, "
+    "created_at, updated_at, cost_estimated, tokens_input, tokens_output, "
+    "model_used, visuals FROM presentations"
 )
 
 
@@ -86,78 +89,78 @@ class PresentationService:
     async def save(self, p: Presentation) -> Presentation:
         async with connect() as db:
             await db.execute(
-                "INSERT INTO presentations (id, title, subtitle, feature, case_number, "
-                "sections, insights, chat_history, created_by_user, created_by_id, "
-                "cost_estimated, tokens_input, tokens_output, model_used, visuals) "
-                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-                (
-                    p.id, p.title, p.subtitle, p.feature, p.case_number,
-                    json.dumps(p.sections, ensure_ascii=False),
-                    json.dumps(p.insights, ensure_ascii=False),
-                    json.dumps(p.chat_history, ensure_ascii=False),
-                    p.created_by_user, p.created_by_id,
-                    p.cost_estimated, p.tokens_input, p.tokens_output, p.model_used,
-                    json.dumps(p.visuals, ensure_ascii=False),
-                ),
+                "INSERT INTO presentations (id, title, subtitle, feature, "
+                "case_number, sections, insights, chat_history, "
+                "created_by_user, created_by_id, cost_estimated, tokens_input, "
+                "tokens_output, model_used, visuals) "
+                "VALUES ($1::uuid, $2, $3, $4, $5, $6::jsonb, $7::jsonb, "
+                "$8::jsonb, $9, $10::uuid, $11, $12, $13, $14, $15::jsonb)",
+                p.id, p.title, p.subtitle, p.feature, p.case_number,
+                p.sections or [], p.insights or [], p.chat_history or [],
+                p.created_by_user, p.created_by_id,
+                p.cost_estimated, p.tokens_input, p.tokens_output,
+                p.model_used, p.visuals or [],
             )
-            await db.commit()
         return p
 
     async def update(self, p: Presentation) -> Presentation:
         async with connect() as db:
             await db.execute(
-                "UPDATE presentations SET title=?, subtitle=?, sections=?, insights=?, "
-                "chat_history=?, visuals=?, updated_at=CURRENT_TIMESTAMP WHERE id=?",
-                (
-                    p.title, p.subtitle,
-                    json.dumps(p.sections, ensure_ascii=False),
-                    json.dumps(p.insights, ensure_ascii=False),
-                    json.dumps(p.chat_history, ensure_ascii=False),
-                    json.dumps(p.visuals, ensure_ascii=False),
-                    p.id,
-                ),
+                "UPDATE presentations SET title=$1, subtitle=$2, "
+                "sections=$3::jsonb, insights=$4::jsonb, chat_history=$5::jsonb, "
+                "visuals=$6::jsonb, updated_at=NOW() WHERE id=$7::uuid",
+                p.title, p.subtitle,
+                p.sections or [], p.insights or [], p.chat_history or [],
+                p.visuals or [], p.id,
             )
-            await db.commit()
         return p
 
     async def get(self, presentation_id: str) -> Presentation | None:
         async with connect() as db:
-            cur = await db.execute(f"{_SELECT} WHERE id = ?", (presentation_id,))
-            row = await cur.fetchone()
+            row = await db.fetchrow(
+                f"{_SELECT} WHERE id = $1::uuid", presentation_id
+            )
             return _row_to_presentation(row) if row else None
 
     async def list_all(self, limit: int = 100, q: str = "", feature: str = "") -> list[Presentation]:
-        where = []
+        where: list[str] = []
         params: list = []
         if q:
-            where.append("(title LIKE ? OR subtitle LIKE ?)")
-            params.extend([f"%{q}%", f"%{q}%"])
-        if feature:
-            where.append("feature = ?"); params.append(feature)
-        clause = (" WHERE " + " AND ".join(where)) if where else ""
-        async with connect() as db:
-            cur = await db.execute(
-                f"{_SELECT}{clause} ORDER BY created_at DESC LIMIT ?",
-                (*params, limit),
+            params.append(f"%{q}%")
+            params.append(f"%{q}%")
+            where.append(
+                f"(title ILIKE ${len(params) - 1} OR subtitle ILIKE ${len(params)})"
             )
-            return [_row_to_presentation(r) for r in await cur.fetchall()]
+        if feature:
+            params.append(feature)
+            where.append(f"feature = ${len(params)}")
+        clause = (" WHERE " + " AND ".join(where)) if where else ""
+        params.append(limit)
+        async with connect() as db:
+            rows = await db.fetch(
+                f"{_SELECT}{clause} ORDER BY created_at DESC LIMIT ${len(params)}",
+                *params,
+            )
+            return [_row_to_presentation(r) for r in rows]
 
     async def delete(self, presentation_id: str) -> None:
         async with connect() as db:
-            await db.execute("DELETE FROM presentations WHERE id = ?", (presentation_id,))
-            await db.commit()
+            await db.execute(
+                "DELETE FROM presentations WHERE id = $1::uuid",
+                presentation_id,
+            )
 
     async def stats(self) -> dict:
         """Indicadores focados no CONTEÚDO da galeria (sem custos/tokens)."""
         from datetime import datetime, timedelta
 
         async with connect() as db:
-            cur = await db.execute(
-                "SELECT id, sections, insights, visuals, chat_history, feature, "
-                "created_at, created_by_id "
+            rows = await db.fetch(
+                "SELECT id::text AS id, sections, insights, visuals, "
+                "chat_history, feature, created_at, "
+                "created_by_id::text AS created_by_id "
                 "FROM presentations"
             )
-            rows = await cur.fetchall()
 
         total = len(rows)
         sections_total = 0
@@ -171,32 +174,24 @@ class PresentationService:
         cutoff = datetime.utcnow() - timedelta(days=7)
 
         for r in rows:
-            try:
-                secs = json.loads(r[1]) if r[1] else []
-                ins = json.loads(r[2]) if r[2] else []
-                vis = json.loads(r[3]) if r[3] else []
-                chat = json.loads(r[4]) if r[4] else []
-            except (TypeError, json.JSONDecodeError):
-                secs, ins, vis, chat = [], [], [], []
-            sections_total += len(secs) if isinstance(secs, list) else 0
-            insights_total += len(ins) if isinstance(ins, list) else 0
-            visuals_total += len(vis) if isinstance(vis, list) else 0
-            n_chat = len(chat) if isinstance(chat, list) else 0
+            secs = r["sections"] if isinstance(r["sections"], list) else []
+            ins = r["insights"] if isinstance(r["insights"], list) else []
+            vis = r["visuals"] if isinstance(r["visuals"], list) else []
+            chat = r["chat_history"] if isinstance(r["chat_history"], list) else []
+            sections_total += len(secs)
+            insights_total += len(ins)
+            visuals_total += len(vis)
+            n_chat = len(chat)
             chat_messages_total += n_chat
             if n_chat > 0:
                 with_chat += 1
-            feat = (r[5] or "outros").strip() or "outros"
+            feat = (r["feature"] or "outros").strip() or "outros"
             feature_counts[feat] = feature_counts.get(feat, 0) + 1
-            created_at = r[6]
-            if isinstance(created_at, str):
-                try:
-                    created_at = datetime.fromisoformat(created_at)
-                except ValueError:
-                    created_at = None
+            created_at = r["created_at"]
             if isinstance(created_at, datetime) and created_at >= cutoff:
                 last_7d += 1
-            if r[7]:
-                authors.add(r[7])
+            if r["created_by_id"]:
+                authors.add(r["created_by_id"])
 
         return {
             "total": total,

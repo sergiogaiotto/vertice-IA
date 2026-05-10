@@ -25,8 +25,23 @@ class Settings(BaseSettings):
     app_secret_key: str = "change-me"
     app_base_url: str = "http://localhost:8000"
 
-    # DB
-    database_url: str = f"sqlite+aiosqlite:///{BASE_DIR / 'data' / 'vertice.db'}"
+    # DB — PostgreSQL via asyncpg
+    # Aceita tanto DSN puro (postgresql://user:pass@host:port/db) quanto a
+    # forma SQLAlchemy (postgresql+asyncpg://...). O método `pg_dsn` normaliza
+    # para o formato esperado por asyncpg (sem o sufixo +asyncpg).
+    database_url: str = "postgresql://vertice:vertice@localhost:5432/vertice"
+
+    # Pool de conexões — calibrado para throughput.
+    # min_size: conexões "warm" mantidas no pool (latência baixa em pico)
+    # max_size: teto. Em produção, ajustar conforme `max_connections` do PG
+    # (ver: SHOW max_connections; típico 100). Cada worker uvicorn carrega
+    # o seu próprio pool — dimensionar como pool_max * num_workers <= 80%
+    # de max_connections deixando folga para conexões administrativas.
+    pg_pool_min_size: int = 5
+    pg_pool_max_size: int = 20
+    pg_pool_max_inactive_connection_lifetime: float = 300.0  # 5 min — recicla conexões ociosas
+    pg_command_timeout: float = 30.0                          # timeout default por query
+    pg_statement_cache_size: int = 1024                       # cache de prepared statements por conexão
 
     # Auth
     jwt_algorithm: str = "HS256"
@@ -68,12 +83,18 @@ class Settings(BaseSettings):
     guardrail_pii_redact: bool = True
 
     @property
-    def db_path(self) -> Path:
-        # extrai path do sqlite+aiosqlite:///<path>
-        url = self.database_url
-        if "sqlite" in url:
-            return Path(url.split("///", 1)[-1])
-        return BASE_DIR / "data" / "vertice.db"
+    def pg_dsn(self) -> str:
+        """Normaliza o DSN para o formato aceito por `asyncpg.connect`/`create_pool`.
+
+        - `postgresql+asyncpg://...`  → `postgresql://...`  (asyncpg não usa o sufixo)
+        - `postgres://...`            → `postgresql://...`  (alias compatível)
+        """
+        url = self.database_url.strip()
+        if url.startswith("postgresql+asyncpg://"):
+            url = "postgresql://" + url[len("postgresql+asyncpg://"):]
+        elif url.startswith("postgres://"):
+            url = "postgresql://" + url[len("postgres://"):]
+        return url
 
 
 @lru_cache

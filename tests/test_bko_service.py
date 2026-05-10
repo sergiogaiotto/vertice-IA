@@ -2,7 +2,7 @@ import json
 
 import pytest
 
-from app.adapters.db.sqlite import init_db
+from app.adapters.db.postgres import init_db
 from app.core.services.bko_service import BkoService
 
 

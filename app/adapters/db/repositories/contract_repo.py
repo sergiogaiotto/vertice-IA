@@ -1,79 +1,82 @@
-"""Repositório SQLite de contratos (Radar Voz do Cliente)."""
+"""Repositório PostgreSQL de contratos (Radar Voz do Cliente)."""
 
 from __future__ import annotations
 
-import json
 from datetime import datetime
 
-from app.adapters.db.sqlite import connect
+from app.adapters.db.postgres import connect
 from app.core.domain.entities import Contract, CustomerSegment
 from app.core.ports.repositories import ContractRepository
 
 
 def _row_to_contract(row) -> Contract:
-    contact_at = row[4]
-    if isinstance(contact_at, str):
-        try:
-            contact_at = datetime.fromisoformat(contact_at)
-        except ValueError:
-            contact_at = datetime.utcnow()
+    contact_at = row["contact_at"]
+    if not isinstance(contact_at, datetime):
+        contact_at = datetime.utcnow()
+    seg = row["segment"]
+    segment = (
+        CustomerSegment(seg)
+        if seg in CustomerSegment._value2member_map_
+        else CustomerSegment.residential
+    )
     return Contract(
-        contract_number=row[0],
-        call_id=row[1] or "",
-        contact_id=row[2] or "",
-        operator=row[3] or "",
-        contact_at=contact_at or datetime.utcnow(),
-        segment=CustomerSegment(row[5]) if row[5] in CustomerSegment._value2member_map_ else CustomerSegment.residential,
-        transcript=row[6] or "",
-        extra=json.loads(row[7]) if row[7] else {},
+        contract_number=row["contract_number"],
+        call_id=row["call_id"] or "",
+        contact_id=row["contact_id"] or "",
+        operator=row["operator"] or "",
+        contact_at=contact_at,
+        segment=segment,
+        transcript=row["transcript"] or "",
+        extra=row["extra"] or {},
     )
 
 
-class SqliteContractRepository(ContractRepository):
+_SELECT = (
+    "SELECT contract_number, call_id, contact_id, operator, contact_at, "
+    "segment, transcript, extra FROM contracts"
+)
+
+
+class PgContractRepository(ContractRepository):
 
     async def list_recent(self, limit: int = 200) -> list[Contract]:
         async with connect() as db:
-            cur = await db.execute(
-                "SELECT contract_number, call_id, contact_id, operator, contact_at, segment, transcript, extra "
-                "FROM contracts ORDER BY contact_at DESC LIMIT ?",
-                (limit,),
+            rows = await db.fetch(
+                f"{_SELECT} ORDER BY contact_at DESC NULLS LAST LIMIT $1",
+                limit,
             )
-            return [_row_to_contract(r) for r in await cur.fetchall()]
+            return [_row_to_contract(r) for r in rows]
 
     async def get(self, contract_number: str) -> Contract | None:
         async with connect() as db:
-            cur = await db.execute(
-                "SELECT contract_number, call_id, contact_id, operator, contact_at, segment, transcript, extra "
-                "FROM contracts WHERE contract_number = ?",
-                (contract_number,),
+            row = await db.fetchrow(
+                f"{_SELECT} WHERE contract_number = $1", contract_number
             )
-            row = await cur.fetchone()
             return _row_to_contract(row) if row else None
 
     async def bulk_upsert(self, contracts: list[Contract]) -> int:
+        if not contracts:
+            return 0
         async with connect() as db:
-            for c in contracts:
-                await db.execute(
-                    "INSERT INTO contracts (contract_number, call_id, contact_id, operator, contact_at, "
-                    "segment, transcript, extra) VALUES (?, ?, ?, ?, ?, ?, ?, ?) "
-                    "ON CONFLICT(contract_number) DO UPDATE SET "
-                    "  call_id = excluded.call_id, "
-                    "  contact_id = excluded.contact_id, "
-                    "  operator = excluded.operator, "
-                    "  contact_at = excluded.contact_at, "
-                    "  segment = excluded.segment, "
-                    "  transcript = excluded.transcript, "
-                    "  extra = excluded.extra",
-                    (
-                        c.contract_number,
-                        c.call_id,
-                        c.contact_id,
-                        c.operator,
-                        c.contact_at.isoformat() if isinstance(c.contact_at, datetime) else str(c.contact_at),
-                        c.segment.value,
-                        c.transcript,
-                        json.dumps(c.extra),
-                    ),
-                )
-            await db.commit()
+            async with db.transaction():
+                for c in contracts:
+                    await db.execute(
+                        """
+                        INSERT INTO contracts (contract_number, call_id, contact_id,
+                                               operator, contact_at, segment,
+                                               transcript, extra)
+                        VALUES ($1, $2, $3, $4, $5, $6, $7, $8::jsonb)
+                        ON CONFLICT (contract_number) DO UPDATE SET
+                            call_id    = EXCLUDED.call_id,
+                            contact_id = EXCLUDED.contact_id,
+                            operator   = EXCLUDED.operator,
+                            contact_at = EXCLUDED.contact_at,
+                            segment    = EXCLUDED.segment,
+                            transcript = EXCLUDED.transcript,
+                            extra      = EXCLUDED.extra
+                        """,
+                        c.contract_number, c.call_id, c.contact_id, c.operator,
+                        c.contact_at, c.segment.value, c.transcript,
+                        c.extra or {},
+                    )
             return len(contracts)

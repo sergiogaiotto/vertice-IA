@@ -23,7 +23,7 @@ from app.core.ports.repositories import (
     RaioXChartRepository,
     RaioXRelationshipRepository,
 )
-from app.adapters.db.sqlite import connect
+from app.adapters.db.postgres import connect
 from app.core.services.schema_service import SchemaService, _is_safe_ident
 
 
@@ -333,15 +333,17 @@ class RaioXService:
         else:
             if not value_column:
                 raise ValueError(f"aggregate={agg} requer value_column")
-            value_expr = f'{agg.upper()}(CAST({_qual(value_column)} AS REAL))'
+            value_expr = f'{agg.upper()}(CAST({_qual(value_column)} AS DOUBLE PRECISION))'
 
         order_clauses = {
-            "label_asc": '"_label" ASC', "label_desc": '"_label" DESC',
-            "value_desc": '"_value" DESC', "value_asc": '"_value" ASC',
+            "label_asc":  '"_label" ASC',
+            "label_desc": '"_label" DESC',
+            "value_desc": '"_value" DESC NULLS LAST',
+            "value_asc":  '"_value" ASC NULLS LAST',
         }
         order_clause = order_clauses.get(order_by, '"_label" ASC')
 
-        # Filtros (op = '=' apenas, valores parametrizados)
+        # Filtros (op = '=' apenas, valores parametrizados via $N do asyncpg).
         where = f'{label_expr} IS NOT NULL'
         params: list = []
         for f in filters:
@@ -352,33 +354,33 @@ class RaioXService:
                 continue
             if op != "=":
                 raise ValueError(f"operador '{op}' não suportado")
-            where += f' AND {_qual(col)} = ?'
             params.append(val)
+            where += f' AND {_qual(col)} = ${len(params)}'
 
+        params.append(limit)
         sql = (
             f'SELECT {label_expr} AS "_label", {value_expr} AS "_value" '
             f'FROM {from_clause} '
             f'WHERE {where} '
             f'GROUP BY {label_expr} '
-            f'ORDER BY {order_clause} LIMIT ?'
+            f'ORDER BY {order_clause} LIMIT ${len(params)}'
         )
         async with connect() as db:
             try:
-                cur = await db.execute(sql, (*params, limit))
-                rows = await cur.fetchall()
+                rows = await db.fetch(sql, *params)
             except Exception as e:
                 raise ValueError(f"erro na consulta com joins: {e}")
-            cur = await db.execute(f'SELECT COUNT(*) FROM "{base_table}"')
-            total = int((await cur.fetchone())[0])
+            total = await db.fetchval(f'SELECT COUNT(*) FROM "{base_table}"')
+            total = int(total or 0)
 
         labels: list[str] = []
         values: list[float] = []
         for r in rows:
-            if r[0] is None or r[1] is None:
+            if r["_label"] is None or r["_value"] is None:
                 continue
-            labels.append(str(r[0]))
+            labels.append(str(r["_label"]))
             try:
-                values.append(float(r[1]))
+                values.append(float(r["_value"]))
             except (TypeError, ValueError):
                 values.append(0.0)
         return {

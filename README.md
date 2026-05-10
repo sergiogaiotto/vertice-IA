@@ -2,7 +2,7 @@
 
 Plataforma modular de agentes em Python/FastAPI seguindo Spec-Driven Development e arquitetura hexagonal. Cada funcionalidade é um *building block* registrado dinamicamente, com guardrails parametrizáveis (entrada → system prompt → saída), FinOps granular e observabilidade nativa.
 
-> Versão 1.0.0 · Hexagonal · Python 3.11+ · FastAPI · SQLite · LangGraph · Deep-Agent Harness
+> Versão 2.0.0 · Hexagonal · Python 3.11+ · FastAPI · PostgreSQL (asyncpg) · LangGraph · Deep-Agent Harness
 
 ---
 
@@ -22,18 +22,18 @@ Plataforma modular de agentes em Python/FastAPI seguindo Spec-Driven Development
 ├─────────────────────────────────────────────────────────┤
 │  Core domain (entidades + ports + use cases)            │
 ├─────────────────────────────────────────────────────────┤
-│  Outbound adapters (SQLite · LLMs · LangFuse · OPA)     │
+│  Outbound adapters (PostgreSQL · LLMs · LangFuse · OPA) │
 └─────────────────────────────────────────────────────────┘
 ```
 
-Tudo que cruza a fronteira do core passa por uma porta. Adaptadores são plugáveis: trocar SQLite por Postgres, LangFuse por outro tracer, OpenAI por Sabiá-4, exige só substituir a implementação do adaptador — o core não muda.
+Tudo que cruza a fronteira do core passa por uma porta. Adaptadores são plugáveis: trocar PostgreSQL por outro RDBMS, LangFuse por outro tracer, OpenAI por Sabiá-4, exige só substituir a implementação do adaptador — o core não muda.
 
 ## 3. Stack
 
 | Camada | Tecnologia |
 |---|---|
 | Web | FastAPI, Jinja2, HTMX, Alpine.js, Tailwind (CDN) |
-| Persistência | SQLite (aiosqlite) |
+| Persistência | PostgreSQL 14+ (asyncpg + pool) |
 | LLMs | OpenAI GPT-4.1, Maritaca Sabiá-4, Gemma GAIA 4Bi |
 | Orquestração de agentes | LangGraph, Deep-Agent Harness |
 | Observabilidade | OpenTelemetry, LangFuse, MLflow |
@@ -42,13 +42,31 @@ Tudo que cruza a fronteira do core passa por uma porta. Adaptadores são plugáv
 
 ## 4. Quickstart
 
+### Opção 1 — Docker Compose (recomendado)
+
+```bash
+git clone https://github.com/sergiogaiotto/vertice.git
+cd vertice
+cp .env.example .env          # preencher API keys (opcional para dev)
+docker compose up --build     # sobe Postgres + app
+```
+
+O `docker-compose.yml` inicia o PostgreSQL com healthcheck e só sobe a app
+quando o banco responde. O schema/seed/módulos default são aplicados pelo
+`init_db()` no lifespan do FastAPI — idempotente.
+
+### Opção 2 — Postgres local + venv
+
 ```bash
 git clone https://github.com/sergiogaiotto/vertice.git
 cd vertice
 python -m venv .venv && source .venv/bin/activate
 pip install -r requirements.txt
-cp .env.example .env          # preencher API keys (opcional para dev)
-python scripts/init_db.py     # cria SQLite + seed
+cp .env.example .env
+
+# pré-requisito: PostgreSQL 14+ rodando em postgresql://vertice:vertice@localhost:5432/vertice
+createdb vertice              # ou via psql / pgAdmin
+python scripts/init_db.py     # cria schema + seed + bootstrap
 uvicorn app.main:app --reload
 ```
 
@@ -57,18 +75,33 @@ Login default: `admin / vertice2026` (trocar imediatamente em produção).
 
 Sem API keys configuradas, os adaptadores LLM rodam em **modo mock** — todas as funcionalidades da plataforma ficam navegáveis para desenvolvimento offline.
 
+### Performance & throughput
+
+A camada de persistência foi calibrada para alto throughput:
+
+- **Pool asyncpg** com prepared statements automáticos por conexão
+  (`PG_POOL_MIN_SIZE=5`, `PG_POOL_MAX_SIZE=20` por padrão; ajuste em
+  `.env` conforme `max_connections` do PG).
+- **JSONB nativo** em colunas de payload (audit, presentations, módulos,
+  finops policies) com índices GIN onde faz diferença operacional.
+- **TIMESTAMPTZ** com timezone (UTC), `BOOLEAN` nativo e `IDENTITY` para PKs
+  — sem mais hacks de inteiro 0/1 ou `lastrowid`.
+- Índices compostos onde mais ajudam: `audit_events(category, ts DESC)`,
+  `finops_ledger(created_at DESC, model_name)`, parcial em
+  `audit_events(status_code) WHERE status_code >= 400`.
+
 ## 5. Estrutura
 
 ```
 app/
 ├── main.py                 entrypoint FastAPI
-├── config.py               settings via pydantic-settings
+├── config.py               settings via pydantic-settings (pool, DSN)
 ├── core/
 │   ├── domain/             entidades puras (sem dependência externa)
 │   ├── ports/              interfaces que o core consome
 │   └── services/           use cases (regras de negócio)
 ├── adapters/
-│   ├── db/                 SQLite + repositórios
+│   ├── db/                 PostgreSQL/asyncpg + repositórios
 │   ├── llm/                OpenAI, Maritaca, GAIA + roteador
 │   ├── guardrails/         input sanitizer + output validator
 │   ├── observability/      LangFuse, MLflow, OTel
@@ -121,8 +154,26 @@ Para Kubernetes (AI Mesh), aplique os manifestos em `deploy/k8s/` (não incluíd
 
 ## 11. Testes
 
+Os testes exercitam o mesmo SQL que vai pra produção — não há equivalente
+in-memory de PostgreSQL. Por isso, é preciso ter um servidor PG acessível.
+O `tests/conftest.py` cria um schema isolado por sessão e dropa com
+CASCADE no teardown, então o banco usado fica limpo.
+
 ```bash
+# 1) Garanta que o Postgres de teste existe (uma vez):
+createdb vertice_test
+
+# 2) Aponte para ele e rode:
+export TEST_DATABASE_URL="postgresql://vertice:vertice@localhost:5432/vertice_test"
 pytest -q
+```
+
+Para usar o mesmo Postgres do `docker compose`:
+
+```bash
+docker compose up -d postgres
+docker compose exec postgres createdb -U vertice vertice_test
+TEST_DATABASE_URL="postgresql://vertice:vertice@localhost:5432/vertice_test" pytest -q
 ```
 
 ## 12. Licença

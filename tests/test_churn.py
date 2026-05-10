@@ -2,9 +2,9 @@
 
 import pytest
 
-from app.adapters.db.repositories.churn_repo import SqliteChurnRepository
-from app.adapters.db.repositories.finops_repo import SqliteFinOpsRepository
-from app.adapters.db.sqlite import init_db
+from app.adapters.db.postgres import init_db
+from app.adapters.db.repositories.churn_repo import PgChurnRepository
+from app.adapters.db.repositories.finops_repo import PgFinOpsRepository
 from app.adapters.guardrails.input_sanitizer import DefaultInputGuardrail
 from app.adapters.guardrails.output_validator import DefaultOutputGuardrail
 from app.adapters.llm.factory import build_clients
@@ -14,8 +14,8 @@ from app.core.services.model_router import ModelRouter
 
 def _make_service() -> ChurnService:
     return ChurnService(
-        churn=SqliteChurnRepository(),
-        finops=SqliteFinOpsRepository(),
+        churn=PgChurnRepository(),
+        finops=PgFinOpsRepository(),
         router=ModelRouter(build_clients()),
         input_guard=DefaultInputGuardrail(),
         output_guard=DefaultOutputGuardrail(),

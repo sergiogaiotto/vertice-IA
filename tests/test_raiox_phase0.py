@@ -4,21 +4,21 @@ from __future__ import annotations
 
 import pytest
 
+from app.adapters.db.postgres import init_db
 from app.adapters.db.repositories.raiox_repo import (
-    SqliteRaioXBoardRepository,
-    SqliteRaioXChartRepository,
-    SqliteRaioXRelationshipRepository,
+    PgRaioXBoardRepository,
+    PgRaioXChartRepository,
+    PgRaioXRelationshipRepository,
 )
-from app.adapters.db.sqlite import init_db
 from app.core.services.raiox_service import RaioXService, SUPPORTED_CHART_TYPES_F0
 from app.core.services.schema_service import SchemaService
 
 
 def _make_service() -> RaioXService:
     return RaioXService(
-        boards=SqliteRaioXBoardRepository(),
-        charts=SqliteRaioXChartRepository(),
-        rels=SqliteRaioXRelationshipRepository(),
+        boards=PgRaioXBoardRepository(),
+        charts=PgRaioXChartRepository(),
+        rels=PgRaioXRelationshipRepository(),
         schema=SchemaService(),
     )
 
