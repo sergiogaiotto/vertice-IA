@@ -89,8 +89,12 @@ cat <<EOF
   ✓ Deploy concluído
 
   URL:           ${URL}
-  Login admin:   admin / (ADMIN_BOOTSTRAP_PASSWORD do .env.production)
-                 Trocar IMEDIATAMENTE via UI.
+  Primeiro acesso:
+                 1) Abra ${URL}/login
+                 2) Submeta o username/senha de escolha — o app
+                    detecta tabela `users` vazia e cria o usuário
+                    ROOT com essas credenciais.
+                 3) Guarde a senha. Não há reset automático.
 
   Comandos úteis:
     docker compose -f ${COMPOSE_FILE} --env-file ${ENV_FILE} logs -f vertice
@@ -99,6 +103,17 @@ cat <<EOF
     ./scripts/restore.sh --list                    # listar backups
     docker compose -f ${COMPOSE_FILE} --env-file ${ENV_FILE} \\
          exec postgres psql -U vertice vertice    # console SQL
+
+  Migração: o app aplica ADD COLUMN / CREATE TABLE IF NOT EXISTS no
+  startup via init_db(). Não há passo manual de migration.
+
+  Cleanup pontual do bug de leak entre usuários (rodar uma vez se
+  estiver migrando de uma versão anterior ao fix):
+    docker compose -f ${COMPOSE_FILE} --env-file ${ENV_FILE} \\
+         exec vertice python scripts/fix_radar_owner_leak.py
+    # se aparecerem achados, re-rode com --apply:
+    docker compose -f ${COMPOSE_FILE} --env-file ${ENV_FILE} \\
+         exec vertice python scripts/fix_radar_owner_leak.py --apply
 
   Para atualizar o código:
     cd $(pwd) && ./scripts/deploy.sh

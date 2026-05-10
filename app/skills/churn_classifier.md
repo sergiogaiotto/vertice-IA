@@ -19,7 +19,7 @@ Se nenhum caminho existente se aplicar, devolver:
 Nenhuma — inferência pura sobre o texto + snapshot da taxonomia.
 
 ## Política de roteamento
-- Default: `gpt-4.1` (raciocínio multi-step necessário para descer a hierarquia).
+- Default: `gpt-4o` (raciocínio multi-step necessário para descer a hierarquia).
 - Fallback: `sabia-4`.
 
 ## Guardrails

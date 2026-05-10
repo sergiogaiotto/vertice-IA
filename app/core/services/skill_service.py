@@ -134,7 +134,7 @@ class SkillService:
             "- `tool_name(params)`: condição de uso\n\n"
             "## Política de roteamento\n"
             "- Default: `sabia-4`\n"
-            "- Fallback: `gpt-4.1`\n\n"
+            "- Fallback: `gpt-4o`\n\n"
             "## Guardrails\n\n"
             "### Entrada\n"
             "- ...\n\n"

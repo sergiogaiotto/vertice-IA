@@ -5,8 +5,6 @@ from __future__ import annotations
 from app.config import get_settings
 from app.core.ports.llm import LLMClient, LLMResponse
 
-settings = get_settings()
-
 
 class ModelRouter:
     """Roteia chamadas para o LLM mais adequado dado o tipo de tarefa.
@@ -14,12 +12,16 @@ class ModelRouter:
     Política padrão (parametrizável via settings ou OPA no futuro):
       - UMA_PALAVRA / SCORE / TERMOS  -> modelo barato (GAIA 4Bi)
       - SUMARIO / RESUMO / pt-BR      -> Sabiá-4 (Maritaca)
-      - INTENCAO / multi-step / outros -> GPT-4.1 (OpenAI)
+      - INTENCAO / multi-step / outros -> gpt-4o (Azure OpenAI)
 
     Em caso de falha do modelo escolhido, faz fallback ordenado.
     """
 
     def __init__(self, clients: dict[str, LLMClient]):
+        # Lê settings em runtime — evita capturar valores antigos quando
+        # testes/env monkeypatch acontecem depois do import (mesmo pattern
+        # aplicado em adapters/db/postgres.py).
+        settings = get_settings()
         self.clients = clients
         self.fallback_order = [
             settings.router_default_model,
@@ -28,6 +30,7 @@ class ModelRouter:
         ]
 
     def pick(self, hint: str = "", output_type: str = "") -> str:
+        settings = get_settings()
         ot = (output_type or "").upper()
         if ot in {"UMA_PALAVRA", "SCORE", "TERMOS"}:
             return settings.router_cheap_model

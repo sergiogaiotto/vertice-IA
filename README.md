@@ -34,7 +34,7 @@ Tudo que cruza a fronteira do core passa por uma porta. Adaptadores são plugáv
 |---|---|
 | Web | FastAPI, Jinja2, HTMX, Alpine.js, Tailwind (CDN) |
 | Persistência | PostgreSQL 14+ (asyncpg + pool) |
-| LLMs | OpenAI GPT-4.1, Maritaca Sabiá-4, Gemma GAIA 4Bi |
+| LLMs | Azure OpenAI gpt-4o, Maritaca Sabiá-4, Gemma GAIA 4Bi |
 | Orquestração de agentes | LangGraph, Deep-Agent Harness |
 | Observabilidade | OpenTelemetry, LangFuse, MLflow |
 | Política | OPA (Open Policy Agent) |

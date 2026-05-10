@@ -1152,7 +1152,7 @@ Schema preciso. Se for JSON, mostre o schema entre ```json. Se markdown, descrev
 
 ## Política de roteamento
 - Default: `sabia-4`
-- Fallback: `gpt-4.1`
+- Fallback: `gpt-4o`
 
 ## Guardrails
 

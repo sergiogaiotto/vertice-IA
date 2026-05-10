@@ -18,7 +18,7 @@ Nenhuma.
 
 ## Política de roteamento
 - Default: `sabia-4`
-- Cair para `gpt-4.1` se a resposta exceder o tamanho esperado em mais de 30%.
+- Cair para `gpt-4o` se a resposta exceder o tamanho esperado em mais de 30%.
 
 ## Guardrails
 

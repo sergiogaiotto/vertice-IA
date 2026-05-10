@@ -18,7 +18,7 @@ Nenhuma — o agente é puramente inferencial sobre o texto recebido.
 
 ## Política de roteamento
 - Default: `sabia-4` (PT-BR nativo, custo médio)
-- Fallback: `gpt-4.1` (raciocínio mais robusto se Sabiá-4 falhar)
+- Fallback: `gpt-4o` (raciocínio mais robusto se Sabiá-4 falhar)
 - Não usar `gaia-4b` aqui — qualidade de inferência insuficiente para o caso.
 
 ## Guardrails

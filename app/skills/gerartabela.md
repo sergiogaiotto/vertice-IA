@@ -76,7 +76,7 @@ extract_currency_values(text): Converter termos como "quarenta reais e noventa" 
 ## Política de roteamento
 Default: sabia-4
 
-## Fallback: gpt-4.1
+## Fallback: gpt-4o
 
 ## Guardrails
 Entrada
