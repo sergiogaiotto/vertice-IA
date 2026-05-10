@@ -463,6 +463,14 @@ ALTER TABLE radar_card_visibility
 ALTER TABLE radar_card_visibility
     ADD COLUMN IF NOT EXISTS visibility_changed_at TIMESTAMPTZ;
 
+-- Trilha de auditoria do último change_owner administrativo.
+ALTER TABLE radar_card_visibility
+    ADD COLUMN IF NOT EXISTS owner_changed_by_id TEXT;
+ALTER TABLE radar_card_visibility
+    ADD COLUMN IF NOT EXISTS owner_changed_by_username TEXT;
+ALTER TABLE radar_card_visibility
+    ADD COLUMN IF NOT EXISTS owner_changed_at TIMESTAMPTZ;
+
 -- Artefatos efêmeros gerados por execuções de módulo (CSV, MD, JSON…).
 -- TTL gerenciado no SELECT (filtra por created_at). GC opcional via DELETE
 -- WHERE created_at < NOW() - INTERVAL '30 min' (chamado manualmente).

@@ -44,8 +44,11 @@ import asyncpg
 from app.config import get_settings
 from app.core.domain.entities import Module, ModuleStatus, new_uuid
 
-settings = get_settings()
-
+# IMPORTANT: do NOT capture `settings` at module load. Tests rely on
+# monkeypatching DATABASE_URL after this module is imported (conftest's
+# `_isolated_test_schema` fixture sets it to a per-session schema), and any
+# value captured here would freeze the pre-test DSN. Always read settings
+# inside the functions that need them.
 _SCHEMA_PATH = Path(__file__).parent / "schema.sql"
 _SEED_PATH = Path(__file__).parent / "seed.sql"
 
@@ -126,13 +129,15 @@ async def get_pool() -> asyncpg.Pool:
     async with _pool_lock:
         if _pool is not None:  # outro coroutine inicializou enquanto esperávamos
             return _pool
+        # Reload settings at pool creation time (see module-level note).
+        s = get_settings()
         _pool = await asyncpg.create_pool(
-            dsn=settings.pg_dsn,
-            min_size=settings.pg_pool_min_size,
-            max_size=settings.pg_pool_max_size,
-            max_inactive_connection_lifetime=settings.pg_pool_max_inactive_connection_lifetime,
-            command_timeout=settings.pg_command_timeout,
-            statement_cache_size=settings.pg_statement_cache_size,
+            dsn=s.pg_dsn,
+            min_size=s.pg_pool_min_size,
+            max_size=s.pg_pool_max_size,
+            max_inactive_connection_lifetime=s.pg_pool_max_inactive_connection_lifetime,
+            command_timeout=s.pg_command_timeout,
+            statement_cache_size=s.pg_statement_cache_size,
             init=_init_connection,
         )
         return _pool

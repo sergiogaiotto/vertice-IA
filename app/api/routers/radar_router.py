@@ -583,11 +583,13 @@ async def admin_change_card_owner(
         await _add_card_to_user_state(state_repo, str(new_owner.id), card_dict)
     except Exception as e:
         raise HTTPException(500, f"falha ao adicionar ao novo dono: {e}")
-    # 3) atualiza visibility (preserva created_by_*)
+    # 3) atualiza visibility (preserva created_by_*) com actor tracking.
     await visibility_repo.change_owner(
         card_uid=card_uid,
         new_owner_id=str(new_owner.id),
         new_owner_username=new_owner.username,
+        actor_id=str(user.id),
+        actor_username=user.username,
     )
     return {
         "ok": True,
