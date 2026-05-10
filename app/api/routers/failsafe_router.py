@@ -6,7 +6,7 @@ from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
 
-from app.api.deps import get_failsafe_service, require_user
+from app.api.deps import get_failsafe_service, require_roles, require_user
 from app.api.schemas.failsafe import (
     DecideRequest,
     FailsafeCreateRequest,
@@ -95,7 +95,7 @@ async def get_action(
 async def create_action(
     body: FailsafeCreateRequest,
     svc: FailsafeService = Depends(get_failsafe_service),
-    user: User = Depends(require_user),
+    user: User = Depends(require_roles("admin", "supervisor", "finops")),
 ):
     """Cria ação Failsafe manualmente (uso administrativo / testes)."""
     try:
@@ -116,7 +116,7 @@ async def update_action(
     action_id: UUID,
     body: FailsafeUpdateRequest,
     svc: FailsafeService = Depends(get_failsafe_service),
-    user: User = Depends(require_user),
+    user: User = Depends(require_roles("admin", "supervisor", "finops")),
 ):
     """Edita ação enquanto está `pending`. Decisões são imutáveis."""
     try:
@@ -138,7 +138,7 @@ async def update_action(
 async def delete_action(
     action_id: UUID,
     svc: FailsafeService = Depends(get_failsafe_service),
-    user: User = Depends(require_user),
+    user: User = Depends(require_roles("admin", "supervisor", "finops")),
 ):
     """Apaga ação `pending`. Decisões já tomadas ficam preservadas (audit)."""
     try:
@@ -150,13 +150,15 @@ async def delete_action(
     return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 
-# Decisão (mantido em path próprio para clareza semântica vs. PATCH genérico)
+# Decisão (mantido em path próprio para clareza semântica vs. PATCH genérico).
+# Aprovação/rejeição é o ato administrativo mais sensível — gate idêntico ao
+# da página /failsafe em pages.py (admin/supervisor/finops).
 @router.post("/{action_id}/decide", response_model=FailsafeOut)
 async def decide(
     action_id: UUID,
     body: DecideRequest,
     svc: FailsafeService = Depends(get_failsafe_service),
-    user: User = Depends(require_user),
+    user: User = Depends(require_roles("admin", "supervisor", "finops")),
 ):
     try:
         a = await svc.decide(action_id, body.approve, decided_by=user.id)

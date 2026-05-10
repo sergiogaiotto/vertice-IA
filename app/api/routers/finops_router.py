@@ -12,6 +12,7 @@ from app.api.deps import (
     get_finops_budget_service,
     get_finops_policy_service,
     get_finops_service,
+    require_roles,
     require_user,
 )
 from app.api.schemas.finops import (
@@ -130,7 +131,7 @@ async def list_budgets(
 async def create_budget(
     body: BudgetCreateRequest,
     svc: FinOpsBudgetService = Depends(get_finops_budget_service),
-    user: User = Depends(require_user),
+    user: User = Depends(require_roles("admin", "supervisor", "finops")),
 ):
     try:
         b = await svc.create(
@@ -149,7 +150,7 @@ async def update_budget(
     budget_id: UUID,
     body: BudgetUpdateRequest,
     svc: FinOpsBudgetService = Depends(get_finops_budget_service),
-    user: User = Depends(require_user),
+    user: User = Depends(require_roles("admin", "supervisor", "finops")),
 ):
     try:
         b = await svc.update(
@@ -167,7 +168,7 @@ async def update_budget(
 async def delete_budget(
     budget_id: UUID,
     svc: FinOpsBudgetService = Depends(get_finops_budget_service),
-    user: User = Depends(require_user),
+    user: User = Depends(require_roles("admin", "supervisor", "finops")),
 ):
     try:
         await svc.delete(budget_id)
@@ -193,7 +194,7 @@ async def budgets_template(user: User = Depends(require_user)):
 async def budgets_import(
     file: UploadFile = File(...),
     svc: FinOpsBudgetService = Depends(get_finops_budget_service),
-    user: User = Depends(require_user),
+    user: User = Depends(require_roles("admin", "supervisor", "finops")),
 ):
     """Importa orçamentos a partir do template xlsx. Linhas inválidas são
     pulladas e devolvidas em ``errors`` — uma linha ruim não cancela as outras."""
@@ -227,7 +228,7 @@ async def policies_template(user: User = Depends(require_user)):
 async def policies_import(
     file: UploadFile = File(...),
     svc: FinOpsPolicyService = Depends(get_finops_policy_service),
-    user: User = Depends(require_user),
+    user: User = Depends(require_roles("admin", "supervisor", "finops")),
 ):
     """Importa políticas via xlsx. Política reimportada com mesmo
     ``model_name`` faz UPSERT (atualiza em vez de duplicar)."""
@@ -294,7 +295,7 @@ async def list_policies(
 async def upsert_policy(
     body: PolicyUpsertRequest,
     svc: FinOpsPolicyService = Depends(get_finops_policy_service),
-    user: User = Depends(require_user),
+    user: User = Depends(require_roles("admin", "supervisor", "finops")),
 ):
     try:
         p = await svc.upsert(
@@ -313,7 +314,7 @@ async def upsert_policy(
 async def delete_policy(
     policy_id: UUID,
     svc: FinOpsPolicyService = Depends(get_finops_policy_service),
-    user: User = Depends(require_user),
+    user: User = Depends(require_roles("admin", "supervisor", "finops")),
 ):
     try:
         await svc.delete(policy_id)

@@ -6,7 +6,7 @@ from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException
 
-from app.api.deps import get_churn_service, require_user
+from app.api.deps import get_churn_service, require_roles, require_user
 from app.api.schemas.churn import (
     ClassificationOut,
     ClassifyRequest,
@@ -45,7 +45,7 @@ async def get_taxonomy(
 async def add_node(
     body: CreateNodeRequest,
     churn: ChurnService = Depends(get_churn_service),
-    user: User = Depends(require_user),
+    user: User = Depends(require_roles("admin", "supervisor")),
 ):
     parent = UUID(body.parent_id) if body.parent_id else None
     node = await churn.add_node(label=body.label, parent_id=parent)
@@ -57,7 +57,7 @@ async def rename_node(
     node_id: UUID,
     body: RenameNodeRequest,
     churn: ChurnService = Depends(get_churn_service),
-    user: User = Depends(require_user),
+    user: User = Depends(require_roles("admin", "supervisor")),
 ):
     try:
         node = await churn.rename_node(node_id, body.label)
@@ -70,7 +70,7 @@ async def rename_node(
 async def delete_node(
     node_id: UUID,
     churn: ChurnService = Depends(get_churn_service),
-    user: User = Depends(require_user),
+    user: User = Depends(require_roles("admin", "supervisor")),
 ):
     await churn.delete_node(node_id)
     return {"ok": True}

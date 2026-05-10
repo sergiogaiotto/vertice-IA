@@ -279,3 +279,27 @@ async def require_user(user: Optional[User] = Depends(current_user_optional)) ->
     if not user:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="autenticação requerida")
     return user
+
+
+def require_roles(*roles: str):
+    """Dependency factory: exige autenticado com pelo menos um dos ``roles``.
+
+    Espelha o gate aplicado nas páginas em ``pages.py:_require_any_role`` para
+    que o backend se proteja sozinho — sem depender da UI ter ocultado botão.
+    A factory devolve um callable usável diretamente em ``Depends(...)``:
+
+        @router.post("/")
+        async def create(..., user: User = Depends(require_roles("admin", "supervisor"))):
+            ...
+    """
+    allowed = set(roles)
+
+    async def _check(user: User = Depends(require_user)) -> User:
+        if not any(r in allowed for r in (user.roles or [])):
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail=f"acesso restrito · requer um dos papéis: {', '.join(roles)}",
+            )
+        return user
+
+    return _check
