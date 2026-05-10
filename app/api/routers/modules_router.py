@@ -16,6 +16,7 @@ from app.api.deps import (
     get_module_wizard_service,
     get_registry_service,
     get_skill_service,
+    require_roles,
     require_user,
 )
 from app.api.schemas.modules import (
@@ -127,7 +128,7 @@ async def list_modules(
 async def create_module(
     body: CreateModuleRequest,
     svc: RegistryService = Depends(get_registry_service),
-    user: User = Depends(require_user),
+    user: User = Depends(require_roles("admin", "supervisor")),
 ):
     existing = await svc.get_by_name(body.name)
     if existing:
@@ -161,7 +162,7 @@ async def update_module(
     module_id: UUID,
     body: UpdateModuleRequest,
     svc: RegistryService = Depends(get_registry_service),
-    user: User = Depends(require_user),
+    user: User = Depends(require_roles("admin", "supervisor")),
 ):
     try:
         m = await svc.update(
@@ -183,9 +184,12 @@ async def update_module(
 async def pause_module(
     module_id: UUID,
     svc: RegistryService = Depends(get_registry_service),
-    user: User = Depends(require_user),
+    user: User = Depends(require_roles("admin", "supervisor")),
 ):
-    m = await svc.set_status(module_id, ModuleStatus.paused)
+    try:
+        m = await svc.set_status(module_id, ModuleStatus.paused)
+    except ValueError as e:
+        raise HTTPException(404, str(e))
     return _to_out(m)
 
 
@@ -193,9 +197,12 @@ async def pause_module(
 async def resume_module(
     module_id: UUID,
     svc: RegistryService = Depends(get_registry_service),
-    user: User = Depends(require_user),
+    user: User = Depends(require_roles("admin", "supervisor")),
 ):
-    m = await svc.set_status(module_id, ModuleStatus.active)
+    try:
+        m = await svc.set_status(module_id, ModuleStatus.active)
+    except ValueError as e:
+        raise HTTPException(404, str(e))
     return _to_out(m)
 
 
@@ -203,9 +210,12 @@ async def resume_module(
 async def delete_module(
     module_id: UUID,
     svc: RegistryService = Depends(get_registry_service),
-    user: User = Depends(require_user),
+    user: User = Depends(require_roles("admin", "supervisor")),
 ):
-    await svc.delete(module_id)
+    try:
+        await svc.delete(module_id)
+    except ValueError as e:
+        raise HTTPException(404, str(e))
     return {"ok": True}
 
 

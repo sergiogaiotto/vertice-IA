@@ -15,6 +15,7 @@ from app.api.deps import (
     get_radar_state_repo,
     get_registry_service,
     get_skill_service,
+    require_roles,
     require_user,
 )
 from app.api.schemas.radar import CardOut, ContractOut, CreateCardRequest
@@ -37,7 +38,7 @@ router = APIRouter()
 async def upload_cases_xlsx(
     file: UploadFile = File(...),
     bko=Depends(get_bko_service),
-    user: User = Depends(require_user),
+    user: User = Depends(require_roles("admin", "supervisor")),
 ):
     """Upload da planilha de casos do BKO (.xlsx). Detecta duplicatas idênticas."""
     if not (file.filename or "").lower().endswith(".xlsx"):
@@ -53,7 +54,7 @@ async def upload_cases_xlsx(
 async def upload_transcripts_json(
     files: list[UploadFile] = File(...),
     bko=Depends(get_bko_service),
-    user: User = Depends(require_user),
+    user: User = Depends(require_roles("admin", "supervisor")),
 ):
     """Upload de um ou mais arquivos JSON de transcrição (Verint/WhisperX)."""
     payload = []

@@ -5,7 +5,12 @@ from __future__ import annotations
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, ConfigDict, Field
 
-from app.api.deps import get_skill_service, get_skill_wizard_service, require_user
+from app.api.deps import (
+    get_skill_service,
+    get_skill_wizard_service,
+    require_roles,
+    require_user,
+)
 from app.api.schemas.skills import (
     CreateSkillRequest,
     SaveSkillRequest,
@@ -121,7 +126,7 @@ async def get_skill(
 async def create_skill(
     body: CreateSkillRequest,
     svc: SkillService = Depends(get_skill_service),
-    user: User = Depends(require_user),
+    user: User = Depends(require_roles("admin", "supervisor")),
 ):
     if svc.get(body.name):
         raise HTTPException(400, f"skill '{body.name}' já existe")
@@ -135,7 +140,7 @@ async def save_skill(
     name: str,
     body: SaveSkillRequest,
     svc: SkillService = Depends(get_skill_service),
-    user: User = Depends(require_user),
+    user: User = Depends(require_roles("admin", "supervisor")),
 ):
     target_name = body.new_name or name
     if body.new_name and body.new_name != name:
@@ -153,7 +158,7 @@ async def save_skill(
 async def delete_skill(
     name: str,
     svc: SkillService = Depends(get_skill_service),
-    user: User = Depends(require_user),
+    user: User = Depends(require_roles("admin", "supervisor")),
 ):
     if not svc.delete(name):
         raise HTTPException(404, "skill não encontrada")

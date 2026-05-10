@@ -6,7 +6,7 @@ from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException
 
-from app.api.deps import get_prompt_service, require_user
+from app.api.deps import get_prompt_service, require_roles, require_user
 from app.api.schemas.prompt import (
     PromptBundleOut,
     SavePromptRequest,
@@ -66,7 +66,7 @@ async def get_one(
 async def save_new(
     body: SavePromptRequest,
     svc: PromptService = Depends(get_prompt_service),
-    user: User = Depends(require_user),
+    user: User = Depends(require_roles("admin", "supervisor")),
 ):
     p = await svc.save_new_version(
         name=body.name,
@@ -82,7 +82,7 @@ async def save_new(
 async def promote(
     prompt_id: UUID,
     svc: PromptService = Depends(get_prompt_service),
-    user: User = Depends(require_user),
+    user: User = Depends(require_roles("admin", "supervisor")),
 ):
     await svc.promote(prompt_id)
     p = await svc.get(prompt_id)
@@ -94,7 +94,7 @@ async def set_modules(
     prompt_id: UUID,
     body: UpdateModulesRequest,
     svc: PromptService = Depends(get_prompt_service),
-    user: User = Depends(require_user),
+    user: User = Depends(require_roles("admin", "supervisor")),
 ):
     """Atualiza a lista de módulos associados ao prompt (propaga para todas as versões com mesmo nome)."""
     try:
@@ -109,7 +109,7 @@ async def set_modules(
 async def delete_one(
     prompt_id: UUID,
     svc: PromptService = Depends(get_prompt_service),
-    user: User = Depends(require_user),
+    user: User = Depends(require_roles("admin", "supervisor")),
 ):
     await svc.delete(prompt_id)
     return {"ok": True}
