@@ -463,6 +463,21 @@ ALTER TABLE radar_card_visibility
 ALTER TABLE radar_card_visibility
     ADD COLUMN IF NOT EXISTS visibility_changed_at TIMESTAMPTZ;
 
+-- Artefatos efêmeros gerados por execuções de módulo (CSV, MD, JSON…).
+-- TTL gerenciado no SELECT (filtra por created_at). GC opcional via DELETE
+-- WHERE created_at < NOW() - INTERVAL '30 min' (chamado manualmente).
+-- Substitui o dict in-memory anterior; agora persiste cross-worker e
+-- sobrevive a restart.
+CREATE TABLE IF NOT EXISTS artifacts (
+    id          UUID PRIMARY KEY,
+    filename    TEXT NOT NULL,
+    mime_type   TEXT NOT NULL,
+    content     BYTEA NOT NULL,
+    created_at  TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+CREATE INDEX IF NOT EXISTS idx_artifacts_created_at
+    ON artifacts(created_at DESC);
+
 -- Failsafe inbox
 CREATE TABLE IF NOT EXISTS failsafe_actions (
     id           UUID PRIMARY KEY,

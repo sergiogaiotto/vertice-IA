@@ -17,11 +17,19 @@ logger = logging.getLogger("vertice.tracer")
 
 
 class CompositeTracer(Tracer):
+    """Forward-only para LangFuse / MLflow / OTel.
+
+    Stateless do lado da aplicação: cada chamada de ``trace``/``event`` é
+    repassada aos backends configurados e descartada localmente. Não há
+    buffer in-memory — antes existia, mas nenhum caller consumia, e isso
+    seria uma armadilha em deploy multi-worker (cada worker teria seu
+    próprio buffer, fora-de-sync).
+    """
+
     def __init__(self):
         self._langfuse = self._make_langfuse()
         self._mlflow = self._make_mlflow()
         self._otel = self._make_otel()
-        self._buffer: list[dict] = []
 
     def _make_langfuse(self):
         if not (settings.langfuse_public_key and settings.langfuse_secret_key):
@@ -59,11 +67,6 @@ class CompositeTracer(Tracer):
             return None
 
     def trace(self, name: str, input_data: Any, output_data: Any, metadata: dict | None = None) -> None:
-        record = {"name": name, "input": input_data, "output": output_data, "meta": metadata or {}}
-        self._buffer.append(record)
-        if len(self._buffer) > 500:
-            self._buffer = self._buffer[-500:]
-
         if self._langfuse:
             try:
                 self._langfuse.trace(name=name, input=input_data, output=output_data, metadata=metadata)
@@ -87,6 +90,3 @@ class CompositeTracer(Tracer):
 
     def event(self, name: str, payload: dict) -> None:
         self.trace(name=name, input_data=None, output_data=payload, metadata={"kind": "event"})
-
-    def buffer(self) -> list[dict]:
-        return list(self._buffer)
