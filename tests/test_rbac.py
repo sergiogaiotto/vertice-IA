@@ -159,6 +159,75 @@ async def test_sem_token_recebe_401(client: AsyncClient):
     assert not falhas, "Endpoints sem auth-gate:\n" + "\n".join(falhas)
 
 
+# ---- Preferências do Radar persistidas no Postgres (PR-3) ---------------
+
+@pytest.mark.asyncio
+async def test_radar_preferences_roundtrip(client: AsyncClient):
+    """GET retorna {} para usuário novo; PUT mescla; PUT com null remove.
+
+    Substitui os 3 keys de localStorage (lastSelectedCase, lastAutoRunTx,
+    lastChatCase) por persistência cross-device no banco.
+    """
+    token = await _make_user("prefs_user", ["analista_n3"])
+
+    # Estado inicial: dict vazio (usuário sem registro em radar_user_state).
+    r = await client.get("/api/radar/preferences", headers=_h(token))
+    assert r.status_code == 200
+    assert r.json() == {}
+
+    # PUT inicial — grava 2 chaves.
+    r = await client.put(
+        "/api/radar/preferences",
+        json={"lastSelectedCase": "123", "lastAutoRunTx": "tx-abc"},
+        headers=_h(token),
+    )
+    assert r.status_code == 200
+    assert r.json() == {"lastSelectedCase": "123", "lastAutoRunTx": "tx-abc"}
+
+    # Merge — adiciona uma terceira sem perder as anteriores.
+    r = await client.put(
+        "/api/radar/preferences",
+        json={"lastChatCase": "123"},
+        headers=_h(token),
+    )
+    assert r.json() == {
+        "lastSelectedCase": "123",
+        "lastAutoRunTx": "tx-abc",
+        "lastChatCase": "123",
+    }
+
+    # null remove só a chave alvo.
+    r = await client.put(
+        "/api/radar/preferences",
+        json={"lastAutoRunTx": None},
+        headers=_h(token),
+    )
+    assert r.json() == {"lastSelectedCase": "123", "lastChatCase": "123"}
+
+    # GET reflete o estado final (round-trip pelo banco).
+    r = await client.get("/api/radar/preferences", headers=_h(token))
+    assert r.json() == {"lastSelectedCase": "123", "lastChatCase": "123"}
+
+
+@pytest.mark.asyncio
+async def test_radar_preferences_isolated_por_usuario(client: AsyncClient):
+    """Cada usuário enxerga só suas próprias preferências."""
+    token_a = await _make_user("prefs_a", ["analista_n3"])
+    token_b = await _make_user("prefs_b", ["analista_n3"])
+
+    await client.put(
+        "/api/radar/preferences", json={"lastSelectedCase": "A"}, headers=_h(token_a)
+    )
+    await client.put(
+        "/api/radar/preferences", json={"lastSelectedCase": "B"}, headers=_h(token_b)
+    )
+
+    r_a = await client.get("/api/radar/preferences", headers=_h(token_a))
+    r_b = await client.get("/api/radar/preferences", headers=_h(token_b))
+    assert r_a.json() == {"lastSelectedCase": "A"}
+    assert r_b.json() == {"lastSelectedCase": "B"}
+
+
 # ---- Actor tracking em mudanças de visibility (PR-2) --------------------
 
 @pytest.mark.asyncio
