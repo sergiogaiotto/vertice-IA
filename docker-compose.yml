@@ -59,8 +59,13 @@ services:
       - caddy_data:/data       # certs Let's Encrypt persistem aqui
       - caddy_config:/config
     environment:
-      DOMAIN: ${DOMAIN:?DOMAIN não definido em .env.production}
-      ACME_EMAIL: ${ACME_EMAIL:?ACME_EMAIL não definido em .env.production}
+      # DOMAIN e ACME_EMAIL são OPCIONAIS no compose-time. Se não forem
+      # passados (ex.: primeiro deploy no Hostinger antes de configurar
+      # env vars no painel), Caddy serve em :PUBLIC_HTTPS_PORT com cert
+      # self-signed (CA interna do Caddy). Quando você preencher DOMAIN
+      # e ACME_EMAIL, Caddy automaticamente passa a usar Let's Encrypt.
+      DOMAIN: ${DOMAIN:-}
+      ACME_EMAIL: ${ACME_EMAIL:-internal}
       PUBLIC_HTTPS_PORT: ${PUBLIC_HTTPS_PORT:-8010}
     networks: [edge, internal]
     depends_on:
@@ -98,13 +103,18 @@ services:
       APP_ENV: ${APP_ENV:-production}
       APP_HOST: 0.0.0.0
       APP_PORT: 8000
-      APP_SECRET_KEY: ${APP_SECRET_KEY:?APP_SECRET_KEY não definido}
-      APP_BASE_URL: ${APP_BASE_URL:-https://${DOMAIN}:${PUBLIC_HTTPS_PORT:-8010}}
+      # APP_SECRET_KEY é o ÚNICO secret cuja ausência é catastrófica
+      # (assinatura JWT/cookies). Mantido obrigatório.
+      APP_SECRET_KEY: ${APP_SECRET_KEY:?APP_SECRET_KEY não definido — gere com openssl rand -hex 32}
+      # APP_BASE_URL é derivado de DOMAIN se não setado explicitamente.
+      # Se DOMAIN estiver vazio, fica vazio e o app trata como base URL
+      # relativa.
+      APP_BASE_URL: ${APP_BASE_URL:-}
       # Auth
       JWT_ALGORITHM: ${JWT_ALGORITHM:-HS256}
       JWT_EXPIRES_MINUTES: ${JWT_EXPIRES_MINUTES:-480}
       ADMIN_BOOTSTRAP_USER: ${ADMIN_BOOTSTRAP_USER:-admin}
-      ADMIN_BOOTSTRAP_PASSWORD: ${ADMIN_BOOTSTRAP_PASSWORD:?ADMIN_BOOTSTRAP_PASSWORD não definido}
+      ADMIN_BOOTSTRAP_PASSWORD: ${ADMIN_BOOTSTRAP_PASSWORD:?ADMIN_BOOTSTRAP_PASSWORD não definido — defina no painel do Hostinger}
       # LLMs (opt-in; sem chave → modo mock automático)
       OPENAI_API_KEY: ${OPENAI_API_KEY:-}
       OPENAI_MODEL: ${OPENAI_MODEL:-gpt-4.1}
@@ -161,7 +171,7 @@ services:
       - "5432"
     environment:
       POSTGRES_USER: ${POSTGRES_USER:-vertice}
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD não definido}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD não definido — defina no painel do Hostinger}
       POSTGRES_DB: ${POSTGRES_DB:-vertice}
       POSTGRES_INITDB_ARGS: "--data-checksums"
       # Tuning seguro para VPS small (16 ainda usa shared_buffers conservador
@@ -220,7 +230,7 @@ services:
       PGHOST: postgres
       PGPORT: 5432
       PGUSER: ${POSTGRES_USER:-vertice}
-      PGPASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD não definido}
+      PGPASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD não definido — defina no painel do Hostinger}
       PGDATABASE: ${POSTGRES_DB:-vertice}
       BACKUP_KEEP_DAYS: ${BACKUP_KEEP_DAYS:-7}
       BACKUP_AT_HOUR_UTC: ${BACKUP_AT_HOUR_UTC:-3}     # 03:00 UTC = 00:00 BRT

@@ -1,22 +1,35 @@
 # Vértice — Caddy reverse proxy
 #
-# Caddy emite e renova certificados Let's Encrypt automaticamente. Não
-# precisa Certbot, cron ou config manual de TLS.
+# Dois modos suportados, ambos zero-config (Caddy decide pelas env vars):
 #
-# Variáveis vêm do compose (via env_file). DOMAIN, ACME_EMAIL e
-# PUBLIC_HTTPS_PORT são obrigatórias.
+#  1) MODO SELF-SIGNED (default — útil pra primeiro deploy)
+#     DOMAIN=          (vazio)
+#     ACME_EMAIL=internal
+#     → Caddy serve em :PUBLIC_HTTPS_PORT (default 8010) com cert
+#       gerado pela CA interna. Acesse https://VPS_IP:8010 (browser
+#       avisa "certificado não confiável", aceite e segue).
 #
-# Topologia de portas:
-#   :80              → ACME HTTP-01 challenge + redirect para HTTPS:PUBLIC_HTTPS_PORT
-#   :PUBLIC_HTTPS_PORT (default 8010) → HTTPS público (TLS automático)
+#  2) MODO PRODUÇÃO (Let's Encrypt)
+#     DOMAIN=vertice.exemplo.com.br
+#     ACME_EMAIL=ops@exemplo.com.br
+#     → Caddy emite cert real automaticamente; URL fica
+#       https://DOMAIN:PUBLIC_HTTPS_PORT.
 #
-# IMPORTANTE: a porta 80 NÃO publica conteúdo da app. Ela só serve para o
-# Let's Encrypt validar o domínio e redirecionar visitantes para HTTPS.
-# Se você fechar a 80 no firewall, o certificado não é emitido/renovado
-# (a menos que use DNS-01 challenge — fora deste setup).
+# A passagem de modo 1 → modo 2 é só editar as env vars no painel do
+# Hostinger Docker Manager (ou seu mecanismo equivalente) e reiniciar
+# o serviço Caddy. O volume `caddy_data` persiste o cert depois de
+# emitido.
+#
+# Pré-requisito do MODO 2: DNS A do DOMAIN aponta para o IP da VPS, e
+# a porta 80 está aberta no firewall (Let's Encrypt usa HTTP-01
+# challenge para validar o domínio).
 
 {
-	email {$ACME_EMAIL}
+	# Sem `email` global — quem decide é o `tls {$ACME_EMAIL}` em cada
+	# site, que aceita tanto o e-mail real quanto o keyword "internal"
+	# (CA interna do Caddy, cert self-signed). Setar `email internal`
+	# global gera erro de parsing.
+
 	# log JSON estruturado para fácil ingestão (Loki/Datadog/etc.)
 	log default {
 		output stdout
@@ -29,21 +42,15 @@
 	}
 }
 
-# ---------------------------------------------------------------- Redirect HTTP → HTTPS
-# Tudo que chegar na 80 (incluindo ACME) é capturado por Caddy:
-#  - /.well-known/acme-challenge/* é tratado internamente para emissão de cert
-#  - qualquer outro path redireciona 308 para a URL canônica em :PUBLIC_HTTPS_PORT
-http://{$DOMAIN} {
-	redir https://{$DOMAIN}:{$PUBLIC_HTTPS_PORT}{uri} permanent
-}
-
-# ---------------------------------------------------------------- Vértice (HTTPS:8010)
+# ---------------------------------------------------------------- Site principal
+# Site address dinâmico:
+#   - DOMAIN setado → "exemplo.com:8010" (host + porta)
+#   - DOMAIN vazio  → ":8010"            (catch-all, qualquer host)
+#
+# TLS dinâmico:
+#   - ACME_EMAIL=internal → Caddy usa CA interna (cert self-signed)
+#   - ACME_EMAIL=user@... → Caddy emite cert via Let's Encrypt
 {$DOMAIN}:{$PUBLIC_HTTPS_PORT} {
-	# --- TLS ---
-	# Caddy emite cert Let's Encrypt automaticamente. Como estamos em
-	# porta não-padrão, o ACME usa HTTP-01 challenge na porta 80 (acima)
-	# para validar o domínio. Cert válido para o domínio inteiro,
-	# independente da porta.
 	tls {$ACME_EMAIL}
 
 	# --- Logging ---
@@ -57,17 +64,14 @@ http://{$DOMAIN} {
 
 	# --- Segurança (headers HTTP) ---
 	header {
-		# HSTS — força HTTPS por 1 ano em browsers
+		# HSTS — força HTTPS por 1 ano em browsers (não cause downgrade
+		# após você passar para Let's Encrypt). Em modo self-signed,
+		# alguns browsers ignoram HSTS — é seguro deixar ligado.
 		Strict-Transport-Security "max-age=31536000; includeSubDomains"
-		# Anti-clickjacking
 		X-Frame-Options "SAMEORIGIN"
-		# Anti-MIME sniffing
 		X-Content-Type-Options "nosniff"
-		# Referrer mínimo
 		Referrer-Policy "strict-origin-when-cross-origin"
-		# Permissões mínimas (geo, mic, cam desabilitados)
 		Permissions-Policy "geolocation=(), microphone=(), camera=(), payment=()"
-		# Esconde versão
 		-Server
 		-X-Powered-By
 	}
@@ -91,18 +95,27 @@ http://{$DOMAIN} {
 
 	# --- Reverse proxy para a app ---
 	reverse_proxy vertice:8000 {
-		# Headers padrão para o app saber o protocolo/host original.
 		header_up X-Real-IP {remote_host}
 		header_up X-Forwarded-For {remote_host}
 		header_up X-Forwarded-Proto {scheme}
 		header_up X-Forwarded-Host {host}
-		# `host` aqui já contém :PUBLIC_HTTPS_PORT, então X-Forwarded-Host
-		# entrega para o app a URL pública correta (incluindo a porta).
-
 		# Healthcheck ativo: Caddy descarta backend se falhar.
 		health_uri /health
 		health_interval 30s
 		health_timeout 5s
 		health_status 2xx
 	}
+}
+
+# ---------------------------------------------------------------- Redirect HTTP → HTTPS
+# :80 (catch-all) — funciona com OU sem DOMAIN definido. Ele faz duas
+# coisas:
+#   (a) Serve o ACME HTTP-01 challenge para o Caddy emitir cert
+#       Let's Encrypt no MODO PRODUÇÃO.
+#   (b) Redireciona qualquer outro request para HTTPS na porta correta.
+:80 {
+	# Caddy automaticamente trata /.well-known/acme-challenge/* internamente
+	# antes de chegar no `redir` quando o site usa Let's Encrypt — então
+	# este bloco serve para os dois modos sem ajuste manual.
+	redir https://{host}:{$PUBLIC_HTTPS_PORT}{uri} permanent
 }
