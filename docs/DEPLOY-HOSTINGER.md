@@ -135,24 +135,44 @@ Se você está usando o serviço **VPS → Docker Manager** da Hostinger
 (que faz `git clone` do repo e roda `docker compose up` automaticamente):
 
 1. **Conecte o repositório** GitHub no painel.
-2. **Configure as variáveis de ambiente** na aba "Environment" do
-   Docker Manager. Cole o conteúdo do seu `.env.production` ali (uma
-   variável por linha, sem `export`):
 
+2. **Configure as variáveis de ambiente** na aba "Environment Variables"
+   do Docker Manager. O compose só EXIGE 3 variáveis no compose-time
+   (sem elas o build falha):
+
+   ```
+   APP_SECRET_KEY=<gere com: openssl rand -hex 32>
+   POSTGRES_PASSWORD=<gere com: openssl rand -base64 24>
+   ADMIN_BOOTSTRAP_PASSWORD=<senha-forte-pra-trocar-no-1o-login>
+   ```
+
+   As demais variáveis controlam o modo de operação:
+
+   **Modo Self-signed (primeiro deploy, sem domínio configurado)**:
+   - Não defina `DOMAIN` nem `ACME_EMAIL`.
+   - Caddy gera um cert self-signed; acesse `https://VPS_IP:8010`,
+     o browser avisa "cert não confiável" — clique "avançar".
+
+   **Modo Produção (Let's Encrypt + domínio real)**:
    ```
    DOMAIN=vertice.exemplo.com.br
    ACME_EMAIL=ops@exemplo.com.br
-   APP_SECRET_KEY=...
-   POSTGRES_PASSWORD=...
-   ADMIN_BOOTSTRAP_PASSWORD=...
    APP_BASE_URL=https://vertice.exemplo.com.br:8010
-   PUBLIC_HTTPS_PORT=8010
    ```
+   Pré-requisitos: DNS A do DOMAIN aponta pro IP da VPS + porta 80
+   aberta no firewall (Let's Encrypt usa HTTP-01 challenge).
+
 3. **Deploy** pelo painel. O Hostinger faz `git pull` + `docker compose up -d`
    automaticamente. Ele lê o `docker-compose.yml` (raiz do repo) — que
    já é a stack de produção.
 
-> ⚠️ **NÃO** comite `.env.production` no Git. Use o painel da Hostinger.
+> ⚠️ **NÃO** comite `.env.production` no Git. Os secrets ficam no
+> painel do Hostinger.
+
+> 💡 **Migração Self-signed → Produção**: depois que o app estiver
+> rodando no modo self-signed, basta adicionar `DOMAIN` e `ACME_EMAIL`
+> no painel e reiniciar o container `caddy`. O Caddy vai detectar e
+> emitir o cert real automaticamente — sem perder nada do banco.
 
 ### 3b) SSH direto (controle total)
 
