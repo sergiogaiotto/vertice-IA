@@ -605,7 +605,10 @@ async def cards_em_tela_page(
     from app.adapters.db.repositories.user_repo import PgUserRepository
     repo = PgRadarCardVisibilityRepository()
     rows = await repo.list_all()
-    # enriquece com `who_can_see` igual ao endpoint /api/radar/admin/cards
+    # enriquece com `who_can_see` igual ao endpoint /api/radar/admin/cards.
+    # `created_at`/`updated_at` voltam do Postgres como `datetime` — o filtro
+    # `tojson` do Jinja usa `json.dumps` puro e estoura em datetime, então
+    # converte para ISO string aqui (o JS faz `new Date(...)` em cima).
     for r in rows:
         v = r.get("visibility") or "private"
         if v == "private":
@@ -616,6 +619,10 @@ async def cards_em_tela_page(
             r["who_can_see"] = ["dono", "admin", "supervisor", "analista"]
         else:
             r["who_can_see"] = ["dono"]
+        for k in ("created_at", "updated_at"):
+            ts = r.get(k)
+            if hasattr(ts, "isoformat"):
+                r[k] = ts.isoformat()
 
     # Lista de usuários ativos para o seletor de "alterar dono"
     users_repo = PgUserRepository()
