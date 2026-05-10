@@ -108,9 +108,12 @@ nano .env.production
 | `DOMAIN`                    | seu domínio (ex: `vertice.exemplo.com.br`)         |
 | `ACME_EMAIL`                | seu e-mail (Let's Encrypt usa para avisos)         |
 | `APP_SECRET_KEY`            | `openssl rand -hex 32`                              |
-| `ADMIN_BOOTSTRAP_PASSWORD`  | senha forte do admin (será trocada após 1º login)  |
 | `POSTGRES_PASSWORD`         | `openssl rand -base64 24`                           |
 | `APP_BASE_URL`              | `https://SEU_DOMINIO:8010` (inclui a porta!)        |
+
+> Não há mais `ADMIN_BOOTSTRAP_PASSWORD`. O **primeiro acesso a `/login`**
+> com a tabela `users` vazia cria o usuário ROOT com o username/senha
+> que você digitar no formulário. Anote-os.
 
 Opcional:
 
@@ -137,13 +140,12 @@ Se você está usando o serviço **VPS → Docker Manager** da Hostinger
 1. **Conecte o repositório** GitHub no painel.
 
 2. **Configure as variáveis de ambiente** na aba "Environment Variables"
-   do Docker Manager. O compose só EXIGE 3 variáveis no compose-time
+   do Docker Manager. O compose só EXIGE 2 variáveis no compose-time
    (sem elas o build falha):
 
    ```
    APP_SECRET_KEY=<gere com: openssl rand -hex 32>
    POSTGRES_PASSWORD=<gere com: openssl rand -base64 24>
-   ADMIN_BOOTSTRAP_PASSWORD=<senha-forte-pra-trocar-no-1o-login>
    ```
 
    As demais variáveis controlam o modo de operação:
@@ -195,14 +197,16 @@ permanece aberta no firewall mesmo que a URL pública seja na 8010.
 
 ---
 
-## 4) Primeiro login
+## 4) Primeiro login (criação do ROOT)
 
-Acesse `https://SEU_DOMINIO:8010` e entre com:
+Acesse `https://SEU_DOMINIO:8010/login` (ou `https://VPS_IP:8010/login`
+no modo self-signed).
 
-- usuário: `admin`
-- senha: o `ADMIN_BOOTSTRAP_PASSWORD` que você definiu
+Como a tabela `users` está vazia, o formulário entra em **setup mode**:
+o username + senha que você submeter criam o **usuário ROOT** (papéis
+`root` + `admin`). Escolha credenciais fortes — não há reset automático.
 
-**Troque a senha imediatamente** em `Usuários → admin → Alterar senha`.
+Anote-as num gerenciador de senhas antes de submeter.
 
 ---
 

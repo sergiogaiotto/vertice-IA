@@ -110,14 +110,15 @@ services:
       # Se DOMAIN estiver vazio, fica vazio e o app trata como base URL
       # relativa.
       APP_BASE_URL: ${APP_BASE_URL:-}
-      # Auth
+      # Auth — bootstrap do primeiro usuário acontece via UI no primeiro
+      # acesso a /login (sem credenciais default).
       JWT_ALGORITHM: ${JWT_ALGORITHM:-HS256}
       JWT_EXPIRES_MINUTES: ${JWT_EXPIRES_MINUTES:-480}
-      ADMIN_BOOTSTRAP_USER: ${ADMIN_BOOTSTRAP_USER:-admin}
-      ADMIN_BOOTSTRAP_PASSWORD: ${ADMIN_BOOTSTRAP_PASSWORD:?ADMIN_BOOTSTRAP_PASSWORD não definido — defina no painel do Hostinger}
       # LLMs (opt-in; sem chave → modo mock automático)
-      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
-      OPENAI_MODEL: ${OPENAI_MODEL:-gpt-4.1}
+      AZURE_OPENAI_API_KEY: ${AZURE_OPENAI_API_KEY:-}
+      AZURE_OPENAI_ENDPOINT: ${AZURE_OPENAI_ENDPOINT:-}
+      AZURE_OPENAI_API_VERSION: ${AZURE_OPENAI_API_VERSION:-2024-08-01-preview}
+      AZURE_OPENAI_DEPLOYMENT: ${AZURE_OPENAI_DEPLOYMENT:-gpt-4o}
       MARITACA_API_KEY: ${MARITACA_API_KEY:-}
       MARITACA_MODEL: ${MARITACA_MODEL:-sabia-4}
       MARITACA_BASE_URL: ${MARITACA_BASE_URL:-https://chat.maritaca.ai/api}
@@ -126,7 +127,7 @@ services:
       GAIA_BASE_URL: ${GAIA_BASE_URL:-}
       # Router
       ROUTER_DEFAULT_MODEL: ${ROUTER_DEFAULT_MODEL:-sabia-4}
-      ROUTER_FALLBACK_MODEL: ${ROUTER_FALLBACK_MODEL:-gpt-4.1}
+      ROUTER_FALLBACK_MODEL: ${ROUTER_FALLBACK_MODEL:-gpt-4o}
       ROUTER_CHEAP_MODEL: ${ROUTER_CHEAP_MODEL:-gaia-4b}
       # Observability
       LANGFUSE_PUBLIC_KEY: ${LANGFUSE_PUBLIC_KEY:-}
@@ -141,6 +142,14 @@ services:
       GUARDRAIL_INPUT_MAX_CHARS: ${GUARDRAIL_INPUT_MAX_CHARS:-20000}
       GUARDRAIL_INJECTION_BLOCK: ${GUARDRAIL_INJECTION_BLOCK:-true}
       GUARDRAIL_PII_REDACT: ${GUARDRAIL_PII_REDACT:-true}
+      # Uvicorn workers — ajuste conforme vCPUs da VPS (2x vCPU é um bom
+      # ponto de partida).
+      UVICORN_WORKERS: ${UVICORN_WORKERS:-2}
+    volumes:
+      # Skills criadas/editadas via UI persistem aqui entre redeploys. No
+      # primeiro boot o entrypoint copia os skills "shipped" do repo
+      # (snapshot em /opt/skills_seed) para popular o volume vazio.
+      - vertice_skills:/app/app/skills
     depends_on:
       postgres:
         condition: service_healthy
@@ -256,6 +265,8 @@ volumes:
     name: vertice_pgdata
   vertice_backups:
     name: vertice_backups
+  vertice_skills:
+    name: vertice_skills
   caddy_data:
     name: vertice_caddy_data
   caddy_config:

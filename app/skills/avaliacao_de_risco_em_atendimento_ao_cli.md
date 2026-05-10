@@ -30,7 +30,7 @@ Agente especialista em análise de risco e suporte ao cliente, focado em identif
 
 ## Política de roteamento
 - Default: `sabia-4`
-- Fallback: `gpt-4.1`
+- Fallback: `gpt-4o`
 
 ## Guardrails
 

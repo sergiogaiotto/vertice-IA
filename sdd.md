@@ -8,7 +8,7 @@
 **Framework:** FastAPI
 **Conectividade:** OpenAPI / Swagger
 **Bibliotecas:** Deep-Agent Harness, LangGraph
-**Modelos LLM API_KEY:** OpenAI GPT-4.1, Maritaca.ai Sabia-4,Gemma.GAIA 4Bi
+**Modelos LLM API_KEY:** Azure OpenAI gpt-4o, Maritaca.ai Sabia-4, Gemma.GAIA 4Bi
 **Banco de Dados:** SQLite
 **Imterface Visual e Navegação:** (https://github.com/sergiogaiotto/agente-inteligencia; https://agente-inteligencia.onrender.com/), com menu a esquerda que pode ser aberto e minizado, parte central com operação de cada módulo e a direita deve oferecer detalhes por contexto de cada item de cada módulo
 **UI:** template engine

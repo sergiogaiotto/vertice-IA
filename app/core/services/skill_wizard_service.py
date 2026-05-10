@@ -81,7 +81,7 @@ um arquivo SKILL.md completo seguindo o formato CANÔNICO da plataforma Vértice
 
 ## Política de roteamento
 - Default: `sabia-4`
-- Fallback: `gpt-4.1`
+- Fallback: `gpt-4o`
 
 ## Guardrails
 
@@ -104,7 +104,7 @@ um arquivo SKILL.md completo seguindo o formato CANÔNICO da plataforma Vértice
 3. **Inputs** espelham a descrição do usuário; tipos comuns: `string`, `string[]`, `int`, `float`, `bool`, `dict`, `markdown`
 4. **Saída esperada**: escolha UM formato (markdown / json / csv / html / xml) e seja preciso. Para JSON, declare o schema. Para markdown, liste as seções `##` que o agente deve produzir.
 5. **Guardrails** específicos ao domínio (NÃO genéricos como "validar entrada"). Exemplos bons: "Recusar se input_text < 50 chars", "Bloquear PII no output", "Truncar a 4000 chars antes de processar".
-6. **Roteamento**: padrão Sabia-4 + Fallback GPT-4.1. Se o domínio exigir multilíngue extenso ou raciocínio complexo, use Default: gpt-4.1.
+6. **Roteamento**: padrão Sabia-4 + Fallback GPT-4o. Se o domínio exigir multilíngue extenso ou raciocínio complexo, use Default: gpt-4o.
 7. **Failsafe**: condição operacional concreta (ex: "Confidence < 0.6", "Mais de 3 retries", "Output vazio em 2 chamadas seguidas").
 
 # Formato JSON da resposta (NÃO o formato da skill — formato da SUA resposta)
@@ -253,7 +253,7 @@ class SkillWizardService:
             "- Nenhuma — apenas inferência\n\n"
             "## Política de roteamento\n"
             "- Default: `sabia-4`\n"
-            "- Fallback: `gpt-4.1`\n\n"
+            "- Fallback: `gpt-4o`\n\n"
             "## Guardrails\n\n"
             "### Entrada\n"
             "- Validar que `input_text` não está vazio\n"

@@ -14,7 +14,7 @@ Retorna um texto corrido com tabela contendo uma lista das três intenções pri
 
 ## Política de roteamento
 - Default: `sabia-4`
-- Fallback: `gpt-4.1`
+- Fallback: `gpt-4o`
 
 ## Guardrails
 

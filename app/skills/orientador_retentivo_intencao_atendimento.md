@@ -18,7 +18,7 @@ Resposta em markdown estruturado, contendo as seções:
 
 ## Política de roteamento
 - Default: sabia-4
-- Fallback: gpt-4.1
+- Fallback: gpt-4o
 
 ## Guardrails
 

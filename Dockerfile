@@ -40,7 +40,8 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
     PIP_NO_CACHE_DIR=1 \
     PIP_DISABLE_PIP_VERSION_CHECK=1 \
     APP_HOME=/app \
-    PORT=8000
+    PORT=8000 \
+    UVICORN_WORKERS=2
 
 # Bibliotecas runtime apenas (sem -dev). libpq5 cobre o asyncpg em fallback;
 # curl para o HEALTHCHECK; tini para PID 1 limpo (graceful shutdown).
@@ -69,6 +70,20 @@ COPY --chown=vertice:vertice . .
 RUN mkdir -p ${APP_HOME}/data \
  && chown -R vertice:vertice ${APP_HOME}/data
 
+# Skills "shipped" no repo são copiados para um diretório read-only ao lado
+# de app/. No primeiro boot, o entrypoint copia-as para app/skills/ (que é
+# um volume nomeado em prod). Assim:
+#   - skills criados via UI persistem entre redeploys (estão no volume);
+#   - skills novos do repo entram só se o volume estiver vazio (primeiro
+#     boot) — o operador limpa o volume manualmente quando quiser sync.
+RUN mkdir -p /opt/skills_seed \
+ && cp -r ${APP_HOME}/app/skills/. /opt/skills_seed/ 2>/dev/null || true \
+ && chown -R vertice:vertice /opt/skills_seed
+
+# Entrypoint shim: seed skills no primeiro boot, depois exec uvicorn.
+COPY --chown=vertice:vertice scripts/docker_entrypoint.sh /usr/local/bin/docker_entrypoint.sh
+RUN chmod +x /usr/local/bin/docker_entrypoint.sh
+
 USER vertice
 
 EXPOSE 8000
@@ -79,8 +94,8 @@ HEALTHCHECK --interval=10s --timeout=5s --start-period=30s --retries=5 \
     CMD curl -fsS http://127.0.0.1:8000/health || exit 1
 
 # tini como PID 1 — evita PID 1 zombie reaping problems com uvicorn workers.
-ENTRYPOINT ["/usr/bin/tini", "--"]
+# Encadeia o entrypoint que faz seed dos skills antes do uvicorn.
+ENTRYPOINT ["/usr/bin/tini", "--", "/usr/local/bin/docker_entrypoint.sh"]
 
-# 2 workers é um ponto de partida razoável para VPS small (2 vCPU). Em
-# produção, ajustar via env CMD: docker compose run com --workers N.
-CMD ["sh", "-c", "uvicorn app.main:app --host 0.0.0.0 --port ${PORT} --workers 2 --proxy-headers --forwarded-allow-ips='*'"]
+# Workers configuráveis via env. Default 2 cabe em VPS small (2 vCPU).
+CMD ["sh", "-c", "uvicorn app.main:app --host 0.0.0.0 --port ${PORT} --workers ${UVICORN_WORKERS} --proxy-headers --forwarded-allow-ips='*'"]

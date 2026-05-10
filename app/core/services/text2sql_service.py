@@ -78,36 +78,41 @@ class Text2SqlService:
     def _build_agent(self, allowed_tables: list[str], model_name: str | None = None):
         """Cria o Deep Agent com SQL toolkit restrito + skills + AGENTS.md.
 
-        Lê OPENAI_API_KEY do .env (via settings). Se ausente, lança ValueError
-        com mensagem clara em vez do erro críptico do SDK.
+        Lê credenciais Azure OpenAI do .env (via settings). Se a API key ou o
+        endpoint estiverem ausentes, lança ValueError com mensagem clara em
+        vez do erro críptico do SDK.
         """
         from deepagents import create_deep_agent
         from deepagents.backends import FilesystemBackend
-        from langchain_openai import ChatOpenAI
+        from langchain_openai import AzureChatOpenAI
         from langchain_community.agent_toolkits import SQLDatabaseToolkit
 
         from app.config import get_settings
         settings = get_settings()
 
-        api_key = settings.openai_api_key
-        if not api_key:
+        api_key = settings.azure_openai_api_key
+        endpoint = settings.azure_openai_endpoint
+        if not (api_key and endpoint):
             raise ValueError(
-                "OPENAI_API_KEY não configurada. "
-                "Adicione no arquivo .env (na raiz do projeto): "
-                "OPENAI_API_KEY=sk-... "
-                "Obtenha em https://platform.openai.com/api-keys"
+                "Azure OpenAI não configurado para Text-to-SQL. "
+                "Defina no .env (ou no painel do Hostinger): "
+                "AZURE_OPENAI_API_KEY=..., "
+                "AZURE_OPENAI_ENDPOINT=https://SEU-RECURSO.openai.azure.com, "
+                "AZURE_OPENAI_DEPLOYMENT=gpt-4o."
             )
 
-        model_name = model_name or settings.openai_model
+        deployment = model_name or settings.azure_openai_deployment
 
         db = self._build_db(allowed_tables)
 
-        # Force temperature=0 para SQL determinístico
-        model = ChatOpenAI(
-            model=model_name,
+        # Force temperature=0 para SQL determinístico.
+        model = AzureChatOpenAI(
+            azure_deployment=deployment,
+            api_version=settings.azure_openai_api_version,
+            azure_endpoint=endpoint,
+            api_key=api_key,
             temperature=0,
             max_tokens=4096,
-            api_key=api_key,
         )
 
         toolkit = SQLDatabaseToolkit(db=db, llm=model)
@@ -186,7 +191,7 @@ class Text2SqlService:
         e usuário logado). Se vazios, nenhuma restrição extra é injetada.
         """
         from app.config import get_settings
-        model_used_str = get_settings().openai_model
+        model_used_str = get_settings().azure_openai_deployment
 
         if not question or not question.strip():
             raise ValueError("pergunta vazia")
@@ -323,8 +328,8 @@ class Text2SqlService:
                 if isinstance(meta, dict):
                     tokens_in += meta.get("input_tokens", 0) or meta.get("prompt_tokens", 0) or 0
                     tokens_out += meta.get("output_tokens", 0) or meta.get("completion_tokens", 0) or 0
-            # estimativa GPT-4.1: $2/M input, $8/M output
-            cost = (tokens_in / 1_000_000) * 2.0 + (tokens_out / 1_000_000) * 8.0
+            # estimativa gpt-4o no Azure: $2.5/M input, $10/M output (out 2025)
+            cost = (tokens_in / 1_000_000) * 2.5 + (tokens_out / 1_000_000) * 10.0
         except Exception:
             pass
 

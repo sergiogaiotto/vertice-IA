@@ -29,7 +29,7 @@ class Settings(BaseSettings):
     # Aceita tanto DSN puro (postgresql://user:pass@host:port/db) quanto a
     # forma SQLAlchemy (postgresql+asyncpg://...). O método `pg_dsn` normaliza
     # para o formato esperado por asyncpg (sem o sufixo +asyncpg).
-    database_url: str = "postgresql://vertice:vertice@localhost:5432/vertice"
+    database_url: str = "postgresql://vertice:vertice@localhost:5432/vertice-ia"
 
     # Pool de conexões — calibrado para throughput.
     # min_size: conexões "warm" mantidas no pool (latência baixa em pico)
@@ -44,14 +44,18 @@ class Settings(BaseSettings):
     pg_statement_cache_size: int = 1024                       # cache de prepared statements por conexão
 
     # Auth
+    # Bootstrap do primeiro usuário: NÃO há credenciais default. Quando a
+    # tabela `users` está vazia, a primeira submissão em /login (qualquer
+    # username/senha que o operador escolher) cria o usuário ROOT.
+    # Fluxo em app/api/routers/pages.py:login_submit.
     jwt_algorithm: str = "HS256"
     jwt_expires_minutes: int = 480
-    admin_bootstrap_user: str = "admin"
-    admin_bootstrap_password: str = "vertice2026"
 
-    # LLMs
-    openai_api_key: str = ""
-    openai_model: str = "gpt-4.1"
+    # LLMs — Azure OpenAI (gpt-4o)
+    azure_openai_api_key: str = ""
+    azure_openai_endpoint: str = ""           # ex: https://meu-recurso.openai.azure.com
+    azure_openai_api_version: str = "2024-08-01-preview"
+    azure_openai_deployment: str = "gpt-4o"   # nome do deployment no Azure (usado como model)
 
     maritaca_api_key: str = ""
     maritaca_model: str = "sabia-4"
@@ -63,7 +67,7 @@ class Settings(BaseSettings):
 
     # Router
     router_default_model: str = "sabia-4"
-    router_fallback_model: str = "gpt-4.1"
+    router_fallback_model: str = "gpt-4o"
     router_cheap_model: str = "gaia-4b"
 
     # Observability
