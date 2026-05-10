@@ -99,6 +99,43 @@ def _is_analista(user: User) -> bool:
     return any(r.startswith("analista") for r in (user.roles or []))
 
 
+async def _strip_foreign_cards(
+    state: list, visibility_repo, owner_id: str
+) -> tuple[list, list[str]]:
+    """Remove do ``state`` cards cujo UID já pertence a outro dono no sidecar.
+
+    Defesa em profundidade contra leak via localStorage compartilhado/edição
+    manual/cliente desatualizado. Devolve (state_filtrado, uids_removidos).
+    Preserva groups e cards legítimos (incluindo UIDs novos que ainda não
+    estão no sidecar — esses entram como novos via sync_owner_cards).
+    """
+    uids: set[str] = set()
+    for group in (state or []):
+        if not isinstance(group, dict):
+            continue
+        for card in (group.get("cards") or []):
+            if isinstance(card, dict) and card.get("uid"):
+                uids.add(card["uid"])
+    if not uids:
+        return state, []
+
+    foreign = await visibility_repo.list_foreign_uids(uids, owner_id)
+    if not foreign:
+        return state, []
+
+    cleaned = []
+    for group in state:
+        if not isinstance(group, dict):
+            cleaned.append(group)
+            continue
+        new_cards = [
+            c for c in (group.get("cards") or [])
+            if not (isinstance(c, dict) and c.get("uid") in foreign)
+        ]
+        cleaned.append({**group, "cards": new_cards})
+    return cleaned, sorted(foreign)
+
+
 def _extract_cards_for_sync(state: list) -> list[dict]:
     """Achata `state = [{id, title, cards:[...]}, ...]` para upsert no
     radar_card_visibility. Inclui o card_json snapshot completo.
@@ -166,10 +203,13 @@ async def get_radar_state(
             elif "visibility" not in card:
                 card["visibility"] = "private"
 
+    # `updated_at` vem do Postgres como `datetime` (codec timestamptz). O
+    # schema espera string ISO — converte aqui para não estourar Pydantic.
+    ts = record["updated_at"]
     return RadarStateOut(
         state=state_arr,
         version=record["version"],
-        updated_at=record["updated_at"],
+        updated_at=ts.isoformat() if hasattr(ts, "isoformat") else ts,
     )
 
 
@@ -185,8 +225,23 @@ async def put_radar_state(
     sumiram). Cards novos entram como `private` por default.
     """
     import json as _json
+
+    # Defesa em profundidade: filtra UIDs que já pertencem a outro dono
+    # ANTES de serializar/salvar. Protege contra localStorage residual de
+    # outro usuário no mesmo browser ou edição manual do cliente.
+    filtered_state, foreign_uids = await _strip_foreign_cards(
+        body.state, visibility_repo, str(user.id)
+    )
+    if foreign_uids:
+        import logging
+        logging.warning(
+            "put_radar_state: removidos %d UID(s) de outros donos do "
+            "state de user=%s: %s",
+            len(foreign_uids), user.id, foreign_uids,
+        )
+
     try:
-        state_json = _json.dumps(body.state, ensure_ascii=False)
+        state_json = _json.dumps(filtered_state, ensure_ascii=False)
     except (TypeError, ValueError) as e:
         raise HTTPException(400, f"state não é JSON-serializável: {e}")
 
@@ -206,9 +261,11 @@ async def put_radar_state(
         )
     # Sync sidecar de visibility — best-effort: não falha o PUT do estado se
     # o sync der erro (loga, segue). Em produção, qualquer divergência seria
-    # reconciliada no próximo PUT.
+    # reconciliada no próximo PUT. Usa o state JÁ FILTRADO (sem UIDs alheios)
+    # para evitar que o sync tente upsertar cards de outro dono — o upsert
+    # rejeitaria, mas pular reduz queries.
     try:
-        cards = _extract_cards_for_sync(body.state)
+        cards = _extract_cards_for_sync(filtered_state)
         await visibility_repo.sync_owner_cards(
             owner_id=str(user.id),
             owner_username=user.username,
