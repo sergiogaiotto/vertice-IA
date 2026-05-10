@@ -75,3 +75,46 @@ class PgRadarStateRepository:
                 "DELETE FROM radar_user_state WHERE user_id = $1",
                 user_id,
             )
+
+    async def get_preferences(self, user_id: str) -> dict:
+        """Preferências por-usuário (cross-device). Defaults a {} se não tiver
+        linha. Não cria a linha por leitura — o `set_preferences` faz upsert."""
+        async with connect() as db:
+            value = await db.fetchval(
+                "SELECT preferences FROM radar_user_state WHERE user_id = $1",
+                user_id,
+            )
+            return value or {}
+
+    async def set_preferences(self, user_id: str, patch: dict) -> dict:
+        """Merge-update das preferências: ``patch`` sobrescreve chaves
+        existentes; chaves ausentes são preservadas. ``null`` na chave a remove.
+
+        Faz upsert — cria a linha em ``radar_user_state`` com state_json vazio
+        se ainda não existir, para que preferências persistam mesmo antes do
+        primeiro save de state. Devolve o dict final pós-merge.
+        """
+        async with connect() as db:
+            async with db.transaction():
+                current = await db.fetchval(
+                    "SELECT preferences FROM radar_user_state WHERE user_id = $1",
+                    user_id,
+                )
+                merged = dict(current or {})
+                for k, v in (patch or {}).items():
+                    if v is None:
+                        merged.pop(k, None)
+                    else:
+                        merged[k] = v
+                await db.execute(
+                    """
+                    INSERT INTO radar_user_state (user_id, state_json, version,
+                                                  preferences, updated_at)
+                    VALUES ($1, '[]', 1, $2::jsonb, NOW())
+                    ON CONFLICT (user_id) DO UPDATE SET
+                        preferences = EXCLUDED.preferences,
+                        updated_at  = NOW()
+                    """,
+                    user_id, merged,
+                )
+                return merged

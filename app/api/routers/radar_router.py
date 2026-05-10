@@ -233,6 +233,40 @@ async def delete_radar_state(
 
 
 # ============================================================
+# Preferências por-usuário (cross-device)
+# ============================================================
+# Antes vinham do localStorage do browser e ficavam presas ao device.
+# Agora persistem no Postgres (coluna `radar_user_state.preferences` JSONB).
+# Chaves esperadas pelo front:
+#   - lastSelectedCase  : nº do caso a re-abrir no F5 sem URL explícita
+#   - lastAutoRunTx     : transaction id da última auto-execução de módulos
+#                         (dedup contra duplo-disparo em F5)
+#   - lastChatCase      : último caso pra detectar troca e limpar conversa
+
+class RadarPreferences(BaseModel):
+    model_config = ConfigDict(extra="allow")  # tolera chaves novas sem migração
+
+
+@router.get("/preferences", response_model=dict)
+async def get_radar_preferences(
+    repo=Depends(get_radar_state_repo),
+    user: User = Depends(require_user),
+):
+    return await repo.get_preferences(str(user.id))
+
+
+@router.put("/preferences", response_model=dict)
+async def set_radar_preferences(
+    body: dict,
+    repo=Depends(get_radar_state_repo),
+    user: User = Depends(require_user),
+):
+    """Merge-update das preferências: só atualiza as chaves enviadas.
+    Use ``null`` no valor para REMOVER uma chave."""
+    return await repo.set_preferences(str(user.id), body or {})
+
+
+# ============================================================
 # Visibilidade dos cards — gating por role
 # ============================================================
 

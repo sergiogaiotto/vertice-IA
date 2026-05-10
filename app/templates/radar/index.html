@@ -1884,6 +1884,12 @@ function radarApp() {
     sharedCards: [],
     sharedCardsLoading: false,
 
+    // Preferências por-usuário cross-device (lastSelectedCase, lastAutoRunTx,
+    // lastChatCase). Carregadas via GET /api/radar/preferences no início do
+    // init() e gravadas em PUT (merge) via this._setPref(). Antes ficavam em
+    // localStorage; agora persistem no Postgres (radar_user_state.preferences).
+    _prefs: {},
+
     // case dropdown
     caseDropdownOpen: false,
     caseFilter: '',
@@ -2027,13 +2033,41 @@ function radarApp() {
       value_loading: false,
     },
 
+    // Carrega preferências do servidor (cross-device). Falha silenciosa
+    // mantém `_prefs = {}` para que o resto do init continue funcional.
+    async _loadPrefs() {
+      try {
+        const r = await fetch('/api/radar/preferences', { credentials: 'same-origin' });
+        if (r.ok) this._prefs = (await r.json()) || {};
+      } catch (_) { /* offline: segue com prefs vazias */ }
+    },
+
+    // Grava UMA chave de preferência. Fire-and-forget — não bloqueia UI.
+    // Atualiza o cache local imediatamente para leituras subsequentes.
+    // Use `value === null` para REMOVER a chave.
+    _setPref(key, value) {
+      if (value === null || value === undefined) {
+        delete this._prefs[key];
+      } else {
+        this._prefs[key] = value;
+      }
+      fetch('/api/radar/preferences', {
+        method: 'PUT',
+        credentials: 'same-origin',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ [key]: value === undefined ? null : value }),
+      }).catch(() => { /* swallow: cache local já refletiu, retry no próximo set */ });
+    },
+
     async init() {
-      // Restaura última seleção: se a URL é /radar (sem caso) e existe registro
-      // posicionado em localStorage, redireciona para /radar/{lastCase}.
+      // PRIMEIRO carrega preferências — todo o restante do init depende delas.
+      await this._loadPrefs();
+
+      // Restaura última seleção: se a URL é /radar (sem caso) e existe
+      // registro persistido (servidor), redireciona para /radar/{lastCase}.
       // Isso só roda se o servidor não recebeu ?case=... (caseNumber vazio).
-      const lastCaseKey = 'radar:lastSelectedCase';
       if (!caseNumber) {
-        const last = localStorage.getItem(lastCaseKey);
+        const last = this._prefs.lastSelectedCase;
         if (last) {
           // valida que o caso ainda existe antes de redirecionar (evita loop em caso excluído)
           try {
@@ -2043,13 +2077,13 @@ function radarApp() {
               return;
             } else {
               // caso não existe mais — limpa e segue mostrando "selecione..."
-              localStorage.removeItem(lastCaseKey);
+              this._setPref('lastSelectedCase', null);
             }
           } catch (_) { /* offline ou erro: fica em "selecione..." */ }
         }
       } else {
         // o usuário acabou de posicionar um caso (URL com /radar/{n}) — persiste
-        localStorage.setItem(lastCaseKey, caseNumber);
+        this._setPref('lastSelectedCase', caseNumber);
       }
 
       // sempre carrega — funciona mesmo sem caso/transcrição selecionada.
@@ -2126,15 +2160,14 @@ function radarApp() {
         return;
       }
 
-      const lastTxKey = 'radar:lastAutoRunTx';
-      const lastTx = localStorage.getItem(lastTxKey);
+      const lastTx = this._prefs.lastAutoRunTx;
       if (lastTx === transactionId) {
         this.autoRunSkippedReason = 'same-context';
         return;
       }
 
       // marca ANTES de disparar para evitar dupla execução em F5 rápidos
-      localStorage.setItem(lastTxKey, transactionId);
+      this._setPref('lastAutoRunTx', transactionId);
 
       let executedModules = 0;
       let executedCharts = 0;
@@ -2485,7 +2518,7 @@ function radarApp() {
       });
       if (cleared > 0) {
         // invalida o cache de tx para que ao posicionar caso, auto-run dispare
-        localStorage.removeItem('radar:lastAutoRunTx');
+        this._setPref('lastAutoRunTx', null);
         this.saveState();
       }
     },
@@ -4118,13 +4151,12 @@ function radarApp() {
       //    primeiro paint. Sem isso, a UI mostraria a conversa antiga por
       //    alguns ms até o auto-run rodar (e em alguns casos o auto-run nem
       //    chega a rodar — F5 mesmo caso = same-context skip).
-      const lastChatCaseKey = 'radar:lastChatCase';
-      const lastChatCase = localStorage.getItem(lastChatCaseKey) || '';
+      const lastChatCase = this._prefs.lastChatCase || '';
       this._caseChangedSinceLastLoad = (lastChatCase !== (caseNumber || ''));
       // Já marca o novo caso para evitar duplo-clear em saves intermediários.
       // O clear efetivo só acontece quando _hydrateGroups recebe a flag.
       if (this._caseChangedSinceLastLoad) {
-        localStorage.setItem(lastChatCaseKey, caseNumber || '');
+        this._setPref('lastChatCase', caseNumber || '');
       }
 
       // 1) Pinta imediatamente do localStorage (cache offline) — UX instantânea

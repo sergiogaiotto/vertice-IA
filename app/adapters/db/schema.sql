@@ -421,6 +421,11 @@ CREATE TABLE IF NOT EXISTS radar_user_state (
     version    INTEGER NOT NULL DEFAULT 1,
     updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
+-- Preferências por-usuário do Radar (last case, last auto-run tx, last chat
+-- case). Antes ficavam só em localStorage do browser — agora persistem cross-
+-- device. Mantém o blob opaco; o servidor só armazena.
+ALTER TABLE radar_user_state
+    ADD COLUMN IF NOT EXISTS preferences JSONB NOT NULL DEFAULT '{}'::jsonb;
 
 -- ===== Radar Voz do Cliente — visibilidade por card =====
 -- owner_id/created_by_id como TEXT pelo mesmo motivo de `radar_user_state`
