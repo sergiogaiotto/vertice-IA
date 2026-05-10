@@ -423,6 +423,54 @@ async def test_radar_preferences_isolated_por_usuario(client: AsyncClient):
     assert r_b.json() == {"lastSelectedCase": "B"}
 
 
+# ---- Actor tracking em mudança de DONO (admin/cards/{uid}/owner) ---------
+
+@pytest.mark.asyncio
+async def test_change_owner_registra_actor(client: AsyncClient):
+    """Transferência administrativa de dono grava actor_id/username/at.
+
+    Simétrico ao tracking de visibility — fecha gap de auditoria onde
+    /admin/cards-em-tela mudava o dono sem registrar quem.
+    """
+    from app.adapters.db.repositories.radar_card_visibility_repo import (
+        PgRadarCardVisibilityRepository,
+    )
+
+    await init_db()
+    auth = AuthService(PgUserRepository())
+    admin = await auth.register("owner_admin", "vertice2026", roles=["admin"])
+    old_owner = await auth.register("owner_orig", "vertice2026", roles=["analista_n3"])
+    new_owner = await auth.register("owner_dest", "vertice2026", roles=["analista_n3"])
+    token = auth.issue_token(admin)
+
+    repo = PgRadarCardVisibilityRepository()
+    card_uid = "uid-change-owner-test"
+    await repo.upsert(
+        card_uid=card_uid,
+        owner_id=str(old_owner.id), owner_username=old_owner.username,
+        group_id=None, group_title=None,
+        module_id=None, module_name=None, module_description=None,
+        visibility="private", card_json={"uid": card_uid},
+    )
+
+    r = await client.put(
+        f"/api/radar/admin/cards/{card_uid}/owner",
+        json={"new_owner_username": new_owner.username},
+        headers=_h(token),
+    )
+    assert r.status_code == 200, r.text
+
+    record = await repo.get(card_uid)
+    assert record["owner_id"] == str(new_owner.id)
+    assert record["owner_username"] == new_owner.username
+    # created_by preservado
+    assert record["created_by_id"] == str(old_owner.id)
+    # actor da transferência
+    assert record["owner_changed_by_id"] == str(admin.id)
+    assert record["owner_changed_by_username"] == admin.username
+    assert record["owner_changed_at"] is not None
+
+
 # ---- Actor tracking em mudanças de visibility (PR-2) --------------------
 
 @pytest.mark.asyncio

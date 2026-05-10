@@ -27,6 +27,7 @@ class _SkillSpecWarningFilter(logging.Filter):
 
 logging.getLogger("deepagents.middleware.skills").addFilter(_SkillSpecWarningFilter())
 
+import asyncio
 from contextlib import asynccontextmanager
 from pathlib import Path
 
@@ -60,14 +61,49 @@ settings = get_settings()
 BASE_DIR = Path(__file__).resolve().parent
 
 
+_ARTIFACT_GC_INTERVAL_SECONDS = 600  # 10 min
+
+
+async def _artifact_gc_loop():
+    """Background loop que apaga artefatos expirados periodicamente.
+
+    Sem isso, a tabela `artifacts` cresce sem bound (o TTL é enforced no
+    SELECT, mas o DELETE só ocorre quando `gc()` é chamado). O loop é
+    cancelado no shutdown.
+    """
+    from app.core.services.artifact_store import get_artifact_store
+
+    store = get_artifact_store()
+    while True:
+        try:
+            await asyncio.sleep(_ARTIFACT_GC_INTERVAL_SECONDS)
+            deleted = await store.gc()
+            if deleted:
+                logging.getLogger("vertice").info(
+                    "artifact_gc: removidos %d artefato(s) expirado(s)", deleted
+                )
+        except asyncio.CancelledError:
+            raise
+        except Exception:  # noqa: BLE001
+            logging.getLogger("vertice").exception(
+                "artifact_gc loop falhou (continua tentando)"
+            )
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     # bootstrap: garante schema, seed, módulos default e taxonomia churn.
     # `init_db()` também inicializa o pool asyncpg.
     await init_db()
+    gc_task = asyncio.create_task(_artifact_gc_loop(), name="artifact_gc")
     try:
         yield
     finally:
+        gc_task.cancel()
+        try:
+            await gc_task
+        except asyncio.CancelledError:
+            pass
         # Fecha o pool — espera conexões ativas drenarem (max 30s default).
         await close_pool()
 

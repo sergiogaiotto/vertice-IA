@@ -24,6 +24,7 @@ class PgRadarCardVisibilityRepository:
         "visibility, previous_visibility, card_json, feature, "
         "visibility_changed_by_id, visibility_changed_by_username, "
         "visibility_changed_at, "
+        "owner_changed_by_id, owner_changed_by_username, owner_changed_at, "
         "created_at, updated_at"
     )
 
@@ -206,15 +207,26 @@ class PgRadarCardVisibilityRepository:
         card_uid: str,
         new_owner_id: str,
         new_owner_username: str | None,
+        actor_id: str | None = None,
+        actor_username: str | None = None,
     ) -> bool:
-        """Altera o dono atual; preserva created_by_*."""
+        """Altera o dono atual; preserva created_by_*.
+
+        ``actor_id``/``actor_username`` registram quem fez o ato administrativo
+        (admin/supervisor) — simétrico ao tracking de mudança de visibility.
+        NULL é aceito por compat com callers antigos.
+        """
         async with connect() as db:
             result = await db.execute(
                 "UPDATE radar_card_visibility "
                 "SET owner_id = $1, owner_username = $2, "
+                "    owner_changed_by_id = $3, "
+                "    owner_changed_by_username = $4, "
+                "    owner_changed_at = NOW(), "
                 "    updated_at = NOW() "
-                "WHERE card_uid = $3",
-                new_owner_id, new_owner_username, card_uid,
+                "WHERE card_uid = $5",
+                new_owner_id, new_owner_username,
+                actor_id, actor_username, card_uid,
             )
             return result.endswith(" 1")
 
@@ -287,6 +299,9 @@ class PgRadarCardVisibilityRepository:
             "visibility_changed_by_id":       row["visibility_changed_by_id"],
             "visibility_changed_by_username": row["visibility_changed_by_username"],
             "visibility_changed_at":          row["visibility_changed_at"],
+            "owner_changed_by_id":            row["owner_changed_by_id"],
+            "owner_changed_by_username":      row["owner_changed_by_username"],
+            "owner_changed_at":               row["owner_changed_at"],
             "created_at":          row["created_at"],
             "updated_at":          row["updated_at"],
         }
