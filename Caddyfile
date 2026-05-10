@@ -1,0 +1,96 @@
+# Vértice — Caddy reverse proxy
+#
+# Caddy emite e renova certificados Let's Encrypt automaticamente. Não
+# precisa Certbot, cron ou config manual de TLS.
+#
+# Variáveis vêm do compose (via env_file). DOMAIN e ACME_EMAIL são
+# obrigatórios — Caddy não sobe sem elas.
+
+# admin endpoint só localhost (saúde do compose-healthcheck)
+{
+	email {$ACME_EMAIL}
+	# log JSON estruturado para fácil ingestão (Loki/Datadog/etc.)
+	log default {
+		output stdout
+		format json
+		level INFO
+	}
+	# servers: HTTP/3 ligado por padrão em Caddy 2.x
+	servers {
+		protocols h1 h2 h3
+	}
+}
+
+# ---------------------------------------------------------------- Vértice
+{$DOMAIN} {
+	# Redirect www → apex (descomentar se usa www.dominio + apex)
+	# @www host www.{$DOMAIN}
+	# redir @www https://{$DOMAIN}{uri}
+
+	# --- Logging ---
+	log {
+		output stdout
+		format json
+	}
+
+	# --- Compressão ---
+	encode zstd gzip
+
+	# --- Segurança (headers HTTP) ---
+	header {
+		# HSTS — força HTTPS por 1 ano em browsers
+		Strict-Transport-Security "max-age=31536000; includeSubDomains"
+		# Anti-clickjacking
+		X-Frame-Options "SAMEORIGIN"
+		# Anti-MIME sniffing
+		X-Content-Type-Options "nosniff"
+		# Referrer mínimo
+		Referrer-Policy "strict-origin-when-cross-origin"
+		# Permissões mínimas (geo, mic, cam desabilitados)
+		Permissions-Policy "geolocation=(), microphone=(), camera=(), payment=()"
+		# Esconde versão
+		-Server
+		-X-Powered-By
+	}
+
+	# --- Health check direto (não passa pelo app, evita ruído nos logs) ---
+	respond /caddy-health 200 {
+		body "ok"
+		close
+	}
+
+	# --- Static files servidos direto pelo Caddy (mais rápido que via app) ---
+	# OBS: como o /static fica DENTRO do container do app, o Caddy precisa
+	# proxiar — não dá para montar volume cruzado sem refatorar. Mantemos
+	# proxy mas com cache de longo prazo via header.
+	@static path /static/*
+	header @static {
+		Cache-Control "public, max-age=2592000, immutable"
+	}
+
+	# --- Limites de upload (XLSX/JSON do BKO Inteligente) ---
+	request_body {
+		max_size 50MB
+	}
+
+	# --- Reverse proxy para a app ---
+	reverse_proxy vertice:8000 {
+		# Headers padrão para o app saber o protocolo/host original.
+		header_up X-Real-IP {remote_host}
+		header_up X-Forwarded-For {remote_host}
+		header_up X-Forwarded-Proto {scheme}
+		header_up X-Forwarded-Host {host}
+
+		# Timeouts para uploads/processos longos (LLM calls, exports DOCX/PPTX).
+		# transport http {
+		# 	dial_timeout 10s
+		# 	response_header_timeout 600s
+		# }
+
+		# Healthcheck ativo: Caddy descarta backend se falhar.
+		health_uri /health
+		health_interval 30s
+		health_timeout 5s
+		health_status 2xx
+	}
+}

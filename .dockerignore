@@ -1,0 +1,65 @@
+# Vértice — .dockerignore
+# Reduz contexto enviado ao daemon e mantém a imagem enxuta.
+
+# VCS / IDE / OS
+.git
+.gitignore
+.gitattributes
+.github
+.idea
+.vscode
+.DS_Store
+Thumbs.db
+
+# Worktrees gerados pelo Claude Code
+.claude
+
+# Python caches & venvs
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+*.egg-info/
+.eggs/
+.venv/
+venv/
+env/
+ENV/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.tox/
+.coverage
+.coverage.*
+htmlcov/
+
+# Build artefacts & instalações temporárias
+build/
+dist/
+*.whl
+
+# Dados locais (volume montado via compose; não vai dentro da imagem)
+data/
+backups/
+
+# Docs grandes que não precisam dentro da imagem
+sdd.md
+*.png
+*.jpg
+*.jpeg
+*.gif
+*.svg
+docs/screenshots/
+
+# Configs de desenvolvimento
+.env
+.env.local
+.env.*.local
+
+# Caddy local data (se gerado por dev)
+caddy_data/
+caddy_config/
+
+# Logs locais
+*.log
+logs/

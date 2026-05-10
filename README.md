@@ -145,12 +145,31 @@ Layout de três colunas (referência: `https://agente-inteligencia.onrender.com`
 
 ## 10. Deploy
 
+### Dev local
+
 ```bash
-docker build -t vertice:1.0.0 .
-docker run -p 8000:8000 --env-file .env vertice:1.0.0
+docker compose up --build      # Postgres + app
 ```
 
-Para Kubernetes (AI Mesh), aplique os manifestos em `deploy/k8s/` (não incluído nesta versão; usar Helm chart genérico de FastAPI + Istio sidecar para mTLS).
+### Produção (VPS Hostinger ou similar)
+
+Stack pronta com Caddy (TLS automático Let's Encrypt) + app + Postgres +
+backup diário, em [docs/DEPLOY-HOSTINGER.md](docs/DEPLOY-HOSTINGER.md).
+Resumo:
+
+```bash
+# na VPS, como root:
+curl -fsSL https://raw.githubusercontent.com/SEU_USER/SEU_REPO/main/scripts/install_docker.sh \
+     -o install_docker.sh && chmod +x install_docker.sh && ./install_docker.sh
+
+# como usuário deploy:
+git clone https://github.com/SEU_USER/SEU_REPO.git vertice && cd vertice
+cp .env.production.example .env.production && chmod 600 .env.production
+nano .env.production               # preencher TROCAR_*
+./scripts/deploy.sh
+```
+
+Para Kubernetes, use os manifestos `app/adapters/db/schema.sql` + `seed.sql` direto e crie um Helm chart genérico (FastAPI + Postgres operator). Não há manifestos K8s incluídos nesta versão.
 
 ## 11. Testes
 
