@@ -449,6 +449,15 @@ CREATE INDEX IF NOT EXISTS idx_radar_card_vis_owner
 CREATE INDEX IF NOT EXISTS idx_radar_card_vis_visibility
     ON radar_card_visibility(visibility);
 
+-- Trilha de auditoria do último change de visibility — quem mudou e quando.
+-- Para bases já existentes (ADD COLUMN IF NOT EXISTS é idempotente em PG ≥ 9.6).
+ALTER TABLE radar_card_visibility
+    ADD COLUMN IF NOT EXISTS visibility_changed_by_id TEXT;
+ALTER TABLE radar_card_visibility
+    ADD COLUMN IF NOT EXISTS visibility_changed_by_username TEXT;
+ALTER TABLE radar_card_visibility
+    ADD COLUMN IF NOT EXISTS visibility_changed_at TIMESTAMPTZ;
+
 -- Failsafe inbox
 CREATE TABLE IF NOT EXISTS failsafe_actions (
     id           UUID PRIMARY KEY,

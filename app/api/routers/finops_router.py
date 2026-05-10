@@ -13,7 +13,6 @@ from app.api.deps import (
     get_finops_policy_service,
     get_finops_service,
     require_roles,
-    require_user,
 )
 from app.api.schemas.finops import (
     AggregateRow,
@@ -41,6 +40,10 @@ from app.core.services.finops_service import (
 
 router = APIRouter()
 
+# Custos, orçamentos, políticas e recomendação de roteamento são sensíveis —
+# espelha o gate da página /finops em pages.py (admin/supervisor/finops).
+_FINOPS_ROLES = ("admin", "supervisor", "finops")
+
 
 # ---------------------------------------------------------------------------
 # Sumário e dimensões (chargeback/showback)
@@ -50,7 +53,7 @@ router = APIRouter()
 @router.get("/summary", response_model=FinOpsSummary)
 async def summary(
     svc: FinOpsService = Depends(get_finops_service),
-    user: User = Depends(require_user),
+    user: User = Depends(require_roles(*_FINOPS_ROLES)),
 ):
     by_module = await svc.by_module()
     by_model = await svc.by_model()
@@ -80,7 +83,7 @@ async def summary(
 async def by_dimension(
     dim: str = Query(..., description="domain|product|agent|flow|prompt_id|integration|environment|module|model"),
     svc: FinOpsService = Depends(get_finops_service),
-    user: User = Depends(require_user),
+    user: User = Depends(require_roles(*_FINOPS_ROLES)),
 ):
     """Chargeback/showback genérico — qualquer dimensão suportada pelo ledger."""
     try:
@@ -112,7 +115,7 @@ def _budget_to_out(b) -> BudgetOut:
 @router.get("/budgets", response_model=list[BudgetStatusOut])
 async def list_budgets(
     svc: FinOpsBudgetService = Depends(get_finops_budget_service),
-    user: User = Depends(require_user),
+    user: User = Depends(require_roles(*_FINOPS_ROLES)),
 ):
     statuses = await svc.evaluate_all()
     return [
@@ -131,7 +134,7 @@ async def list_budgets(
 async def create_budget(
     body: BudgetCreateRequest,
     svc: FinOpsBudgetService = Depends(get_finops_budget_service),
-    user: User = Depends(require_roles("admin", "supervisor", "finops")),
+    user: User = Depends(require_roles(*_FINOPS_ROLES)),
 ):
     try:
         b = await svc.create(
@@ -150,7 +153,7 @@ async def update_budget(
     budget_id: UUID,
     body: BudgetUpdateRequest,
     svc: FinOpsBudgetService = Depends(get_finops_budget_service),
-    user: User = Depends(require_roles("admin", "supervisor", "finops")),
+    user: User = Depends(require_roles(*_FINOPS_ROLES)),
 ):
     try:
         b = await svc.update(
@@ -168,7 +171,7 @@ async def update_budget(
 async def delete_budget(
     budget_id: UUID,
     svc: FinOpsBudgetService = Depends(get_finops_budget_service),
-    user: User = Depends(require_roles("admin", "supervisor", "finops")),
+    user: User = Depends(require_roles(*_FINOPS_ROLES)),
 ):
     try:
         await svc.delete(budget_id)
@@ -180,7 +183,7 @@ _XLSX_MIME = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
 
 
 @router.get("/budgets/template.xlsx")
-async def budgets_template(user: User = Depends(require_user)):
+async def budgets_template(user: User = Depends(require_roles(*_FINOPS_ROLES))):
     """Baixa template xlsx para preenchimento e upload em massa de orçamentos."""
     bytes_ = FinOpsBudgetService.xlsx_template()
     return Response(
@@ -194,7 +197,7 @@ async def budgets_template(user: User = Depends(require_user)):
 async def budgets_import(
     file: UploadFile = File(...),
     svc: FinOpsBudgetService = Depends(get_finops_budget_service),
-    user: User = Depends(require_roles("admin", "supervisor", "finops")),
+    user: User = Depends(require_roles(*_FINOPS_ROLES)),
 ):
     """Importa orçamentos a partir do template xlsx. Linhas inválidas são
     pulladas e devolvidas em ``errors`` — uma linha ruim não cancela as outras."""
@@ -214,7 +217,7 @@ async def budgets_import(
 
 
 @router.get("/policies/template.xlsx")
-async def policies_template(user: User = Depends(require_user)):
+async def policies_template(user: User = Depends(require_roles(*_FINOPS_ROLES))):
     """Baixa template xlsx para upload em massa de políticas de modelo."""
     bytes_ = FinOpsPolicyService.xlsx_template()
     return Response(
@@ -228,7 +231,7 @@ async def policies_template(user: User = Depends(require_user)):
 async def policies_import(
     file: UploadFile = File(...),
     svc: FinOpsPolicyService = Depends(get_finops_policy_service),
-    user: User = Depends(require_roles("admin", "supervisor", "finops")),
+    user: User = Depends(require_roles(*_FINOPS_ROLES)),
 ):
     """Importa políticas via xlsx. Política reimportada com mesmo
     ``model_name`` faz UPSERT (atualiza em vez de duplicar)."""
@@ -251,7 +254,7 @@ async def policies_import(
 async def list_alerts(
     limit: int = Query(20, ge=1, le=200),
     svc: FinOpsBudgetService = Depends(get_finops_budget_service),
-    user: User = Depends(require_user),
+    user: User = Depends(require_roles(*_FINOPS_ROLES)),
 ):
     rows = await svc.recent_alerts(limit)
     return [
@@ -286,7 +289,7 @@ def _policy_to_out(p) -> PolicyOut:
 @router.get("/policies", response_model=list[PolicyOut])
 async def list_policies(
     svc: FinOpsPolicyService = Depends(get_finops_policy_service),
-    user: User = Depends(require_user),
+    user: User = Depends(require_roles(*_FINOPS_ROLES)),
 ):
     return [_policy_to_out(p) for p in await svc.list()]
 
@@ -295,7 +298,7 @@ async def list_policies(
 async def upsert_policy(
     body: PolicyUpsertRequest,
     svc: FinOpsPolicyService = Depends(get_finops_policy_service),
-    user: User = Depends(require_roles("admin", "supervisor", "finops")),
+    user: User = Depends(require_roles(*_FINOPS_ROLES)),
 ):
     try:
         p = await svc.upsert(
@@ -314,7 +317,7 @@ async def upsert_policy(
 async def delete_policy(
     policy_id: UUID,
     svc: FinOpsPolicyService = Depends(get_finops_policy_service),
-    user: User = Depends(require_roles("admin", "supervisor", "finops")),
+    user: User = Depends(require_roles(*_FINOPS_ROLES)),
 ):
     try:
         await svc.delete(policy_id)
@@ -331,7 +334,7 @@ async def delete_policy(
 async def route_recommend(
     body: RouteRequest,
     router_svc: CostAwareRouter = Depends(get_cost_aware_router),
-    user: User = Depends(require_user),
+    user: User = Depends(require_roles(*_FINOPS_ROLES)),
 ):
     """Recebe candidatos (modelo + custo estimado) e devolve a recomendação
     sob políticas e orçamentos vigentes. Idempotente — não consome ledger."""

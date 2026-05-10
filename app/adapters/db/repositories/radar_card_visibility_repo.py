@@ -22,6 +22,8 @@ class PgRadarCardVisibilityRepository:
         "created_by_id, created_by_username, "
         "group_id, group_title, module_id, module_name, module_description, "
         "visibility, previous_visibility, card_json, feature, "
+        "visibility_changed_by_id, visibility_changed_by_username, "
+        "visibility_changed_at, "
         "created_at, updated_at"
     )
 
@@ -119,12 +121,21 @@ class PgRadarCardVisibilityRepository:
             )
 
     async def update_visibility(
-        self, card_uid: str, visibility: str
+        self,
+        card_uid: str,
+        visibility: str,
+        actor_id: str | None = None,
+        actor_username: str | None = None,
     ) -> bool:
         """Atualiza visibility e armazena a anterior em previous_visibility.
 
         Faz a transição atômica em uma única UPDATE com expressão que captura
         o valor anterior. Se o novo == atual, no-op.
+
+        ``actor_id``/``actor_username`` registram quem fez a mudança — ato
+        administrativo sensível (admin/supervisor pode mudar visibility de
+        cards alheios via /admin/cards-em-tela). NULL é aceito por compat,
+        mas todos os callers de produção devem preencher.
         """
         if visibility not in VALID_VISIBILITY:
             return False
@@ -142,9 +153,12 @@ class PgRadarCardVisibilityRepository:
             result = await db.execute(
                 "UPDATE radar_card_visibility "
                 "SET visibility = $1, previous_visibility = $2, "
+                "    visibility_changed_by_id = $3, "
+                "    visibility_changed_by_username = $4, "
+                "    visibility_changed_at = NOW(), "
                 "    updated_at = NOW() "
-                "WHERE card_uid = $3",
-                visibility, current, card_uid,
+                "WHERE card_uid = $5",
+                visibility, current, actor_id, actor_username, card_uid,
             )
             # `UPDATE 1` se conseguiu, `UPDATE 0` se não.
             return result.endswith(" 1")
@@ -232,6 +246,9 @@ class PgRadarCardVisibilityRepository:
             "previous_visibility": row["previous_visibility"],
             "card_json":           row["card_json"],
             "feature":             row["feature"],
+            "visibility_changed_by_id":       row["visibility_changed_by_id"],
+            "visibility_changed_by_username": row["visibility_changed_by_username"],
+            "visibility_changed_at":          row["visibility_changed_at"],
             "created_at":          row["created_at"],
             "updated_at":          row["updated_at"],
         }

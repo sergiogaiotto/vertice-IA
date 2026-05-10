@@ -279,7 +279,12 @@ async def set_card_visibility(
                 403, "apenas admin/supervisor pode tornar um card público"
             )
 
-    ok = await visibility_repo.update_visibility(card_uid, new_vis)
+    ok = await visibility_repo.update_visibility(
+        card_uid,
+        new_vis,
+        actor_id=str(user.id),
+        actor_username=user.username,
+    )
     if not ok:
         raise HTTPException(500, "falha ao atualizar visibility")
     return {"ok": True, "card_uid": card_uid, "visibility": new_vis}
