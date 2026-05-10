@@ -100,14 +100,21 @@ if [ -f /root/.ssh/authorized_keys ]; then
 fi
 
 # ---------------------------------------------------------------- Firewall
-log "configurando UFW (22, 80, 443)..."
+# Portas:
+#   22       SSH
+#   80       HTTP — necessário para ACME HTTP-01 challenge (Let's Encrypt)
+#            + redirect 308 para a porta HTTPS pública
+#   8010     HTTPS pública do Vértice (configurável em .env.production
+#            via PUBLIC_HTTPS_PORT). Aberta também em UDP para HTTP/3.
+PUBLIC_HTTPS_PORT="${PUBLIC_HTTPS_PORT:-8010}"
+log "configurando UFW (22, 80, ${PUBLIC_HTTPS_PORT})..."
 ufw --force reset >/dev/null
 ufw default deny incoming
 ufw default allow outgoing
 ufw allow 22/tcp comment 'SSH'
-ufw allow 80/tcp comment 'HTTP'
-ufw allow 443/tcp comment 'HTTPS'
-ufw allow 443/udp comment 'HTTP/3 QUIC'
+ufw allow 80/tcp comment 'HTTP (ACME challenge + redirect)'
+ufw allow "${PUBLIC_HTTPS_PORT}/tcp" comment 'HTTPS Vértice'
+ufw allow "${PUBLIC_HTTPS_PORT}/udp" comment 'HTTP/3 QUIC'
 ufw --force enable
 ufw status verbose | sed 's/^/  /'
 

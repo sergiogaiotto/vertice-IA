@@ -3,10 +3,18 @@
 # Caddy emite e renova certificados Let's Encrypt automaticamente. Não
 # precisa Certbot, cron ou config manual de TLS.
 #
-# Variáveis vêm do compose (via env_file). DOMAIN e ACME_EMAIL são
-# obrigatórios — Caddy não sobe sem elas.
+# Variáveis vêm do compose (via env_file). DOMAIN, ACME_EMAIL e
+# PUBLIC_HTTPS_PORT são obrigatórias.
+#
+# Topologia de portas:
+#   :80              → ACME HTTP-01 challenge + redirect para HTTPS:PUBLIC_HTTPS_PORT
+#   :PUBLIC_HTTPS_PORT (default 8010) → HTTPS público (TLS automático)
+#
+# IMPORTANTE: a porta 80 NÃO publica conteúdo da app. Ela só serve para o
+# Let's Encrypt validar o domínio e redirecionar visitantes para HTTPS.
+# Se você fechar a 80 no firewall, o certificado não é emitido/renovado
+# (a menos que use DNS-01 challenge — fora deste setup).
 
-# admin endpoint só localhost (saúde do compose-healthcheck)
 {
 	email {$ACME_EMAIL}
 	# log JSON estruturado para fácil ingestão (Loki/Datadog/etc.)
@@ -15,17 +23,28 @@
 		format json
 		level INFO
 	}
-	# servers: HTTP/3 ligado por padrão em Caddy 2.x
+	# servers: HTTP/2 + HTTP/3 (QUIC sobre UDP).
 	servers {
 		protocols h1 h2 h3
 	}
 }
 
-# ---------------------------------------------------------------- Vértice
-{$DOMAIN} {
-	# Redirect www → apex (descomentar se usa www.dominio + apex)
-	# @www host www.{$DOMAIN}
-	# redir @www https://{$DOMAIN}{uri}
+# ---------------------------------------------------------------- Redirect HTTP → HTTPS
+# Tudo que chegar na 80 (incluindo ACME) é capturado por Caddy:
+#  - /.well-known/acme-challenge/* é tratado internamente para emissão de cert
+#  - qualquer outro path redireciona 308 para a URL canônica em :PUBLIC_HTTPS_PORT
+http://{$DOMAIN} {
+	redir https://{$DOMAIN}:{$PUBLIC_HTTPS_PORT}{uri} permanent
+}
+
+# ---------------------------------------------------------------- Vértice (HTTPS:8010)
+{$DOMAIN}:{$PUBLIC_HTTPS_PORT} {
+	# --- TLS ---
+	# Caddy emite cert Let's Encrypt automaticamente. Como estamos em
+	# porta não-padrão, o ACME usa HTTP-01 challenge na porta 80 (acima)
+	# para validar o domínio. Cert válido para o domínio inteiro,
+	# independente da porta.
+	tls {$ACME_EMAIL}
 
 	# --- Logging ---
 	log {
@@ -59,10 +78,7 @@
 		close
 	}
 
-	# --- Static files servidos direto pelo Caddy (mais rápido que via app) ---
-	# OBS: como o /static fica DENTRO do container do app, o Caddy precisa
-	# proxiar — não dá para montar volume cruzado sem refatorar. Mantemos
-	# proxy mas com cache de longo prazo via header.
+	# --- Static files com cache de longo prazo ---
 	@static path /static/*
 	header @static {
 		Cache-Control "public, max-age=2592000, immutable"
@@ -80,12 +96,8 @@
 		header_up X-Forwarded-For {remote_host}
 		header_up X-Forwarded-Proto {scheme}
 		header_up X-Forwarded-Host {host}
-
-		# Timeouts para uploads/processos longos (LLM calls, exports DOCX/PPTX).
-		# transport http {
-		# 	dial_timeout 10s
-		# 	response_header_timeout 600s
-		# }
+		# `host` aqui já contém :PUBLIC_HTTPS_PORT, então X-Forwarded-Host
+		# entrega para o app a URL pública correta (incluindo a porta).
 
 		# Healthcheck ativo: Caddy descarta backend se falhar.
 		health_uri /health

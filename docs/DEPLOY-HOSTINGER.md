@@ -5,25 +5,34 @@ Guia completo do zero ao primeiro login, em ~15 minutos.
 A stack publicada:
 
 ```
-                              Internet (HTTPS)
-                                    │
-                                    ▼
-                         ┌─────────────────────┐
-                         │   Caddy (80/443)    │  TLS automático Let's Encrypt
-                         │   reverse proxy     │  HTTP/2 + HTTP/3
-                         └──────────┬──────────┘
-                                    │ rede interna
-            ┌───────────────────────┼───────────────────────┐
-            ▼                       ▼                       ▼
-    ┌──────────────┐        ┌──────────────┐        ┌──────────────┐
-    │  vertice     │◀──────▶│  postgres    │◀──────▶│  pgbackup    │
-    │  FastAPI/    │  pool  │  16-alpine   │ pg_dump│  diário      │
-    │  uvicorn     │ asyncpg│              │        │  (volume)    │
-    └──────────────┘        └──────────────┘        └──────────────┘
+                              Internet
+                  HTTP :80                HTTPS :8010
+                  (ACME +                 (Vértice
+                  redirect)               público)
+                     │                       │
+                     ▼                       ▼
+                  ┌─────────────────────────────┐
+                  │          Caddy              │  TLS automático
+                  │       reverse proxy         │  Let's Encrypt
+                  └──────────────┬──────────────┘  HTTP/2 + HTTP/3
+                                 │ rede interna
+            ┌────────────────────┼────────────────────┐
+            ▼                    ▼                    ▼
+    ┌──────────────┐     ┌──────────────┐     ┌──────────────┐
+    │  vertice     │◀───▶│  postgres    │◀───▶│  pgbackup    │
+    │  FastAPI/    │ pool│  16-alpine   │pg_dp│  diário      │
+    │  uvicorn     │async│              │     │  (volume)    │
+    └──────────────┘  pg │              │     │              │
+                         └──────────────┘     └──────────────┘
 ```
 
-Apenas as portas **80** e **443** são expostas publicamente; Postgres fica
-acessível só via rede Docker interna.
+A URL pública do Vértice é **`https://SEU_DOMINIO:8010`** (porta
+configurável em `PUBLIC_HTTPS_PORT`). A porta **80** fica aberta apenas
+para o ACME challenge do Let's Encrypt e para redirecionar visitantes
+HTTP → HTTPS:8010. Postgres não é exposto — só rede Docker interna.
+
+> Para usar a porta padrão (URL sem `:8010`), defina
+> `PUBLIC_HTTPS_PORT=443` no `.env.production`.
 
 ---
 
@@ -70,7 +79,7 @@ O script é **idempotente** — pode rodar de novo sem problema. Ele:
 - instala Docker Engine + plugin compose (repo oficial)
 - cria usuário `deploy` com sudo NOPASSWD e no grupo `docker`
 - copia sua `authorized_keys` para o `deploy`
-- habilita UFW (portas 22, 80, 443) e fail2ban
+- habilita UFW (portas 22, 80, 8010 TCP+UDP) e fail2ban
 - cria 2 GB de swap se a RAM for menor que 4 GB
 - liga unattended-upgrades para patches de segurança
 
@@ -101,6 +110,14 @@ nano .env.production
 | `APP_SECRET_KEY`            | `openssl rand -hex 32`                              |
 | `ADMIN_BOOTSTRAP_PASSWORD`  | senha forte do admin (será trocada após 1º login)  |
 | `POSTGRES_PASSWORD`         | `openssl rand -base64 24`                           |
+| `APP_BASE_URL`              | `https://SEU_DOMINIO:8010` (inclui a porta!)        |
+
+Opcional:
+
+| Variável             | Default | Quando mudar                                |
+| -------------------- | ------- | ------------------------------------------- |
+| `PUBLIC_HTTPS_PORT`  | `8010`  | use `443` se quiser URL sem porta           |
+| `PUBLIC_HTTP_PORT`   | `80`    | mantenha em 80 (ACME challenge precisa)     |
 
 Opcional: chaves de LLM (OpenAI / Maritaca / GAIA), LangFuse, MLflow, OPA.
 Sem chaves, o Vértice roda em **modo mock** — todas as telas ficam
@@ -121,13 +138,15 @@ sobe Caddy + app + Postgres + pgbackup com `docker compose`, e
 Tempo total: ~3 min na primeira vez (build), ~30s nas próximas.
 
 Caddy emite o certificado Let's Encrypt no primeiro acesso a
-`https://SEU_DOMINIO`. Pode levar até 1 minuto na primeira requisição.
+`https://SEU_DOMINIO:8010`. Pode levar até 1 minuto na primeira
+requisição. O ACME challenge passa pela porta 80 — por isso ela
+permanece aberta no firewall mesmo que a URL pública seja na 8010.
 
 ---
 
 ## 4) Primeiro login
 
-Acesse `https://SEU_DOMINIO` e entre com:
+Acesse `https://SEU_DOMINIO:8010` e entre com:
 
 - usuário: `admin`
 - senha: o `ADMIN_BOOTSTRAP_PASSWORD` que você definiu
@@ -269,13 +288,43 @@ docker compose -f docker-compose.prod.yml --env-file .env.production up -d
 ### Caddy fica em loop tentando emitir certificado
 
 - Confira se o **DNS A** aponta corretamente: `dig +short SEU_DOMINIO`
-- Confira se as portas **80 e 443 estão abertas** no firewall da VPS
-  (UFW + qualquer firewall externo da Hostinger): `ufw status`
+- Confira se as portas **80 (ACME) e 8010 (HTTPS)** estão abertas no
+  firewall da VPS (UFW + qualquer firewall externo da Hostinger):
+  ```bash
+  ufw status
+  curl -I http://SEU_DOMINIO            # deve retornar 308 redirect
+  curl -kI https://SEU_DOMINIO:8010     # deve retornar headers do app
+  ```
 - Confira logs do Caddy: `docker compose ... logs -f caddy`
 - Erros comuns:
   - `no such host` → DNS errado
-  - `connection refused` → outro processo (Apache/nginx legado) ocupando 80/443
+  - `connection refused` na porta 80 → ACME não consegue validar; outro
+    processo (Apache/nginx legado) pode estar ocupando a 80
   - `rate limit` → você pediu muitos certs em uma hora; aguarde 1h.
+
+### Quero servir na porta 443 (URL sem `:8010`)
+
+Edite `.env.production`:
+
+```
+PUBLIC_HTTPS_PORT=443
+APP_BASE_URL=https://SEU_DOMINIO
+```
+
+Reabra a porta no firewall:
+
+```bash
+sudo ufw allow 443/tcp comment 'HTTPS Vértice'
+sudo ufw allow 443/udp comment 'HTTP/3 QUIC'
+sudo ufw delete allow 8010/tcp
+sudo ufw delete allow 8010/udp
+```
+
+E aplique:
+
+```bash
+./scripts/deploy.sh
+```
 
 ### App fica `unhealthy`
 
@@ -324,7 +373,7 @@ A stack já vem com:
 - ✅ Secrets via env vars (não em código)
 - ✅ Limite de upload em 50 MB no Caddy
 - ✅ Healthchecks ativos em Caddy + app + Postgres
-- ✅ UFW + fail2ban no host
+- ✅ UFW + fail2ban no host (apenas 22, 80, 8010 abertos)
 - ✅ Logs com rotação (10 MB × 5)
 
 Recomendações adicionais:

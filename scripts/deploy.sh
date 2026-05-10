@@ -76,12 +76,19 @@ done
 
 # ---------------------------------------------------------------- pós-deploy
 DOMAIN="$(grep -E '^DOMAIN=' "$ENV_FILE" | cut -d= -f2)"
+PUBLIC_HTTPS_PORT="$(grep -E '^PUBLIC_HTTPS_PORT=' "$ENV_FILE" | cut -d= -f2)"
+PUBLIC_HTTPS_PORT="${PUBLIC_HTTPS_PORT:-8010}"
+if [ "$PUBLIC_HTTPS_PORT" = "443" ]; then
+    URL="https://${DOMAIN}"
+else
+    URL="https://${DOMAIN}:${PUBLIC_HTTPS_PORT}"
+fi
 cat <<EOF
 
 ──────────────────────────────────────────────────────────────────
   ✓ Deploy concluído
 
-  URL:           https://${DOMAIN}
+  URL:           ${URL}
   Login admin:   admin / (ADMIN_BOOTSTRAP_PASSWORD do .env.production)
                  Trocar IMEDIATAMENTE via UI.
 
@@ -97,7 +104,8 @@ cat <<EOF
     cd $(pwd) && ./scripts/deploy.sh
 
   TLS Let's Encrypt: emitido automaticamente no primeiro acesso a
-  https://${DOMAIN}. Verifique o DNS A do domínio aponta para o IP
-  desta VPS.
+  ${URL}. Verifique o DNS A do domínio aponta para o IP desta VPS
+  e que as portas 80 (ACME) e ${PUBLIC_HTTPS_PORT} (HTTPS) estão liberadas
+  no firewall.
 ──────────────────────────────────────────────────────────────────
 EOF

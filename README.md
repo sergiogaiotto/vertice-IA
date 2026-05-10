@@ -155,7 +155,8 @@ docker compose up --build      # Postgres + app
 
 Stack pronta com Caddy (TLS automático Let's Encrypt) + app + Postgres +
 backup diário, em [docs/DEPLOY-HOSTINGER.md](docs/DEPLOY-HOSTINGER.md).
-Resumo:
+URL pública padrão: `https://SEU_DOMINIO:8010` (porta configurável em
+`PUBLIC_HTTPS_PORT`; ACME challenge usa porta 80). Resumo:
 
 ```bash
 # na VPS, como root:
