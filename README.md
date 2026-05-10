@@ -47,13 +47,19 @@ Tudo que cruza a fronteira do core passa por uma porta. Adaptadores são plugáv
 ```bash
 git clone https://github.com/sergiogaiotto/vertice.git
 cd vertice
-cp .env.example .env          # preencher API keys (opcional para dev)
-docker compose up --build     # sobe Postgres + app
+cp .env.example .env                                 # API keys (opcional)
+docker compose -f docker-compose.dev.yml up --build  # sobe Postgres + app
 ```
 
-O `docker-compose.yml` inicia o PostgreSQL com healthcheck e só sobe a app
-quando o banco responde. O schema/seed/módulos default são aplicados pelo
-`init_db()` no lifespan do FastAPI — idempotente.
+> **Sobre os dois compose files**: `docker-compose.yml` é a stack de
+> **produção** (Caddy + TLS + Postgres interno) — usada pelo Hostinger
+> Docker Manager e por qualquer plataforma que rode `docker compose up`
+> sem argumentos. Para dev local use sempre o `docker-compose.dev.yml`,
+> que expõe a porta 8000 direto e habilita hot-reload do uvicorn.
+
+O `docker-compose.dev.yml` inicia o PostgreSQL com healthcheck e só sobe
+a app quando o banco responde. O schema/seed/módulos default são
+aplicados pelo `init_db()` no lifespan do FastAPI — idempotente.
 
 ### Opção 2 — Postgres local + venv
 
@@ -145,12 +151,32 @@ Layout de três colunas (referência: `https://agente-inteligencia.onrender.com`
 
 ## 10. Deploy
 
+### Dev local
+
 ```bash
-docker build -t vertice:1.0.0 .
-docker run -p 8000:8000 --env-file .env vertice:1.0.0
+docker compose up --build      # Postgres + app
 ```
 
-Para Kubernetes (AI Mesh), aplique os manifestos em `deploy/k8s/` (não incluído nesta versão; usar Helm chart genérico de FastAPI + Istio sidecar para mTLS).
+### Produção (VPS Hostinger ou similar)
+
+Stack pronta com Caddy (TLS automático Let's Encrypt) + app + Postgres +
+backup diário, em [docs/DEPLOY-HOSTINGER.md](docs/DEPLOY-HOSTINGER.md).
+URL pública padrão: `https://SEU_DOMINIO:8010` (porta configurável em
+`PUBLIC_HTTPS_PORT`; ACME challenge usa porta 80). Resumo:
+
+```bash
+# na VPS, como root:
+curl -fsSL https://raw.githubusercontent.com/SEU_USER/SEU_REPO/main/scripts/install_docker.sh \
+     -o install_docker.sh && chmod +x install_docker.sh && ./install_docker.sh
+
+# como usuário deploy:
+git clone https://github.com/SEU_USER/SEU_REPO.git vertice && cd vertice
+cp .env.production.example .env.production && chmod 600 .env.production
+nano .env.production               # preencher TROCAR_*
+./scripts/deploy.sh
+```
+
+Para Kubernetes, use os manifestos `app/adapters/db/schema.sql` + `seed.sql` direto e crie um Helm chart genérico (FastAPI + Postgres operator). Não há manifestos K8s incluídos nesta versão.
 
 ## 11. Testes
 

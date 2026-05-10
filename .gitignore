@@ -1,0 +1,59 @@
+# Vértice — .gitignore
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+*.egg-info/
+.eggs/
+.venv/
+venv/
+env/
+ENV/
+.python-version
+
+# Tests / coverage
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.tox/
+.coverage
+.coverage.*
+htmlcov/
+coverage.xml
+.cache/
+
+# IDE / OS
+.idea/
+.vscode/
+*.swp
+*.swo
+.DS_Store
+Thumbs.db
+
+# Worktree do Claude Code
+.claude/
+
+# Secrets / config local
+.env
+.env.local
+.env.production
+.env.*.local
+
+# Dados locais (volume montado em runtime)
+data/
+backups/
+
+# Caddy persistente (TLS certs/state) — fica no volume Docker, não no repo
+caddy_data/
+caddy_config/
+
+# Logs
+*.log
+logs/
+
+# Build artefacts
+build/
+dist/
+*.whl

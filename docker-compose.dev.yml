@@ -1,0 +1,71 @@
+# Vértice — stack de DESENVOLVIMENTO local.
+#
+# Para subir em DEV:
+#     docker compose -f docker-compose.dev.yml up
+#
+# Diferenças vs `docker-compose.yml` (produção):
+#   - SEM Caddy (sem TLS, sem domínio): app exposta direto em 8000.
+#   - Postgres exposto em 5432 do host para você conectar via DBeaver/psql.
+#   - Volume bind-mount `./app:/app/app` para hot-reload do uvicorn.
+#   - Mock de LLM padrão (sem chaves no .env).
+#
+# Subindo a porta de Postgres 5432 conflita se você tem outro Postgres
+# rodando localmente. Nesse caso, mude `POSTGRES_HOST_PORT=5433` no .env
+# (ou rode sem o serviço postgres aqui e aponte DATABASE_URL para o seu
+# Postgres existente).
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: vertice-postgres-dev
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-vertice}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-vertice}
+      POSTGRES_DB: ${POSTGRES_DB:-vertice}
+      POSTGRES_INITDB_ARGS: "--data-checksums"
+    command:
+      - "postgres"
+      - "-c"
+      - "max_connections=200"
+      - "-c"
+      - "shared_buffers=256MB"
+      - "-c"
+      - "effective_cache_size=1GB"
+      - "-c"
+      - "work_mem=8MB"
+      - "-c"
+      - "random_page_cost=1.1"
+    ports:
+      # Override via .env: POSTGRES_HOST_PORT=5433 (se 5432 já está em uso)
+      - "${POSTGRES_HOST_PORT:-5432}:5432"
+    volumes:
+      - vertice_pgdata_dev:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-vertice} -d ${POSTGRES_DB:-vertice}"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+    restart: unless-stopped
+
+  vertice:
+    build: .
+    container_name: vertice-dev
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      DATABASE_URL: ${DATABASE_URL:-postgresql://vertice:vertice@postgres:5432/vertice}
+      PG_POOL_MIN_SIZE: ${PG_POOL_MIN_SIZE:-5}
+      PG_POOL_MAX_SIZE: ${PG_POOL_MAX_SIZE:-20}
+    ports:
+      - "${APP_HOST_PORT:-8000}:8000"
+    # env_file opcional — se não existir, descomente:
+    # env_file:
+    #   - .env
+    volumes:
+      - ./app:/app/app
+    restart: unless-stopped
+    command: uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
+
+volumes:
+  vertice_pgdata_dev:

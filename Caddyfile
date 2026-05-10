@@ -1,0 +1,108 @@
+# Vértice — Caddy reverse proxy
+#
+# Caddy emite e renova certificados Let's Encrypt automaticamente. Não
+# precisa Certbot, cron ou config manual de TLS.
+#
+# Variáveis vêm do compose (via env_file). DOMAIN, ACME_EMAIL e
+# PUBLIC_HTTPS_PORT são obrigatórias.
+#
+# Topologia de portas:
+#   :80              → ACME HTTP-01 challenge + redirect para HTTPS:PUBLIC_HTTPS_PORT
+#   :PUBLIC_HTTPS_PORT (default 8010) → HTTPS público (TLS automático)
+#
+# IMPORTANTE: a porta 80 NÃO publica conteúdo da app. Ela só serve para o
+# Let's Encrypt validar o domínio e redirecionar visitantes para HTTPS.
+# Se você fechar a 80 no firewall, o certificado não é emitido/renovado
+# (a menos que use DNS-01 challenge — fora deste setup).
+
+{
+	email {$ACME_EMAIL}
+	# log JSON estruturado para fácil ingestão (Loki/Datadog/etc.)
+	log default {
+		output stdout
+		format json
+		level INFO
+	}
+	# servers: HTTP/2 + HTTP/3 (QUIC sobre UDP).
+	servers {
+		protocols h1 h2 h3
+	}
+}
+
+# ---------------------------------------------------------------- Redirect HTTP → HTTPS
+# Tudo que chegar na 80 (incluindo ACME) é capturado por Caddy:
+#  - /.well-known/acme-challenge/* é tratado internamente para emissão de cert
+#  - qualquer outro path redireciona 308 para a URL canônica em :PUBLIC_HTTPS_PORT
+http://{$DOMAIN} {
+	redir https://{$DOMAIN}:{$PUBLIC_HTTPS_PORT}{uri} permanent
+}
+
+# ---------------------------------------------------------------- Vértice (HTTPS:8010)
+{$DOMAIN}:{$PUBLIC_HTTPS_PORT} {
+	# --- TLS ---
+	# Caddy emite cert Let's Encrypt automaticamente. Como estamos em
+	# porta não-padrão, o ACME usa HTTP-01 challenge na porta 80 (acima)
+	# para validar o domínio. Cert válido para o domínio inteiro,
+	# independente da porta.
+	tls {$ACME_EMAIL}
+
+	# --- Logging ---
+	log {
+		output stdout
+		format json
+	}
+
+	# --- Compressão ---
+	encode zstd gzip
+
+	# --- Segurança (headers HTTP) ---
+	header {
+		# HSTS — força HTTPS por 1 ano em browsers
+		Strict-Transport-Security "max-age=31536000; includeSubDomains"
+		# Anti-clickjacking
+		X-Frame-Options "SAMEORIGIN"
+		# Anti-MIME sniffing
+		X-Content-Type-Options "nosniff"
+		# Referrer mínimo
+		Referrer-Policy "strict-origin-when-cross-origin"
+		# Permissões mínimas (geo, mic, cam desabilitados)
+		Permissions-Policy "geolocation=(), microphone=(), camera=(), payment=()"
+		# Esconde versão
+		-Server
+		-X-Powered-By
+	}
+
+	# --- Health check direto (não passa pelo app, evita ruído nos logs) ---
+	respond /caddy-health 200 {
+		body "ok"
+		close
+	}
+
+	# --- Static files com cache de longo prazo ---
+	@static path /static/*
+	header @static {
+		Cache-Control "public, max-age=2592000, immutable"
+	}
+
+	# --- Limites de upload (XLSX/JSON do BKO Inteligente) ---
+	request_body {
+		max_size 50MB
+	}
+
+	# --- Reverse proxy para a app ---
+	reverse_proxy vertice:8000 {
+		# Headers padrão para o app saber o protocolo/host original.
+		header_up X-Real-IP {remote_host}
+		header_up X-Forwarded-For {remote_host}
+		header_up X-Forwarded-Proto {scheme}
+		header_up X-Forwarded-Host {host}
+		# `host` aqui já contém :PUBLIC_HTTPS_PORT, então X-Forwarded-Host
+		# entrega para o app a URL pública correta (incluindo a porta).
+
+		# Healthcheck ativo: Caddy descarta backend se falhar.
+		health_uri /health
+		health_interval 30s
+		health_timeout 5s
+		health_status 2xx
+	}
+}
