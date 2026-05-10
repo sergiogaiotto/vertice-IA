@@ -4,11 +4,15 @@ from __future__ import annotations
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 
-from app.api.deps import require_user
+from app.api.deps import require_roles
 from app.core.domain.entities import User
 from app.core.services.audit_service import AuditService, get_audit_service
 
 router = APIRouter()
+
+# Audit revela ações de todos os usuários — restringir aos mesmos papéis da
+# página /audit em pages.py (admin/supervisor/finops).
+_AUDIT_ROLES = ("admin", "supervisor", "finops")
 
 
 def _serialize(e) -> dict:
@@ -41,7 +45,7 @@ async def list_audit(
     q: str | None = None,
     since: str | None = None,
     svc: AuditService = Depends(get_audit_service),
-    user: User = Depends(require_user),
+    user: User = Depends(require_roles(*_AUDIT_ROLES)),
 ):
     """Lista paginada com filtros. per_page=-1 retorna todos (cap em 5000).
 
@@ -65,7 +69,7 @@ async def list_audit(
 @router.get("/stats")
 async def audit_stats(
     svc: AuditService = Depends(get_audit_service),
-    user: User = Depends(require_user),
+    user: User = Depends(require_roles(*_AUDIT_ROLES)),
 ):
     return await svc.stats()
 
@@ -74,7 +78,7 @@ async def audit_stats(
 async def get_event(
     event_id: str,
     svc: AuditService = Depends(get_audit_service),
-    user: User = Depends(require_user),
+    user: User = Depends(require_roles(*_AUDIT_ROLES)),
 ):
     e = await svc.get_event(event_id)
     if not e:

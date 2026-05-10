@@ -89,12 +89,22 @@ _PROTECTED = [
     ("POST",   f"/api/prompts/{_FAKE_UUID}/promote", None),
     ("PATCH",  f"/api/prompts/{_FAKE_UUID}/modules", {"module_names": ["radar"]}),
     ("DELETE", f"/api/prompts/{_FAKE_UUID}",     None),
-    # ----- FinOps (admin/supervisor/finops) -----
+    # ----- FinOps mutation (admin/supervisor/finops) -----
     ("POST",   "/api/finops/budgets",            {"name": "x", "scope_type": "global", "scope_value": None, "period": "monthly", "limit_brl": 100.0}),
     ("PATCH",  f"/api/finops/budgets/{_FAKE_UUID}", {"limit_brl": 200.0}),
     ("DELETE", f"/api/finops/budgets/{_FAKE_UUID}", None),
     ("POST",   "/api/finops/policies",           {"model_name": "x", "risk_tier": "low", "value_tier": "low"}),
     ("DELETE", f"/api/finops/policies/{_FAKE_UUID}", None),
+    # ----- FinOps read (admin/supervisor/finops) — PR-2 -----
+    ("GET",    "/api/finops/summary",            None),
+    ("GET",    "/api/finops/by-dimension?dim=module", None),
+    ("GET",    "/api/finops/budgets",            None),
+    ("GET",    "/api/finops/policies",           None),
+    ("GET",    "/api/finops/alerts",             None),
+    # ----- Audit (admin/supervisor/finops) — PR-2 -----
+    ("GET",    "/api/audit/",                    None),
+    ("GET",    "/api/audit/stats",               None),
+    ("GET",    f"/api/audit/{_FAKE_UUID}",       None),
     # ----- Churn (admin/supervisor) -----
     ("POST",   "/api/churn/nodes",               {"label": "x"}),
     ("PATCH",  f"/api/churn/nodes/{_FAKE_UUID}", {"label": "y"}),
@@ -147,6 +157,55 @@ async def test_sem_token_recebe_401(client: AsyncClient):
         if r.status_code not in (401, 422):
             falhas.append(f"{method} {path} → {r.status_code} (esperado 401)")
     assert not falhas, "Endpoints sem auth-gate:\n" + "\n".join(falhas)
+
+
+# ---- Actor tracking em mudanças de visibility (PR-2) --------------------
+
+@pytest.mark.asyncio
+async def test_visibility_change_registra_actor(client: AsyncClient):
+    """Mudança administrativa de visibility grava actor_id/username/timestamp.
+
+    Sem isso, /admin/cards-em-tela mostra `previous_visibility` mas não diz
+    QUEM fez o ato administrativo — gap de auditoria.
+    """
+    from app.adapters.db.repositories.radar_card_visibility_repo import (
+        PgRadarCardVisibilityRepository,
+    )
+
+    await init_db()
+    auth = AuthService(PgUserRepository())
+    # admin que vai fazer a mudança
+    admin = await auth.register(username="vis_admin", password="vertice2026", roles=["admin"])
+    token = auth.issue_token(admin)
+    # dono original do card
+    owner = await auth.register(username="vis_owner", password="vertice2026", roles=["analista_n3"])
+
+    repo = PgRadarCardVisibilityRepository()
+    card_uid = "uid-test-vis-tracking"
+    await repo.upsert(
+        card_uid=card_uid,
+        owner_id=str(owner.id),
+        owner_username=owner.username,
+        group_id=None, group_title=None,
+        module_id=None, module_name=None, module_description=None,
+        visibility="private",
+        card_json={},
+    )
+
+    r = await client.put(
+        f"/api/radar/cards/{card_uid}/visibility",
+        json={"visibility": "public_lideranca"},
+        headers=_h(token),
+    )
+    assert r.status_code == 200, r.text
+
+    record = await repo.get(card_uid)
+    assert record is not None
+    assert record["visibility"] == "public_lideranca"
+    assert record["previous_visibility"] == "private"
+    assert record["visibility_changed_by_id"] == str(admin.id)
+    assert record["visibility_changed_by_username"] == admin.username
+    assert record["visibility_changed_at"] is not None
 
 
 # ---- Radar uploads exigem multipart; testa apenas se gate de papel rejeita -
