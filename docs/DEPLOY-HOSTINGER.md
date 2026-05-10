@@ -127,6 +127,37 @@ navegáveis para validação.
 
 ## 3) Subir a stack
 
+Você tem **dois caminhos** dependendo de como configurou a VPS:
+
+### 3a) Hostinger Docker Manager (painel da Hostinger)
+
+Se você está usando o serviço **VPS → Docker Manager** da Hostinger
+(que faz `git clone` do repo e roda `docker compose up` automaticamente):
+
+1. **Conecte o repositório** GitHub no painel.
+2. **Configure as variáveis de ambiente** na aba "Environment" do
+   Docker Manager. Cole o conteúdo do seu `.env.production` ali (uma
+   variável por linha, sem `export`):
+
+   ```
+   DOMAIN=vertice.exemplo.com.br
+   ACME_EMAIL=ops@exemplo.com.br
+   APP_SECRET_KEY=...
+   POSTGRES_PASSWORD=...
+   ADMIN_BOOTSTRAP_PASSWORD=...
+   APP_BASE_URL=https://vertice.exemplo.com.br:8010
+   PUBLIC_HTTPS_PORT=8010
+   ```
+3. **Deploy** pelo painel. O Hostinger faz `git pull` + `docker compose up -d`
+   automaticamente. Ele lê o `docker-compose.yml` (raiz do repo) — que
+   já é a stack de produção.
+
+> ⚠️ **NÃO** comite `.env.production` no Git. Use o painel da Hostinger.
+
+### 3b) SSH direto (controle total)
+
+Se você não usa o Docker Manager e provisionou a VPS via SSH (passo 1.3):
+
 ```bash
 ./scripts/deploy.sh
 ```
@@ -160,8 +191,8 @@ Acesse `https://SEU_DOMINIO:8010` e entre com:
 ### Logs ao vivo
 
 ```bash
-docker compose -f docker-compose.prod.yml --env-file .env.production logs -f vertice
-docker compose -f docker-compose.prod.yml --env-file .env.production logs -f caddy
+docker compose -f docker-compose.yml --env-file .env.production logs -f vertice
+docker compose -f docker-compose.yml --env-file .env.production logs -f caddy
 ```
 
 Logs com rotação (10 MB × 5 arquivos por serviço, configurado no compose).
@@ -179,26 +210,26 @@ O script faz `git pull`, builda só se mudar e faz `up -d` zero-downtime
 ### Status
 
 ```bash
-docker compose -f docker-compose.prod.yml --env-file .env.production ps
+docker compose -f docker-compose.yml --env-file .env.production ps
 ```
 
 ### Console SQL
 
 ```bash
-docker compose -f docker-compose.prod.yml --env-file .env.production \
+docker compose -f docker-compose.yml --env-file .env.production \
      exec postgres psql -U vertice vertice
 ```
 
 ### Parar tudo (mantém dados)
 
 ```bash
-docker compose -f docker-compose.prod.yml --env-file .env.production down
+docker compose -f docker-compose.yml --env-file .env.production down
 ```
 
 ### Parar e apagar volumes (⚠️ destrutivo — perde DB)
 
 ```bash
-docker compose -f docker-compose.prod.yml --env-file .env.production down -v
+docker compose -f docker-compose.yml --env-file .env.production down -v
 ```
 
 ---
@@ -220,7 +251,7 @@ Os dumps ficam no volume nomeado `vertice_backups`, mapeado para
 ### Copiar um dump para fora do servidor
 
 ```bash
-docker compose -f docker-compose.prod.yml --env-file .env.production \
+docker compose -f docker-compose.yml --env-file .env.production \
      cp pgbackup:/var/backups/postgres/vertice_<timestamp>.dump ./
 
 # do laptop, baixar via scp:
@@ -250,14 +281,14 @@ Caddy gerencia certificados Let's Encrypt automaticamente:
 ### Forçar renovação
 
 ```bash
-docker compose -f docker-compose.prod.yml --env-file .env.production \
+docker compose -f docker-compose.yml --env-file .env.production \
      restart caddy
 ```
 
 ### Ver os certificados emitidos
 
 ```bash
-docker compose -f docker-compose.prod.yml --env-file .env.production \
+docker compose -f docker-compose.yml --env-file .env.production \
      exec caddy ls /data/caddy/certificates/acme-v02.api.letsencrypt.org-directory/
 ```
 
@@ -278,12 +309,29 @@ Edite `.env.production` conforme RAM disponível:
 Após editar, aplique:
 
 ```bash
-docker compose -f docker-compose.prod.yml --env-file .env.production up -d
+docker compose -f docker-compose.yml --env-file .env.production up -d
 ```
 
 ---
 
 ## 9) Troubleshooting
+
+### `Bind for 0.0.0.0:5432 failed: port is already allocated`
+
+Outra coisa na VPS está usando a porta 5432 (provavelmente um Postgres
+do sistema, ou um deploy antigo). A stack de **produção** (este
+`docker-compose.yml`) NÃO publica 5432 — Postgres só fala via rede
+Docker interna. Se você está vendo esse erro:
+
+- Você está rodando o `docker-compose.dev.yml` em produção (errado).
+  Use `docker-compose.yml` (default).
+- Outra stack antiga subiu Postgres em 5432. Liste e derrube:
+  ```bash
+  sudo docker ps -a | grep postgres
+  sudo docker stop <container-id> && sudo docker rm <container-id>
+  ```
+- Postgres do sistema (apt) ocupando: `sudo systemctl stop postgresql`
+  (e desabilite se não usa: `sudo systemctl disable postgresql`).
 
 ### Caddy fica em loop tentando emitir certificado
 
@@ -329,7 +377,7 @@ E aplique:
 ### App fica `unhealthy`
 
 ```bash
-docker compose -f docker-compose.prod.yml --env-file .env.production logs vertice
+docker compose -f docker-compose.yml --env-file .env.production logs vertice
 ```
 
 Causas comuns:
@@ -394,10 +442,10 @@ Recomendações adicionais:
 
 ## Apêndice — Comandos Compose comuns
 
-Sempre passar `-f docker-compose.prod.yml --env-file .env.production`:
+Sempre passar `-f docker-compose.yml --env-file .env.production`:
 
 ```bash
-DC="docker compose -f docker-compose.prod.yml --env-file .env.production"
+DC="docker compose -f docker-compose.yml --env-file .env.production"
 
 $DC ps                                 # status dos serviços
 $DC logs -f vertice                    # logs do app ao vivo
@@ -413,7 +461,7 @@ $DC up -d --build                      # rebuild local + sobe
 Crie um alias no `~/.bashrc` do `deploy` para encurtar:
 
 ```bash
-echo 'alias dc="docker compose -f ~/vertice/docker-compose.prod.yml --env-file ~/vertice/.env.production"' \
+echo 'alias dc="docker compose -f ~/vertice/docker-compose.yml --env-file ~/vertice/.env.production"' \
      >> ~/.bashrc
 source ~/.bashrc
 ```

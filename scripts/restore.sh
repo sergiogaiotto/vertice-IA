@@ -10,7 +10,7 @@
 #   ./scripts/restore.sh /var/backups/postgres/vertice_20260510T030000Z.dump
 #
 # Para extrair um dump localmente do volume do Docker:
-#   docker compose -f docker-compose.prod.yml --env-file .env.production \
+#   docker compose -f docker-compose.yml --env-file .env.production \
 #       cp pgbackup:/var/backups/postgres/<arquivo>.dump ./
 #
 # Restore funciona dentro do container pgbackup (que já tem pg_restore e
@@ -19,7 +19,7 @@
 
 set -eu
 
-COMPOSE_FILE="${COMPOSE_FILE:-docker-compose.prod.yml}"
+COMPOSE_FILE="${COMPOSE_FILE:-docker-compose.yml}"
 ENV_FILE="${ENV_FILE:-.env.production}"
 BACKUP_DIR_IN_CONTAINER="/var/backups/postgres"
 

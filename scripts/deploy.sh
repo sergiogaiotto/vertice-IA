@@ -10,13 +10,13 @@
 #   - imprime URL pública e dicas de comandos pós-deploy
 #
 # Variáveis ambiente opcionais:
-#   COMPOSE_FILE  (default: docker-compose.prod.yml)
+#   COMPOSE_FILE  (default: docker-compose.yml)
 #   ENV_FILE      (default: .env.production)
 #   SKIP_PULL=1   pula git pull (deploy local sem alteração)
 
 set -euo pipefail
 
-COMPOSE_FILE="${COMPOSE_FILE:-docker-compose.prod.yml}"
+COMPOSE_FILE="${COMPOSE_FILE:-docker-compose.yml}"
 ENV_FILE="${ENV_FILE:-.env.production}"
 
 log()  { printf '\033[1;36m[deploy]\033[0m %s\n' "$*"; }

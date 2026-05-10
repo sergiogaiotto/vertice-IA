@@ -47,13 +47,19 @@ Tudo que cruza a fronteira do core passa por uma porta. Adaptadores são plugáv
 ```bash
 git clone https://github.com/sergiogaiotto/vertice.git
 cd vertice
-cp .env.example .env          # preencher API keys (opcional para dev)
-docker compose up --build     # sobe Postgres + app
+cp .env.example .env                                 # API keys (opcional)
+docker compose -f docker-compose.dev.yml up --build  # sobe Postgres + app
 ```
 
-O `docker-compose.yml` inicia o PostgreSQL com healthcheck e só sobe a app
-quando o banco responde. O schema/seed/módulos default são aplicados pelo
-`init_db()` no lifespan do FastAPI — idempotente.
+> **Sobre os dois compose files**: `docker-compose.yml` é a stack de
+> **produção** (Caddy + TLS + Postgres interno) — usada pelo Hostinger
+> Docker Manager e por qualquer plataforma que rode `docker compose up`
+> sem argumentos. Para dev local use sempre o `docker-compose.dev.yml`,
+> que expõe a porta 8000 direto e habilita hot-reload do uvicorn.
+
+O `docker-compose.dev.yml` inicia o PostgreSQL com healthcheck e só sobe
+a app quando o banco responde. O schema/seed/módulos default são
+aplicados pelo `init_db()` no lifespan do FastAPI — idempotente.
 
 ### Opção 2 — Postgres local + venv
 
