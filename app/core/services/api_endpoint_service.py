@@ -6,7 +6,6 @@ faz a chamada com timeout e auditoria automática em api_calls.
 
 from __future__ import annotations
 
-import json
 import time
 import uuid
 from dataclasses import dataclass
@@ -14,7 +13,7 @@ from datetime import datetime
 
 import httpx
 
-from app.adapters.db.sqlite import connect
+from app.adapters.db.postgres import connect
 
 
 @dataclass
@@ -32,35 +31,42 @@ class ApiEndpointDTO:
 
 
 def _row_to_dto(row) -> ApiEndpointDTO:
+    headers = row["headers"] if isinstance(row["headers"], dict) else {}
+    created = row["created_at"] if isinstance(row["created_at"], datetime) else datetime.utcnow()
     return ApiEndpointDTO(
-        id=row[0], name=row[1], description=row[2] or "",
-        url=row[3], method=row[4] or "POST",
-        headers=json.loads(row[5]) if row[5] else {},
-        timeout_seconds=int(row[6] or 30),
-        is_active=bool(row[7]),
-        created_by_user=row[8] or "",
-        created_at=datetime.fromisoformat(row[9]) if isinstance(row[9], str) else (row[9] or datetime.utcnow()),
+        id=row["id"],
+        name=row["name"],
+        description=row["description"] or "",
+        url=row["url"],
+        method=row["method"] or "POST",
+        headers=headers,
+        timeout_seconds=int(row["timeout_seconds"] or 30),
+        is_active=bool(row["is_active"]),
+        created_by_user=row["created_by_user"] or "",
+        created_at=created,
     )
 
 
 _SELECT = (
-    "SELECT id, name, description, url, method, headers, timeout_seconds, "
-    "is_active, created_by_user, created_at FROM api_endpoints"
+    "SELECT id::text AS id, name, description, url, method, headers, "
+    "timeout_seconds, is_active, created_by_user, created_at "
+    "FROM api_endpoints"
 )
 
 
 class ApiEndpointService:
 
     async def list_all(self, only_active: bool = False) -> list[ApiEndpointDTO]:
-        clause = " WHERE is_active = 1" if only_active else ""
+        clause = " WHERE is_active = TRUE" if only_active else ""
         async with connect() as db:
-            cur = await db.execute(f"{_SELECT}{clause} ORDER BY name")
-            return [_row_to_dto(r) for r in await cur.fetchall()]
+            rows = await db.fetch(f"{_SELECT}{clause} ORDER BY name")
+            return [_row_to_dto(r) for r in rows]
 
     async def get(self, endpoint_id: str) -> ApiEndpointDTO | None:
         async with connect() as db:
-            cur = await db.execute(f"{_SELECT} WHERE id = ?", (endpoint_id,))
-            row = await cur.fetchone()
+            row = await db.fetchrow(
+                f"{_SELECT} WHERE id = $1::uuid", endpoint_id
+            )
             return _row_to_dto(row) if row else None
 
     async def create(
@@ -71,12 +77,12 @@ class ApiEndpointService:
         eid = uuid.uuid4().hex
         async with connect() as db:
             await db.execute(
-                "INSERT INTO api_endpoints (id, name, description, url, method, headers, "
-                "timeout_seconds, created_by_user) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
-                (eid, name, description, url, method.upper(),
-                 json.dumps(headers or {}), timeout_seconds, created_by_user),
+                "INSERT INTO api_endpoints (id, name, description, url, method, "
+                "headers, timeout_seconds, created_by_user) "
+                "VALUES ($1::uuid, $2, $3, $4, $5, $6::jsonb, $7, $8)",
+                eid, name, description, url, method.upper(),
+                headers or {}, timeout_seconds, created_by_user,
             )
-            await db.commit()
         return await self.get(eid)
 
     async def update(
@@ -85,19 +91,19 @@ class ApiEndpointService:
     ) -> ApiEndpointDTO | None:
         async with connect() as db:
             await db.execute(
-                "UPDATE api_endpoints SET name=?, description=?, url=?, method=?, "
-                "headers=?, timeout_seconds=?, is_active=?, updated_at=CURRENT_TIMESTAMP "
-                "WHERE id=?",
-                (name, description, url, method.upper(),
-                 json.dumps(headers or {}), timeout_seconds, int(is_active), endpoint_id),
+                "UPDATE api_endpoints SET name=$1, description=$2, url=$3, "
+                "method=$4, headers=$5::jsonb, timeout_seconds=$6, is_active=$7, "
+                "updated_at=NOW() WHERE id=$8::uuid",
+                name, description, url, method.upper(),
+                headers or {}, timeout_seconds, is_active, endpoint_id,
             )
-            await db.commit()
         return await self.get(endpoint_id)
 
     async def delete(self, endpoint_id: str) -> None:
         async with connect() as db:
-            await db.execute("DELETE FROM api_endpoints WHERE id = ?", (endpoint_id,))
-            await db.commit()
+            await db.execute(
+                "DELETE FROM api_endpoints WHERE id = $1::uuid", endpoint_id
+            )
 
     async def call(
         self,
@@ -132,20 +138,24 @@ class ApiEndpointService:
         finally:
             result["duration_ms"] = round((time.perf_counter() - start) * 1000, 2)
 
-        # registra em api_calls
+        # registra em api_calls (asyncpg encoda dict→jsonb diretamente)
         try:
-            body_str = json.dumps(body, ensure_ascii=False, default=str)[:50000]
-            resp_str = json.dumps(result["body"], ensure_ascii=False, default=str)[:50000] if result["body"] else None
+            response_payload = result["body"]
+            # Garante que o body fique como dict/list em JSONB; fallback para
+            # string em campo artificial se for texto cru.
+            if response_payload is not None and not isinstance(response_payload, (dict, list)):
+                response_payload = {"_text": str(response_payload)[:50000]}
             async with connect() as db:
                 await db.execute(
-                    "INSERT INTO api_calls (id, api_endpoint_id, module_id, user_id, "
-                    "request_body, response_status, response_body, duration_ms, error) "
-                    "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
-                    (call_id, endpoint.id, module_id, user_id,
-                     body_str, result["status"], resp_str,
-                     result["duration_ms"], result["error"]),
+                    "INSERT INTO api_calls (id, api_endpoint_id, module_id, "
+                    "user_id, request_body, response_status, response_body, "
+                    "duration_ms, error) "
+                    "VALUES ($1::uuid, $2::uuid, $3::uuid, $4::uuid, $5::jsonb, "
+                    "        $6, $7::jsonb, $8, $9)",
+                    call_id, endpoint.id, module_id, user_id,
+                    body or {}, result["status"], response_payload,
+                    result["duration_ms"], result["error"],
                 )
-                await db.commit()
         except Exception:
             pass
 

@@ -1,16 +1,14 @@
-"""Use case: introspecção do schema SQLite — devolve tabelas, colunas e amostras
-para a UI poder oferecer qualquer coluna como input para um módulo.
+"""Use case: introspecção do schema PostgreSQL — devolve tabelas, colunas e
+amostras para a UI poder oferecer qualquer coluna como input para um módulo.
 """
 
 from __future__ import annotations
 
-from app.adapters.db.sqlite import connect
+from app.adapters.db.postgres import connect, is_safe_ident, quote_ident
 
 
 # Tabelas escondidas — não fazem sentido como input de módulos
 _HIDDEN_TABLES = {
-    "sqlite_sequence",
-    "sqlite_stat1",
     "user_roles", "role_permissions",  # tabelas de relacionamento N:N
 }
 
@@ -39,17 +37,30 @@ _TABLE_META = {
 }
 
 
+# Colunas/tipos no PostgreSQL para os quais agregação numérica faz sentido.
+# O legado SQLite usava CAST(... AS REAL) cego — em PG isso falha em colunas
+# JSONB e BOOLEAN. Aqui detectamos numéricos antes de gerar CAST.
+_NUMERIC_PG_TYPES = {
+    "smallint", "integer", "bigint",
+    "decimal", "numeric",
+    "real", "double precision",
+    "smallserial", "serial", "bigserial",
+}
+
+
 class SchemaService:
-    """Lê metadados via PRAGMA + amostra valores reais para preview."""
+    """Lê metadados via information_schema + amostra valores reais para preview."""
 
     async def list_tables(self, feature: str | None = None) -> list[dict]:
-        """Devolve tabelas com colunas + samples. Se `feature` informada, filtra por escopo."""
+        """Devolve tabelas com colunas + samples. Se `feature` informada,
+        filtra por escopo."""
         async with connect() as db:
-            cur = await db.execute(
-                "SELECT name FROM sqlite_master WHERE type='table' "
-                "AND name NOT LIKE 'sqlite_%' ORDER BY name"
+            tables_rows = await db.fetch(
+                "SELECT table_name FROM information_schema.tables "
+                "WHERE table_schema = 'public' AND table_type = 'BASE TABLE' "
+                "ORDER BY table_name"
             )
-            table_names = [r[0] for r in await cur.fetchall()]
+            table_names = [r["table_name"] for r in tables_rows]
 
             tables: list[dict] = []
             for tname in table_names:
@@ -58,8 +69,6 @@ class SchemaService:
                 meta = _TABLE_META.get(tname)
                 if meta is None:
                     # tabela dinâmica criada por módulo response_type='table'
-                    # convenção: nome = "{module_name}__{feature}"
-                    # (ex: extracao_dados_texto_livre__radar)
                     if "__" in tname:
                         module_part, _, feature_part = tname.rpartition("__")
                         if module_part and feature_part:
@@ -69,42 +78,61 @@ class SchemaService:
                                 "is_dynamic": True,
                             }
                 if meta is None:
-                    # tabela desconhecida e não-dinâmica — esconder por segurança
                     continue
                 if feature and feature not in meta["features"]:
                     continue
 
-                cur = await db.execute(f'SELECT COUNT(*) FROM "{tname}"')
-                row_count = int((await cur.fetchone())[0])
+                row_count = await db.fetchval(
+                    f"SELECT COUNT(*) FROM {quote_ident(tname)}"
+                )
+                row_count = int(row_count or 0)
 
-                cur = await db.execute(f'PRAGMA table_info("{tname}")')
-                col_rows = await cur.fetchall()
+                col_rows = await db.fetch(
+                    "SELECT column_name, data_type, ordinal_position "
+                    "FROM information_schema.columns "
+                    "WHERE table_schema = 'public' AND table_name = $1 "
+                    "ORDER BY ordinal_position",
+                    tname,
+                )
+                pk_rows = await db.fetch(
+                    "SELECT a.attname AS column_name "
+                    "FROM   pg_index i "
+                    "JOIN   pg_attribute a "
+                    "       ON a.attrelid = i.indrelid "
+                    "      AND a.attnum  = ANY(i.indkey) "
+                    "WHERE  i.indrelid = $1::regclass AND i.indisprimary",
+                    f"public.{tname}",
+                )
+                pk_cols = {r["column_name"] for r in pk_rows}
 
                 columns: list[dict] = []
                 for col in col_rows:
-                    cname = col[1]
+                    cname = col["column_name"]
                     if cname in _HIDDEN_COLUMNS:
                         continue
-                    ctype = (col[2] or "").upper() or "TEXT"
-                    is_pk = bool(col[5])
+                    ctype = (col["data_type"] or "").upper() or "TEXT"
+                    is_pk = cname in pk_cols
 
                     samples: list[str] = []
                     non_null = 0
                     if row_count > 0:
                         try:
-                            cur = await db.execute(
-                                f'SELECT COUNT(*) FROM "{tname}" '
-                                f'WHERE "{cname}" IS NOT NULL AND "{cname}" != \'\''
+                            non_null = await db.fetchval(
+                                f"SELECT COUNT(*) FROM {quote_ident(tname)} "
+                                f"WHERE {quote_ident(cname)} IS NOT NULL "
+                                f"  AND {quote_ident(cname)}::text <> ''"
                             )
-                            non_null = int((await cur.fetchone())[0])
+                            non_null = int(non_null or 0)
 
-                            cur = await db.execute(
-                                f'SELECT DISTINCT "{cname}" FROM "{tname}" '
-                                f'WHERE "{cname}" IS NOT NULL AND "{cname}" != \'\' '
-                                f'LIMIT 3'
+                            sample_rows = await db.fetch(
+                                f"SELECT DISTINCT {quote_ident(cname)} AS v "
+                                f"FROM {quote_ident(tname)} "
+                                f"WHERE {quote_ident(cname)} IS NOT NULL "
+                                f"  AND {quote_ident(cname)}::text <> '' "
+                                "LIMIT 3"
                             )
-                            for vrow in await cur.fetchall():
-                                v = vrow[0]
+                            for vrow in sample_rows:
+                                v = vrow["v"]
                                 if v is None:
                                     continue
                                 s = str(v)
@@ -138,35 +166,37 @@ class SchemaService:
         column: str,
         limit: int = 50,
     ) -> list[str]:
-        """Lista valores distintos não-nulos de uma coluna (para popular dropdown)."""
-        # validação anti-injection: nomes precisam ser identificadores SQL válidos
-        if not _is_safe_ident(table) or not _is_safe_ident(column):
+        """Lista valores distintos não-nulos de uma coluna."""
+        if not is_safe_ident(table) or not is_safe_ident(column):
             raise ValueError("nome de tabela/coluna inválido")
         if table in _HIDDEN_TABLES or column in _HIDDEN_COLUMNS:
             raise ValueError("tabela/coluna não acessível")
 
         async with connect() as db:
-            cur = await db.execute(
-                f"SELECT DISTINCT \"{column}\" FROM \"{table}\" "
-                f"WHERE \"{column}\" IS NOT NULL AND \"{column}\" != '' "
-                f"LIMIT ?",
-                (min(limit, 500),),
+            rows = await db.fetch(
+                f"SELECT DISTINCT {quote_ident(column)} AS v "
+                f"FROM {quote_ident(table)} "
+                f"WHERE {quote_ident(column)} IS NOT NULL "
+                f"  AND {quote_ident(column)}::text <> '' "
+                "LIMIT $1",
+                min(limit, 500),
             )
-            return [str(r[0]) for r in await cur.fetchall() if r[0] is not None]
+            return [str(r["v"]) for r in rows if r["v"] is not None]
 
     async def get_value(self, table: str, column: str, pk_column: str, pk_value: str) -> str | None:
-        """Recupera o valor de uma coluna específica para uma linha identificada pela PK."""
-        if not all(_is_safe_ident(x) for x in (table, column, pk_column)):
+        """Recupera o valor de uma coluna específica para uma linha
+        identificada pela PK."""
+        if not all(is_safe_ident(x) for x in (table, column, pk_column)):
             raise ValueError("identificador inválido")
         if table in _HIDDEN_TABLES or column in _HIDDEN_COLUMNS:
             raise ValueError("tabela/coluna não acessível")
         async with connect() as db:
-            cur = await db.execute(
-                f"SELECT \"{column}\" FROM \"{table}\" WHERE \"{pk_column}\" = ? LIMIT 1",
-                (pk_value,),
+            row = await db.fetchrow(
+                f"SELECT {quote_ident(column)} AS v FROM {quote_ident(table)} "
+                f"WHERE {quote_ident(pk_column)}::text = $1 LIMIT 1",
+                pk_value,
             )
-            row = await cur.fetchone()
-            return None if not row or row[0] is None else str(row[0])
+            return None if not row or row["v"] is None else str(row["v"])
 
     async def fetch_series(
         self,
@@ -179,19 +209,10 @@ class SchemaService:
         filters: list[dict] | None = None,
         value_expr: str = "",
     ) -> dict:
-        """Devolve {labels, values, agg, total_rows} para alimentar Chart.js.
-
-        - aggregate='count' devolve contagem por label (ignora value_column ou usa COUNT(*))
-        - aggregate='sum'|'avg'|'min'|'max' agrega value_column GROUP BY label_column
-        - aggregate='none' devolve linhas brutas (label, value) sem agregação
-        - order_by: ordenação dos resultados
-        - filters: lista de {column, op, value} aplicados como WHERE adicional.
-                   ops aceitos: '='. Identificadores validados com _is_safe_ident,
-                   valores parametrizados (sqlite-binding) — sem risco de injection.
-        """
-        if not _is_safe_ident(table) or not _is_safe_ident(label_column):
+        """Devolve {labels, values, agg, total_rows} para alimentar Chart.js."""
+        if not is_safe_ident(table) or not is_safe_ident(label_column):
             raise ValueError("identificador inválido")
-        if value_column and not _is_safe_ident(value_column):
+        if value_column and not is_safe_ident(value_column):
             raise ValueError("identificador de value_column inválido")
         if table in _HIDDEN_TABLES:
             raise ValueError("tabela não acessível")
@@ -201,8 +222,6 @@ class SchemaService:
         if agg not in {"sum", "count", "avg", "min", "max", "none"}:
             raise ValueError(f"aggregate inválido: {aggregate}")
 
-        # Variável calculada: expressão crua validada contra whitelist de colunas
-        # da tabela + operadores aritméticos + funções permitidas.
         raw_value_expr = (value_expr or "").strip()
         if raw_value_expr:
             await _validate_value_expr(raw_value_expr, table)
@@ -213,66 +232,70 @@ class SchemaService:
             if raw_value_expr:
                 sql_value_expr = raw_value_expr
             else:
-                sql_value_expr = f'"{value_column}"' if value_column else "1"
+                sql_value_expr = quote_ident(value_column) if value_column else "1"
         else:
             if raw_value_expr:
-                sql_value_expr = f'{agg.upper()}(CAST(({raw_value_expr}) AS REAL))'
+                sql_value_expr = f"{agg.upper()}(CAST(({raw_value_expr}) AS DOUBLE PRECISION))"
             elif value_column:
-                sql_value_expr = f'{agg.upper()}(CAST("{value_column}" AS REAL))'
+                sql_value_expr = (
+                    f"{agg.upper()}(CAST({quote_ident(value_column)} "
+                    f"AS DOUBLE PRECISION))"
+                )
             else:
                 raise ValueError(f"aggregate={agg} requer value_column ou value_expr")
 
-        # ordenação
         order_clauses = {
             "label_asc":  '"_label" ASC',
             "label_desc": '"_label" DESC',
-            "value_desc": '"_value" DESC',
-            "value_asc":  '"_value" ASC',
+            "value_desc": '"_value" DESC NULLS LAST',
+            "value_asc":  '"_value" ASC NULLS LAST',
         }
         order_clause = order_clauses.get(order_by, '"_label" ASC')
 
         # Filtros adicionais (crossfilter / globais) — só op '=' nesta fase.
         extra_where = ""
         extra_params: list = []
-        if filters:
-            for f in filters:
-                col = f.get("column")
-                op = f.get("op", "=")
-                val = f.get("value")
-                if not col or not _is_safe_ident(col) or col in _HIDDEN_COLUMNS:
-                    raise ValueError(f"filtro com coluna inválida: {col}")
-                if op != "=":
-                    raise ValueError(f"operador de filtro não suportado: {op}")
-                extra_where += f' AND "{col}" = ?'
-                extra_params.append(val)
+        for f in (filters or []):
+            col = f.get("column")
+            op = f.get("op", "=")
+            val = f.get("value")
+            if not col or not is_safe_ident(col) or col in _HIDDEN_COLUMNS:
+                raise ValueError(f"filtro com coluna inválida: {col}")
+            if op != "=":
+                raise ValueError(f"operador de filtro não suportado: {op}")
+            extra_params.append(val)
+            extra_where += f" AND {quote_ident(col)} = ${len(extra_params)}"
+
+        limit_param = len(extra_params) + 1
 
         async with connect() as db:
             if agg == "none":
                 sql = (
-                    f'SELECT "{label_column}" AS "_label", {sql_value_expr} AS "_value" '
-                    f'FROM "{table}" '
-                    f'WHERE "{label_column}" IS NOT NULL{extra_where} '
-                    f'ORDER BY {order_clause} LIMIT ?'
+                    f'SELECT {quote_ident(label_column)} AS "_label", '
+                    f'       {sql_value_expr} AS "_value" '
+                    f'FROM {quote_ident(table)} '
+                    f'WHERE {quote_ident(label_column)} IS NOT NULL{extra_where} '
+                    f'ORDER BY {order_clause} LIMIT ${limit_param}'
                 )
             else:
                 sql = (
-                    f'SELECT "{label_column}" AS "_label", {sql_value_expr} AS "_value" '
-                    f'FROM "{table}" '
-                    f'WHERE "{label_column}" IS NOT NULL{extra_where} '
-                    f'GROUP BY "{label_column}" '
-                    f'ORDER BY {order_clause} LIMIT ?'
+                    f'SELECT {quote_ident(label_column)} AS "_label", '
+                    f'       {sql_value_expr} AS "_value" '
+                    f'FROM {quote_ident(table)} '
+                    f'WHERE {quote_ident(label_column)} IS NOT NULL{extra_where} '
+                    f'GROUP BY {quote_ident(label_column)} '
+                    f'ORDER BY {order_clause} LIMIT ${limit_param}'
                 )
             try:
-                cur = await db.execute(sql, (*extra_params, limit))
-                rows = await cur.fetchall()
+                rows = await db.fetch(sql, *extra_params, limit)
             except Exception as e:
                 raise ValueError(f"erro na consulta: {e}")
 
-            labels = []
-            values = []
+            labels: list[str] = []
+            values: list[float] = []
             for r in rows:
-                lbl = r[0]
-                val = r[1]
+                lbl = r["_label"]
+                val = r["_value"]
                 if lbl is None or val is None:
                     continue
                 labels.append(str(lbl))
@@ -281,8 +304,10 @@ class SchemaService:
                 except (TypeError, ValueError):
                     values.append(0.0)
 
-            cur = await db.execute(f'SELECT COUNT(*) FROM "{table}"')
-            total = int((await cur.fetchone())[0])
+            total = await db.fetchval(
+                f"SELECT COUNT(*) FROM {quote_ident(table)}"
+            )
+            total = int(total or 0)
 
         return {
             "labels": labels,
@@ -295,15 +320,10 @@ class SchemaService:
         }
 
 
-def _is_safe_ident(name: str) -> bool:
-    """Valida que `name` é um identificador SQL seguro (a-z, 0-9, _)."""
-    if not name or len(name) > 64:
-        return False
-    return all(c.isalnum() or c == "_" for c in name)
-
-
-# Whitelist de palavras-chave permitidas em variáveis calculadas
-_EXPR_KEYWORDS = {"CAST", "AS", "REAL", "INTEGER", "TEXT", "ROUND", "ABS", "COALESCE"}
+# Whitelist de palavras-chave permitidas em variáveis calculadas.
+# `REAL` mantido por compat — na geração SQL usamos DOUBLE PRECISION.
+_EXPR_KEYWORDS = {"CAST", "AS", "REAL", "DOUBLE", "PRECISION", "INTEGER", "TEXT",
+                  "ROUND", "ABS", "COALESCE"}
 import re as _re  # local alias
 
 _EXPR_TOKEN_RE = _re.compile(r"[A-Za-z_][A-Za-z0-9_]*")
@@ -311,24 +331,35 @@ _EXPR_ALLOWED_CHARS = _re.compile(r"^[A-Za-z0-9_+\-*/().,\s]+$")
 
 
 async def _validate_value_expr(expr: str, table: str) -> None:
-    """Valida `expr` (variável calculada) contra:
-       - whitelist de caracteres (apenas alfanuméricos + + - * / ( ) , espaços)
-       - tamanho máximo (200 chars)
-       - identificadores devem ser palavras-chave permitidas OU colunas reais da tabela
+    """Valida expressão (variável calculada) contra:
 
-    Levanta ValueError se inválido. Não executa SQL."""
+       - whitelist de caracteres
+       - tamanho máximo (200 chars)
+       - identificadores devem ser palavras-chave permitidas OU colunas reais
+         da tabela
+
+    Levanta ValueError se inválido. Não executa SQL fora da introspecção."""
     if len(expr) > 200:
         raise ValueError("expressão muito longa (máx 200)")
     if not _EXPR_ALLOWED_CHARS.match(expr):
         raise ValueError("expressão contém caracteres não permitidos")
-    if not _is_safe_ident(table):
+    if not is_safe_ident(table):
         raise ValueError("nome de tabela inválido")
     async with connect() as db:
-        cur = await db.execute(f'PRAGMA table_info("{table}")')
-        cols = {row[1] for row in await cur.fetchall()}
+        rows = await db.fetch(
+            "SELECT column_name FROM information_schema.columns "
+            "WHERE table_schema = 'public' AND table_name = $1",
+            table,
+        )
+        cols = {r["column_name"] for r in rows}
     for tok in _EXPR_TOKEN_RE.findall(expr):
         if tok.upper() in _EXPR_KEYWORDS:
             continue
         if tok in cols and tok not in _HIDDEN_COLUMNS:
             continue
         raise ValueError(f"identificador '{tok}' não é coluna da tabela ou função permitida")
+
+
+# Manter alias `_is_safe_ident` do módulo legado pra que o código que
+# importa do schema_service continue compilando (raiox_service usa).
+_is_safe_ident = is_safe_ident

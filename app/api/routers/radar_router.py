@@ -464,8 +464,8 @@ async def admin_change_card_owner(
         raise HTTPException(404, "card não encontrado")
 
     # resolve novo dono pelo username
-    from app.adapters.db.repositories.user_repo import SqliteUserRepository
-    users_repo = SqliteUserRepository()
+    from app.adapters.db.repositories.user_repo import PgUserRepository
+    users_repo = PgUserRepository()
     new_owner = await users_repo.get_by_username(new_username)
     if not new_owner:
         raise HTTPException(404, f"usuário '{new_username}' não encontrado")

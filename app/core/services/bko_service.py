@@ -8,7 +8,7 @@ import hashlib
 from datetime import datetime
 from typing import Iterable
 
-from app.adapters.db.repositories.bko_repo import SqliteBkoRepository
+from app.adapters.db.repositories.bko_repo import PgBkoRepository
 from app.core.domain.entities import BkoCase, TranscriptRecord
 
 
@@ -26,8 +26,8 @@ _CASE_HEADER_MAP = {
 
 
 class BkoService:
-    def __init__(self, repo: SqliteBkoRepository | None = None):
-        self.repo = repo or SqliteBkoRepository()
+    def __init__(self, repo: PgBkoRepository | None = None):
+        self.repo = repo or PgBkoRepository()
 
     # ---------- ingest XLSX (casos) ----------
 

@@ -716,16 +716,16 @@ async def skills_options(user: User = Depends(require_user)):
 async def scope_options(user: User = Depends(require_user)):
     """Devolve a lista de papéis e departamentos para popular os multi-selects
     do modal de criação/edição de prancheta."""
-    from app.adapters.db.sqlite import connect
+    from app.adapters.db.postgres import connect
     async with connect() as db:
-        cur = await db.execute("SELECT name FROM roles ORDER BY name")
-        roles = [r[0] for r in await cur.fetchall()]
-        cur = await db.execute(
+        role_rows = await db.fetch("SELECT name FROM roles ORDER BY name")
+        roles = [r["name"] for r in role_rows]
+        dept_rows = await db.fetch(
             "SELECT DISTINCT department FROM users "
-            "WHERE department IS NOT NULL AND department != '' "
+            "WHERE department IS NOT NULL AND department <> '' "
             "ORDER BY department"
         )
-        departments = [r[0] for r in await cur.fetchall()]
+        departments = [r["department"] for r in dept_rows]
     return {"roles": roles, "departments": departments}
 
 

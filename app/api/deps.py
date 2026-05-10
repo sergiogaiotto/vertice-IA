@@ -8,18 +8,18 @@ from typing import Optional
 from fastapi import Depends, HTTPException, Request, status
 from fastapi.security import OAuth2PasswordBearer
 
-from app.adapters.db.repositories.analysis_repo import SqliteAnalysisRepository
-from app.adapters.db.repositories.churn_repo import SqliteChurnRepository
-from app.adapters.db.repositories.contract_repo import SqliteContractRepository
-from app.adapters.db.repositories.failsafe_repo import SqliteFailsafeRepository
+from app.adapters.db.repositories.analysis_repo import PgAnalysisRepository
+from app.adapters.db.repositories.churn_repo import PgChurnRepository
+from app.adapters.db.repositories.contract_repo import PgContractRepository
+from app.adapters.db.repositories.failsafe_repo import PgFailsafeRepository
 from app.adapters.db.repositories.finops_repo import (
-    SqliteFinOpsBudgetRepository,
-    SqliteFinOpsModelPolicyRepository,
-    SqliteFinOpsRepository,
+    PgFinOpsBudgetRepository,
+    PgFinOpsModelPolicyRepository,
+    PgFinOpsRepository,
 )
-from app.adapters.db.repositories.module_repo import SqliteModuleRepository
-from app.adapters.db.repositories.prompt_repo import SqlitePromptRepository
-from app.adapters.db.repositories.user_repo import SqliteUserRepository
+from app.adapters.db.repositories.module_repo import PgModuleRepository
+from app.adapters.db.repositories.prompt_repo import PgPromptRepository
+from app.adapters.db.repositories.user_repo import PgUserRepository
 from app.adapters.guardrails.input_sanitizer import DefaultInputGuardrail
 from app.adapters.guardrails.output_validator import DefaultOutputGuardrail
 from app.adapters.llm.factory import build_clients
@@ -77,47 +77,47 @@ def get_router_clients():
 # ---------- repositories ----------
 
 def get_user_repo():
-    return SqliteUserRepository()
+    return PgUserRepository()
 
 
 def get_module_repo():
-    return SqliteModuleRepository()
+    return PgModuleRepository()
 
 
 def get_prompt_repo():
-    return SqlitePromptRepository()
+    return PgPromptRepository()
 
 
 def get_contract_repo():
-    return SqliteContractRepository()
+    return PgContractRepository()
 
 
 def get_analysis_repo():
-    return SqliteAnalysisRepository()
+    return PgAnalysisRepository()
 
 
 def get_churn_repo():
-    return SqliteChurnRepository()
+    return PgChurnRepository()
 
 
 def get_finops_repo():
-    return SqliteFinOpsRepository()
+    return PgFinOpsRepository()
 
 
 def get_failsafe_repo():
-    return SqliteFailsafeRepository()
+    return PgFailsafeRepository()
 
 
 def get_radar_state_repo():
-    from app.adapters.db.repositories.radar_state_repo import SqliteRadarStateRepository
-    return SqliteRadarStateRepository()
+    from app.adapters.db.repositories.radar_state_repo import PgRadarStateRepository
+    return PgRadarStateRepository()
 
 
 def get_radar_card_visibility_repo():
     from app.adapters.db.repositories.radar_card_visibility_repo import (
-        SqliteRadarCardVisibilityRepository,
+        PgRadarCardVisibilityRepository,
     )
-    return SqliteRadarCardVisibilityRepository()
+    return PgRadarCardVisibilityRepository()
 
 
 # ---------- services ----------
@@ -163,11 +163,11 @@ def get_finops_service(finops=Depends(get_finops_repo)) -> FinOpsService:
 
 
 def get_finops_budget_repo():
-    return SqliteFinOpsBudgetRepository()
+    return PgFinOpsBudgetRepository()
 
 
 def get_finops_policy_repo():
-    return SqliteFinOpsModelPolicyRepository()
+    return PgFinOpsModelPolicyRepository()
 
 
 def get_finops_budget_service(
@@ -230,23 +230,23 @@ def get_schema_service():
 # ---------- Raio X Cliente ----------
 
 def get_raiox_board_repo():
-    from app.adapters.db.repositories.raiox_repo import SqliteRaioXBoardRepository
-    return SqliteRaioXBoardRepository()
+    from app.adapters.db.repositories.raiox_repo import PgRaioXBoardRepository
+    return PgRaioXBoardRepository()
 
 
 def get_raiox_chart_repo():
-    from app.adapters.db.repositories.raiox_repo import SqliteRaioXChartRepository
-    return SqliteRaioXChartRepository()
+    from app.adapters.db.repositories.raiox_repo import PgRaioXChartRepository
+    return PgRaioXChartRepository()
 
 
 def get_raiox_rel_repo():
-    from app.adapters.db.repositories.raiox_repo import SqliteRaioXRelationshipRepository
-    return SqliteRaioXRelationshipRepository()
+    from app.adapters.db.repositories.raiox_repo import PgRaioXRelationshipRepository
+    return PgRaioXRelationshipRepository()
 
 
 def get_raiox_analysis_repo():
-    from app.adapters.db.repositories.raiox_repo import SqliteRaioXAnalysisRepository
-    return SqliteRaioXAnalysisRepository()
+    from app.adapters.db.repositories.raiox_repo import PgRaioXAnalysisRepository
+    return PgRaioXAnalysisRepository()
 
 
 def get_raiox_service(
@@ -266,12 +266,10 @@ async def current_user_optional(
     token: Optional[str] = Depends(oauth2_scheme),
     auth: AuthService = Depends(get_auth_service),
 ) -> Optional[User]:
-    # tenta token Bearer; se ausente, tenta cookie de sessão
     actual = token or request.session.get("token")
     if not actual:
         return None
     user = await auth.current_user(actual)
-    # publica em request.state para o AuditMiddleware capturar
     if user:
         request.state.user = user
     return user

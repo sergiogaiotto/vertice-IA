@@ -2,15 +2,15 @@
 
 import pytest
 
-from app.adapters.db.repositories.user_repo import SqliteUserRepository
-from app.adapters.db.sqlite import init_db
+from app.adapters.db.postgres import init_db
+from app.adapters.db.repositories.user_repo import PgUserRepository
 from app.core.services.auth_service import AuthService
 
 
 @pytest.mark.asyncio
 async def test_register_and_authenticate():
     await init_db()
-    auth = AuthService(SqliteUserRepository())
+    auth = AuthService(PgUserRepository())
 
     await auth.bootstrap_root("admin", "vertice2026")
     user = await auth.authenticate("admin", "vertice2026")
@@ -22,7 +22,7 @@ async def test_register_and_authenticate():
 @pytest.mark.asyncio
 async def test_wrong_password_fails():
     await init_db()
-    auth = AuthService(SqliteUserRepository())
+    auth = AuthService(PgUserRepository())
     await auth.bootstrap_root("admin", "vertice2026")
     user = await auth.authenticate("admin", "errada")
     assert user is None
@@ -31,7 +31,7 @@ async def test_wrong_password_fails():
 @pytest.mark.asyncio
 async def test_token_roundtrip():
     await init_db()
-    auth = AuthService(SqliteUserRepository())
+    auth = AuthService(PgUserRepository())
     await auth.bootstrap_root("admin", "vertice2026")
     user = await auth.authenticate("admin", "vertice2026")
     token = auth.issue_token(user)

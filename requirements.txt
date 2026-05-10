@@ -16,7 +16,11 @@ bcrypt==4.2.0
 passlib[bcrypt]==1.7.4
 
 # DB
-aiosqlite==0.20.0
+# asyncpg: driver PostgreSQL nativo. Sem ORM intermediário e com prepared
+# statements automáticos por conexão — escolha por performance/throughput.
+# Pool gerenciado em app/adapters/db/postgres.py (min=5, max=20 por padrão,
+# parametrizável via PG_POOL_MIN_SIZE / PG_POOL_MAX_SIZE).
+asyncpg==0.30.0
 
 # LLM clients
 # openai>=2.26 é exigido por langchain-openai>=1.2 (que por sua vez é a única

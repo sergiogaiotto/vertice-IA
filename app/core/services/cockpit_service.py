@@ -16,7 +16,7 @@ from collections import Counter, defaultdict
 from datetime import datetime, timedelta
 from typing import Any
 
-from app.adapters.db.sqlite import connect
+from app.adapters.db.postgres import connect
 
 
 # Features cuja atividade conta como "análise gerada" pelo usuário
@@ -95,27 +95,24 @@ class CockpitService:
         """Coleta toda a atividade do usuário nos últimos N dias para o cockpit."""
         cutoff = datetime.utcnow() - timedelta(days=days)
         async with connect() as db:
-            cur = await db.execute(
+            rows = await db.fetch(
                 "SELECT ts, category, action, target, feature, status_code "
                 "FROM audit_events "
-                "WHERE user_id = ? AND ts >= ? "
+                "WHERE user_id = $1::uuid AND ts >= $2 "
                 "ORDER BY ts DESC LIMIT 5000",
-                (user_id, cutoff.isoformat()),
+                user_id, cutoff,
             )
-            rows = await cur.fetchall()
 
         events: list[dict[str, Any]] = []
         for r in rows:
-            ts_str = r[0]
-            try:
-                ts = datetime.fromisoformat(ts_str) if isinstance(ts_str, str) else ts_str
-            except ValueError:
+            ts = r["ts"]
+            if not isinstance(ts, datetime):
                 continue
-            category = r[1] or ""
-            action = r[2] or ""
-            target = r[3] or ""
-            feature = r[4]
-            status = r[5]
+            category = r["category"] or ""
+            action = r["action"] or ""
+            target = r["target"] or ""
+            feature = r["feature"]
+            status = r["status_code"]
             if status is not None and status >= 400:
                 continue  # só conta sucessos
             if not _is_analysis_event(category, action, target, feature):

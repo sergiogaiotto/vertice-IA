@@ -4,10 +4,10 @@ from datetime import datetime
 
 import pytest
 
-from app.adapters.db.repositories.analysis_repo import SqliteAnalysisRepository
-from app.adapters.db.repositories.contract_repo import SqliteContractRepository
-from app.adapters.db.repositories.finops_repo import SqliteFinOpsRepository
-from app.adapters.db.sqlite import init_db
+from app.adapters.db.postgres import init_db
+from app.adapters.db.repositories.analysis_repo import PgAnalysisRepository
+from app.adapters.db.repositories.contract_repo import PgContractRepository
+from app.adapters.db.repositories.finops_repo import PgFinOpsRepository
 from app.adapters.guardrails.input_sanitizer import DefaultInputGuardrail
 from app.adapters.guardrails.output_validator import DefaultOutputGuardrail
 from app.adapters.llm.factory import build_clients
@@ -18,9 +18,9 @@ from app.core.services.radar_service import RadarService
 
 def _make_service() -> RadarService:
     return RadarService(
-        contracts=SqliteContractRepository(),
-        analyses=SqliteAnalysisRepository(),
-        finops=SqliteFinOpsRepository(),
+        contracts=PgContractRepository(),
+        analyses=PgAnalysisRepository(),
+        finops=PgFinOpsRepository(),
         router=ModelRouter(build_clients()),
         input_guard=DefaultInputGuardrail(),
         output_guard=DefaultOutputGuardrail(),
@@ -77,9 +77,9 @@ async def test_card_creation_blocks_injection():
 @pytest.mark.asyncio
 async def test_radar_state_repo_roundtrip():
     """Estado por usuário: GET vazio, PUT, GET retorna o que foi salvo."""
-    from app.adapters.db.repositories.radar_state_repo import SqliteRadarStateRepository
+    from app.adapters.db.repositories.radar_state_repo import PgRadarStateRepository
     await init_db()
-    repo = SqliteRadarStateRepository()
+    repo = PgRadarStateRepository()
     user_id = "user-test-state-1"
     await repo.delete(user_id)  # idempotente — limpa resíduo de runs anteriores
 
@@ -106,9 +106,9 @@ async def test_radar_state_repo_roundtrip():
 @pytest.mark.asyncio
 async def test_radar_state_repo_version_conflict():
     """PUT com expected_version desatualizada → conflict, sem sobrescrever."""
-    from app.adapters.db.repositories.radar_state_repo import SqliteRadarStateRepository
+    from app.adapters.db.repositories.radar_state_repo import PgRadarStateRepository
     await init_db()
-    repo = SqliteRadarStateRepository()
+    repo = PgRadarStateRepository()
     user_id = "user-test-state-2"
     await repo.delete(user_id)  # idempotente — limpa resíduo de runs anteriores
 
@@ -160,10 +160,10 @@ def test_output_guardrail_caps_per_format():
 async def test_card_visibility_repo_default_private():
     """Cards novos sincronizados sem visibility explícita entram como 'private'."""
     from app.adapters.db.repositories.radar_card_visibility_repo import (
-        SqliteRadarCardVisibilityRepository,
+        PgRadarCardVisibilityRepository,
     )
     await init_db()
-    repo = SqliteRadarCardVisibilityRepository()
+    repo = PgRadarCardVisibilityRepository()
     user_id = "user-vis-1"
 
     # limpa resíduo
@@ -188,10 +188,10 @@ async def test_card_visibility_repo_default_private():
 async def test_card_visibility_repo_role_filtering():
     """list_visible_to filtra conforme roles do consultor."""
     from app.adapters.db.repositories.radar_card_visibility_repo import (
-        SqliteRadarCardVisibilityRepository,
+        PgRadarCardVisibilityRepository,
     )
     await init_db()
-    repo = SqliteRadarCardVisibilityRepository()
+    repo = PgRadarCardVisibilityRepository()
     owner = "user-vis-owner"
     viewer = "user-vis-viewer"
 
@@ -228,10 +228,10 @@ async def test_card_visibility_repo_role_filtering():
 async def test_card_visibility_repo_sync_removes_stale():
     """sync_owner_cards apaga cards do dono que sumiram do payload."""
     from app.adapters.db.repositories.radar_card_visibility_repo import (
-        SqliteRadarCardVisibilityRepository,
+        PgRadarCardVisibilityRepository,
     )
     await init_db()
-    repo = SqliteRadarCardVisibilityRepository()
+    repo = PgRadarCardVisibilityRepository()
     owner = "user-vis-stale"
     for uid in list((await repo.list_for_owner(owner)).keys()):
         await repo.delete(uid)
@@ -254,10 +254,10 @@ async def test_card_visibility_repo_sync_removes_stale():
 async def test_card_visibility_repo_tracks_creator_and_previous_visibility():
     """upsert snapshota o criador no INSERT; update_visibility captura o estado anterior."""
     from app.adapters.db.repositories.radar_card_visibility_repo import (
-        SqliteRadarCardVisibilityRepository,
+        PgRadarCardVisibilityRepository,
     )
     await init_db()
-    repo = SqliteRadarCardVisibilityRepository()
+    repo = PgRadarCardVisibilityRepository()
     creator = "user-creator-1"
     for uid in list((await repo.list_for_owner(creator)).keys()):
         await repo.delete(uid)
@@ -294,10 +294,10 @@ async def test_card_visibility_repo_tracks_creator_and_previous_visibility():
 async def test_card_visibility_repo_change_owner_preserves_creator():
     """change_owner altera dono, mas mantém created_by_*."""
     from app.adapters.db.repositories.radar_card_visibility_repo import (
-        SqliteRadarCardVisibilityRepository,
+        PgRadarCardVisibilityRepository,
     )
     await init_db()
-    repo = SqliteRadarCardVisibilityRepository()
+    repo = PgRadarCardVisibilityRepository()
     creator = "user-co-creator"
     new_owner = "user-co-newowner"
     for uid in list((await repo.list_for_owner(creator)).keys()):
@@ -321,10 +321,10 @@ async def test_card_visibility_repo_change_owner_preserves_creator():
 async def test_card_visibility_repo_preserves_visibility_on_resync():
     """Resync sem campo `visibility` no payload preserva o valor anterior."""
     from app.adapters.db.repositories.radar_card_visibility_repo import (
-        SqliteRadarCardVisibilityRepository,
+        PgRadarCardVisibilityRepository,
     )
     await init_db()
-    repo = SqliteRadarCardVisibilityRepository()
+    repo = PgRadarCardVisibilityRepository()
     owner = "user-vis-preserve"
     for uid in list((await repo.list_for_owner(owner)).keys()):
         await repo.delete(uid)

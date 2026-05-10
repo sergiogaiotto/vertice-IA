@@ -1,15 +1,67 @@
 version: "3.9"
 
+# Stack Vértice — app + PostgreSQL.
+# O app só sobe depois que o Postgres responde no healthcheck (depends_on
+# com `condition: service_healthy`), evitando o flapping clássico de
+# "connection refused" no primeiro boot.
 services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: vertice-postgres
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-vertice}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-vertice}
+      POSTGRES_DB: ${POSTGRES_DB:-vertice}
+      # tuning leve para dev/staging single-node. Produção real deve usar
+      # postgres.conf ou um operador (Patroni/Crunchy/Supabase).
+      POSTGRES_INITDB_ARGS: "--data-checksums"
+    command:
+      - "postgres"
+      - "-c"
+      - "max_connections=200"
+      - "-c"
+      - "shared_buffers=256MB"
+      - "-c"
+      - "effective_cache_size=1GB"
+      - "-c"
+      - "work_mem=8MB"
+      - "-c"
+      - "maintenance_work_mem=64MB"
+      - "-c"
+      - "wal_level=replica"
+      - "-c"
+      - "max_wal_size=2GB"
+      - "-c"
+      - "random_page_cost=1.1"   # SSD friendly
+    ports:
+      - "5432:5432"
+    volumes:
+      - vertice_pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-vertice} -d ${POSTGRES_DB:-vertice}"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+    restart: unless-stopped
+
   vertice:
     build: .
     container_name: vertice
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      DATABASE_URL: ${DATABASE_URL:-postgresql://vertice:vertice@postgres:5432/vertice}
+      PG_POOL_MIN_SIZE: ${PG_POOL_MIN_SIZE:-5}
+      PG_POOL_MAX_SIZE: ${PG_POOL_MAX_SIZE:-20}
     ports:
       - "8000:8000"
     env_file:
       - .env
     volumes:
-      - ./data:/app/data
       - ./app:/app/app
     restart: unless-stopped
     command: uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
+
+volumes:
+  vertice_pgdata:

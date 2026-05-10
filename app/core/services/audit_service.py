@@ -7,14 +7,13 @@ paginada com filtros para a tela /audit.
 
 from __future__ import annotations
 
-import json
 import re
 import uuid
 from dataclasses import dataclass
 from datetime import datetime
 from typing import Any
 
-from app.adapters.db.sqlite import connect
+from app.adapters.db.postgres import connect
 
 
 # Path → feature (heurística para tagging automático de eventos HTTP)
@@ -56,19 +55,19 @@ def detect_feature(path: str) -> str | None:
     return None
 
 
-# Whitelist de janelas temporais aceitas em `since`. A string é interpolada
-# direto em SQL (DATETIME('now', '-1 hours')) — fora desta whitelist seria
-# vetor de injeção, então valores desconhecidos retornam None.
+# Whitelist de janelas temporais aceitas em `since`. O valor (intervalo PG)
+# é interpolado direto via cast `::interval` parametrizado — fora desta
+# whitelist seria vetor de injeção, então valores desconhecidos retornam None.
 _SINCE_MAP = {
-    "1h":  "-1 hours",
-    "6h":  "-6 hours",
-    "24h": "-1 days",
-    "7d":  "-7 days",
-    "30d": "-30 days",
+    "1h":  "1 hour",
+    "6h":  "6 hours",
+    "24h": "1 day",
+    "7d":  "7 days",
+    "30d": "30 days",
 }
 
 
-def _since_to_sqlite(since: str) -> str | None:
+def _since_to_interval(since: str) -> str | None:
     return _SINCE_MAP.get((since or "").strip().lower())
 
 
@@ -107,31 +106,38 @@ class AuditEvent:
 
 
 def _row_to_event(row) -> AuditEvent:
-    payload = None
-    if row[10]:
-        try:
-            payload = json.loads(row[10])
-        except (json.JSONDecodeError, TypeError):
-            payload = {"raw": str(row[10])[:1000]}
-    ts = row[1]
-    if isinstance(ts, str):
-        try:
-            ts = datetime.fromisoformat(ts)
-        except ValueError:
-            ts = datetime.utcnow()
+    payload = row["payload"]
+    if payload is not None and not isinstance(payload, (dict, list)):
+        payload = {"raw": str(payload)[:1000]}
+    ts = row["ts"] if isinstance(row["ts"], datetime) else datetime.utcnow()
     return AuditEvent(
-        id=row[0], ts=ts, user_id=row[2], username=row[3],
-        category=row[4], action=row[5], target=row[6], status_code=row[7],
-        duration_ms=row[8], feature=row[9], payload=payload,
-        error=row[11], ip=row[12], user_agent=row[13],
+        id=row["id"],
+        ts=ts,
+        user_id=row["user_id"],
+        username=row["username"],
+        category=row["category"],
+        action=row["action"],
+        target=row["target"],
+        status_code=row["status_code"],
+        duration_ms=row["duration_ms"],
+        feature=row["feature"],
+        payload=payload,
+        error=row["error"],
+        ip=row["ip"],
+        user_agent=row["user_agent"],
     )
 
 
 _SELECT = (
-    "SELECT id, ts, user_id, username, category, action, target, "
-    "status_code, duration_ms, feature, payload, error, ip, user_agent "
-    "FROM audit_events"
+    "SELECT id::text AS id, ts, user_id::text AS user_id, username, category, "
+    "action, target, status_code, duration_ms, feature, payload, error, ip, "
+    "user_agent FROM audit_events"
 )
+
+
+# Cap de tamanho do payload — JSONB no Postgres aguenta vários MBs, mas
+# linhas gigantes prejudicam vacuum/index e ficam difíceis de auditar.
+_PAYLOAD_MAX_BYTES = 100_000
 
 
 class AuditService:
@@ -153,27 +159,29 @@ class AuditService:
     ) -> str:
         """Persiste um evento. Retorna o id."""
         event_id = uuid.uuid4().hex
-        clean_payload = None
+        clean_payload: Any = None
         if payload is not None:
             try:
-                clean_payload = json.dumps(_redact(payload), ensure_ascii=False, default=str)
-                if len(clean_payload) > 100_000:
-                    clean_payload = clean_payload[:100_000] + '"...TRUNCATED"}'
+                clean_payload = _redact(payload)
+                # estima tamanho via repr; trunca payload em campo único se
+                # ficar gigante.
+                approx = len(repr(clean_payload))
+                if approx > _PAYLOAD_MAX_BYTES:
+                    clean_payload = {"_truncated": True, "_size": approx}
             except (TypeError, ValueError):
-                clean_payload = json.dumps({"_serialize_error": str(payload)[:200]})
+                clean_payload = {"_serialize_error": str(payload)[:200]}
 
         async with connect() as db:
             await db.execute(
-                "INSERT INTO audit_events (id, user_id, username, category, action, "
-                "target, status_code, duration_ms, feature, payload, error, ip, user_agent) "
-                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-                (
-                    event_id, user_id, username, category, action, target,
-                    status_code, duration_ms, feature, clean_payload, error,
-                    ip, (user_agent or "")[:300],
-                ),
+                "INSERT INTO audit_events (id, user_id, username, category, "
+                "action, target, status_code, duration_ms, feature, payload, "
+                "error, ip, user_agent) "
+                "VALUES ($1::uuid, $2::uuid, $3, $4, $5, $6, $7, $8, $9, "
+                "        $10::jsonb, $11, $12, $13)",
+                event_id, user_id, username, category, action, target,
+                status_code, duration_ms, feature, clean_payload, error,
+                ip, (user_agent or "")[:300],
             )
-            await db.commit()
         return event_id
 
     async def list_events(
@@ -191,41 +199,50 @@ class AuditService:
 
         ``since`` aceita janelas relativas: ``1h``, ``24h``, ``7d``, ``30d``.
         """
-        where = []
+        where: list[str] = []
         params: list = []
         if category:
-            where.append("category = ?"); params.append(category)
+            params.append(category); where.append(f"category = ${len(params)}")
         if feature:
-            where.append("feature = ?"); params.append(feature)
+            params.append(feature); where.append(f"feature = ${len(params)}")
         if username:
-            where.append("username LIKE ?"); params.append(f"%{username}%")
+            params.append(f"%{username}%")
+            where.append(f"username ILIKE ${len(params)}")
         if status_min:
-            where.append("status_code >= ?"); params.append(status_min)
+            params.append(status_min)
+            where.append(f"status_code >= ${len(params)}")
         if q:
-            where.append("(target LIKE ? OR action LIKE ? OR error LIKE ?)")
-            like = f"%{q}%"; params.extend([like, like, like])
+            params.append(f"%{q}%")
+            where.append(
+                f"(target ILIKE ${len(params)} "
+                f" OR action ILIKE ${len(params)} "
+                f" OR error ILIKE ${len(params)})"
+            )
         if since:
-            sql_since = _since_to_sqlite(since)
-            if sql_since:
-                where.append(f"ts >= DATETIME('now', '{sql_since}')")
+            interval = _since_to_interval(since)
+            if interval:
+                params.append(interval)
+                where.append(f"ts >= NOW() - ${len(params)}::interval")
         clause = (" WHERE " + " AND ".join(where)) if where else ""
 
         async with connect() as db:
-            cur = await db.execute(f"SELECT COUNT(*) FROM audit_events{clause}", params)
-            total = int((await cur.fetchone())[0])
+            total = await db.fetchval(
+                f"SELECT COUNT(*) FROM audit_events{clause}", *params
+            )
+            total = int(total or 0)
 
             sql = f"{_SELECT}{clause} ORDER BY ts DESC"
             if per_page > 0:
                 offset = max(0, (page - 1) * per_page)
-                sql += " LIMIT ? OFFSET ?"
                 params2 = params + [per_page, offset]
+                sql += f" LIMIT ${len(params2) - 1} OFFSET ${len(params2)}"
             else:
-                # "todos" — cap defensivo em 5000 para não derrubar o navegador
+                # "todos" — cap defensivo em 5000.
                 sql += " LIMIT 5000"
                 params2 = params
 
-            cur = await db.execute(sql, params2)
-            events = [_row_to_event(r) for r in await cur.fetchall()]
+            rows = await db.fetch(sql, *params2)
+            events = [_row_to_event(r) for r in rows]
 
         return {
             "events": events,
@@ -236,43 +253,41 @@ class AuditService:
 
     async def get_event(self, event_id: str) -> AuditEvent | None:
         async with connect() as db:
-            cur = await db.execute(f"{_SELECT} WHERE id = ?", (event_id,))
-            row = await cur.fetchone()
+            row = await db.fetchrow(f"{_SELECT} WHERE id = $1::uuid", event_id)
             return _row_to_event(row) if row else None
 
     async def stats(self) -> dict:
         """Stats agregados para dashboard topo da tela."""
         async with connect() as db:
-            cur = await db.execute(
-                "SELECT COUNT(*), SUM(CASE WHEN status_code >= 400 THEN 1 ELSE 0 END) "
+            row = await db.fetchrow(
+                "SELECT COUNT(*) AS total, "
+                "       SUM(CASE WHEN status_code >= 400 THEN 1 ELSE 0 END) AS errors "
                 "FROM audit_events"
             )
-            total, errors = await cur.fetchone()
-            cur = await db.execute(
-                "SELECT category, COUNT(*) FROM audit_events GROUP BY category ORDER BY 2 DESC"
+            cat_rows = await db.fetch(
+                "SELECT category, COUNT(*) AS n FROM audit_events "
+                "GROUP BY category ORDER BY n DESC"
             )
-            by_category = [{"category": r[0], "count": int(r[1])} for r in await cur.fetchall()]
-            cur = await db.execute(
-                "SELECT feature, COUNT(*) FROM audit_events "
-                "WHERE feature IS NOT NULL GROUP BY feature ORDER BY 2 DESC LIMIT 10"
+            feat_rows = await db.fetch(
+                "SELECT feature, COUNT(*) AS n FROM audit_events "
+                "WHERE feature IS NOT NULL GROUP BY feature ORDER BY n DESC LIMIT 10"
             )
-            by_feature = [{"feature": r[0], "count": int(r[1])} for r in await cur.fetchall()]
-            cur = await db.execute(
-                "SELECT username, COUNT(*) FROM audit_events "
-                "WHERE username IS NOT NULL GROUP BY username ORDER BY 2 DESC LIMIT 10"
+            user_rows = await db.fetch(
+                "SELECT username, COUNT(*) AS n FROM audit_events "
+                "WHERE username IS NOT NULL GROUP BY username "
+                "ORDER BY n DESC LIMIT 10"
             )
-            by_user = [{"username": r[0], "count": int(r[1])} for r in await cur.fetchall()]
-            cur = await db.execute(
-                "SELECT COUNT(*) FROM audit_events WHERE ts >= DATETIME('now', '-1 hour')"
+            last_hour = await db.fetchval(
+                "SELECT COUNT(*) FROM audit_events "
+                "WHERE ts >= NOW() - INTERVAL '1 hour'"
             )
-            last_hour = int((await cur.fetchone())[0])
             return {
-                "total": int(total or 0),
-                "errors": int(errors or 0),
-                "last_hour": last_hour,
-                "by_category": by_category,
-                "by_feature": by_feature,
-                "by_user": by_user,
+                "total": int(row["total"] or 0),
+                "errors": int(row["errors"] or 0),
+                "last_hour": int(last_hour or 0),
+                "by_category": [{"category": r["category"], "count": int(r["n"])} for r in cat_rows],
+                "by_feature":  [{"feature":  r["feature"],  "count": int(r["n"])} for r in feat_rows],
+                "by_user":     [{"username": r["username"], "count": int(r["n"])} for r in user_rows],
             }
 
 

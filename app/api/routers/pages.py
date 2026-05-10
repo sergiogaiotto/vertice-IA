@@ -315,15 +315,15 @@ async def finops_page(
 
     # Orçamentos avaliados (com gasto corrente vs limite + severidade).
     from app.adapters.db.repositories.finops_repo import (
-        SqliteFinOpsBudgetRepository, SqliteFinOpsModelPolicyRepository,
+        PgFinOpsBudgetRepository, PgFinOpsModelPolicyRepository,
     )
     from app.core.services.finops_service import (
         FinOpsBudgetService, FinOpsPolicyService,
     )
     budget_svc = FinOpsBudgetService(
-        SqliteFinOpsBudgetRepository(), svc.repo,
+        PgFinOpsBudgetRepository(), svc.repo,
     )
-    policy_svc = FinOpsPolicyService(SqliteFinOpsModelPolicyRepository())
+    policy_svc = FinOpsPolicyService(PgFinOpsModelPolicyRepository())
     budget_statuses = await budget_svc.evaluate_all()
     recent_alerts = await budget_svc.recent_alerts(10)
     policies = await policy_svc.list()
@@ -600,10 +600,10 @@ async def cards_em_tela_page(
     _require_any_role(user, ['admin', 'supervisor'])
 
     from app.adapters.db.repositories.radar_card_visibility_repo import (
-        SqliteRadarCardVisibilityRepository,
+        PgRadarCardVisibilityRepository,
     )
-    from app.adapters.db.repositories.user_repo import SqliteUserRepository
-    repo = SqliteRadarCardVisibilityRepository()
+    from app.adapters.db.repositories.user_repo import PgUserRepository
+    repo = PgRadarCardVisibilityRepository()
     rows = await repo.list_all()
     # enriquece com `who_can_see` igual ao endpoint /api/radar/admin/cards
     for r in rows:
@@ -618,7 +618,7 @@ async def cards_em_tela_page(
             r["who_can_see"] = ["dono"]
 
     # Lista de usuários ativos para o seletor de "alterar dono"
-    users_repo = SqliteUserRepository()
+    users_repo = PgUserRepository()
     all_users = await users_repo.list_all()
     user_options = sorted(
         [{"id": str(u.id), "username": u.username, "full_name": getattr(u, "full_name", "") or ""}

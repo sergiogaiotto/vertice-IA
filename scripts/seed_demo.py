@@ -11,8 +11,8 @@ from pathlib import Path
 # Garante que o root do projeto esteja no sys.path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from app.adapters.db.repositories.contract_repo import SqliteContractRepository  # noqa: E402
-from app.adapters.db.sqlite import init_db  # noqa: E402
+from app.adapters.db.postgres import close_pool, init_db  # noqa: E402
+from app.adapters.db.repositories.contract_repo import PgContractRepository  # noqa: E402
 from app.core.domain.entities import Contract, CustomerSegment  # noqa: E402
 
 DEMO = [
@@ -63,7 +63,7 @@ DEMO = [
 
 async def seed():
     await init_db()
-    repo = SqliteContractRepository()
+    repo = PgContractRepository()
     contracts = []
     base = datetime.now() - timedelta(hours=1)
     for i, item in enumerate(DEMO):
@@ -80,6 +80,7 @@ async def seed():
         )
     n = await repo.bulk_upsert(contracts)
     print(f"Vértice — {n} contratos demo inseridos.")
+    await close_pool()
 
 
 if __name__ == "__main__":
