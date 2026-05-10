@@ -46,6 +46,26 @@ class PgRadarCardVisibilityRepository:
             )
             return {r["card_uid"]: self._row_to_dict(r) for r in rows}
 
+    async def list_foreign_uids(
+        self, uids: list[str] | set[str], owner_id: str
+    ) -> set[str]:
+        """Dentro de ``uids``, retorna o subset que JÁ pertence a outro dono.
+
+        Usado como defesa no PUT /api/radar/state: cliente pode mandar UIDs
+        residuais de outro usuário (localStorage compartilhado, edição manual,
+        cliente velho). O servidor filtra esses antes de salvar.
+        """
+        uid_list = [u for u in uids if u]
+        if not uid_list:
+            return set()
+        async with connect() as db:
+            rows = await db.fetch(
+                "SELECT card_uid FROM radar_card_visibility "
+                "WHERE card_uid = ANY($1::text[]) AND owner_id <> $2",
+                uid_list, owner_id,
+            )
+            return {r["card_uid"] for r in rows}
+
     async def list_visible_to(
         self, user_id: str, user_roles: list[str]
     ) -> list[dict]:
