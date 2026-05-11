@@ -1843,6 +1843,31 @@
 </div>
 
 <script>
+// UUID v4 com fallback para contextos não-seguros (HTTP via IP).
+// `crypto.randomUUID` só existe em secure contexts (HTTPS ou localhost);
+// no deploy HTTP por IP, undefined → TypeError → Alpine silencia → groups
+// fica vazio → painel de "Análise principal" não renderiza. Este helper
+// usa randomUUID quando disponível, senão monta um v4 com getRandomValues
+// (presente em qualquer contexto).
+function genUUID() {
+  if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
+    return genUUID();
+  }
+  if (typeof crypto !== 'undefined' && typeof crypto.getRandomValues === 'function') {
+    const b = new Uint8Array(16);
+    crypto.getRandomValues(b);
+    b[6] = (b[6] & 0x0f) | 0x40; // version 4
+    b[8] = (b[8] & 0x3f) | 0x80; // variant 10xx
+    const h = Array.from(b, x => x.toString(16).padStart(2, '0'));
+    return `${h.slice(0,4).join('')}-${h.slice(4,6).join('')}-${h.slice(6,8).join('')}-${h.slice(8,10).join('')}-${h.slice(10,16).join('')}`;
+  }
+  // Último fallback — só se nem crypto.getRandomValues existir (raro).
+  return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, c => {
+    const r = Math.random() * 16 | 0;
+    return (c === 'x' ? r : (r & 0x3) | 0x8).toString(16);
+  });
+}
+
 function radarApp() {
   const userRoles = {{ (user.roles or []) | tojson }};
   const userId = "{{ user.id if user else '' }}";
@@ -2690,7 +2715,7 @@ function radarApp() {
       const group = this.groups[gIdx];
       const newRow = this.nextRowForNewCard(group);
       group.cards.push({
-        uid: crypto.randomUUID(),
+        uid: genUUID(),
         module_id: '__chart__',
         module_name: 'Gráfico',
         module_description: `${c.aggregate}(${c.value_column || '*'}) por ${c.label_column}`,
@@ -3035,7 +3060,7 @@ function radarApp() {
         // MODO CRIAÇÃO: novo card
         const newRow = this.nextRowForNewCard(group);
         group.cards.push({
-          uid: crypto.randomUUID(),
+          uid: genUUID(),
           module_id: '__diagram__',
           module_name: 'Diagrama',
           module_description: `${c.type} · gerado a partir de ${sourceCard.module_name}`,
@@ -3306,7 +3331,7 @@ function radarApp() {
       const group = this.groups[gIdx];
       const newRow = this.nextRowForNewCard(group);
       group.cards.push({
-        uid: crypto.randomUUID(),
+        uid: genUUID(),
         module_id: '__sql__',
         module_name: 'Exploração SQL',
         module_description: `Deep Agent · ${this.sqlConfig.selectedTables.length} tabela(s) no escopo`,
@@ -4311,7 +4336,7 @@ function radarApp() {
     },
 
     makeGroup(title) {
-      return { id: crypto.randomUUID(), title, cards: [], _newModuleId: '' };
+      return { id: genUUID(), title, cards: [], _newModuleId: '' };
     },
 
     totalCards() { return this.groups.reduce((a, g) => a + g.cards.length, 0); },
@@ -4577,7 +4602,7 @@ function radarApp() {
           .map(f => ({ label: f.label, key: f.key, value: f.value }));
         const chatRow = this.nextRowForNewCard(group);
         group.cards.push({
-          uid: crypto.randomUUID(),
+          uid: genUUID(),
           module_id: '__chat__',
           module_name: 'Chat',
           module_description: 'assistente conversacional · contexto da funcionalidade',
@@ -4637,7 +4662,7 @@ function radarApp() {
       const newRow = this.nextRowForNewCard(group);
 
       group.cards.push({
-        uid: crypto.randomUUID(),
+        uid: genUUID(),
         module_id: moduleId,
         module_name: mod.name,
         module_description: mod.description || '',
