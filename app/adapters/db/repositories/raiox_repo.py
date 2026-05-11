@@ -47,6 +47,8 @@ def _row_to_board(row) -> RaioXBoard:
         updated_at=_ts(row["updated_at"]),
         allowed_roles=_list_or_default(row["allowed_roles"], []),
         allowed_departments=_list_or_default(row["allowed_departments"], []),
+        updated_by_id=row["updated_by_id"],
+        updated_by_username=row["updated_by_username"],
     )
 
 
@@ -66,6 +68,8 @@ def _row_to_chart(row) -> RaioXChart:
         created_at=_ts(row["created_at"]),
         updated_at=_ts(row["updated_at"]),
         skill_path=row["skill_path"] or "",
+        updated_by_id=row["updated_by_id"],
+        updated_by_username=row["updated_by_username"],
     )
 
 
@@ -88,7 +92,8 @@ class PgRaioXBoardRepository(RaioXBoardRepository):
     _COLS = (
         "id::text AS id, name, description, owner_id::text AS owner_id, "
         "is_shared, layout_json, filters_json, cover_emoji, "
-        "created_at, updated_at, allowed_roles, allowed_departments"
+        "created_at, updated_at, allowed_roles, allowed_departments, "
+        "updated_by_id, updated_by_username"
     )
 
     async def list_visible(self, user_id: str | None) -> list[RaioXBoard]:
@@ -128,9 +133,10 @@ class PgRaioXBoardRepository(RaioXBoardRepository):
                 """
                 INSERT INTO raiox_boards
                   (id, name, description, owner_id, is_shared, layout_json,
-                   filters_json, cover_emoji, allowed_roles, allowed_departments)
+                   filters_json, cover_emoji, allowed_roles, allowed_departments,
+                   updated_by_id, updated_by_username)
                 VALUES ($1::uuid, $2, $3, $4::uuid, $5, $6::jsonb, $7::jsonb,
-                        $8, $9::jsonb, $10::jsonb)
+                        $8, $9::jsonb, $10::jsonb, $11, $12)
                 ON CONFLICT (id) DO UPDATE SET
                     name                = EXCLUDED.name,
                     description         = EXCLUDED.description,
@@ -140,11 +146,14 @@ class PgRaioXBoardRepository(RaioXBoardRepository):
                     cover_emoji         = EXCLUDED.cover_emoji,
                     allowed_roles       = EXCLUDED.allowed_roles,
                     allowed_departments = EXCLUDED.allowed_departments,
+                    updated_by_id       = EXCLUDED.updated_by_id,
+                    updated_by_username = EXCLUDED.updated_by_username,
                     updated_at          = NOW()
                 """,
                 str(board.id), board.name, board.description, board.owner_id,
                 board.is_shared, board.layout, board.filters, board.cover_emoji,
                 board.allowed_roles or [], board.allowed_departments or [],
+                board.updated_by_id, board.updated_by_username,
             )
             return board
 
@@ -160,7 +169,8 @@ class PgRaioXChartRepository(RaioXChartRepository):
     _COLS = (
         "id::text AS id, board_id::text AS board_id, title, chart_type, "
         "position_row, position_col, span_cols, span_rows, query_spec_json, "
-        "plotly_config_json, created_by_ai, created_at, updated_at, skill_path"
+        "plotly_config_json, created_by_ai, created_at, updated_at, skill_path, "
+        "updated_by_id, updated_by_username"
     )
 
     async def list_for_board(self, board_id: UUID) -> list[RaioXChart]:
@@ -187,25 +197,29 @@ class PgRaioXChartRepository(RaioXChartRepository):
                 INSERT INTO raiox_charts
                   (id, board_id, title, chart_type, position_row, position_col,
                    span_cols, span_rows, query_spec_json, plotly_config_json,
-                   created_by_ai, skill_path)
+                   created_by_ai, skill_path,
+                   updated_by_id, updated_by_username)
                 VALUES ($1::uuid, $2::uuid, $3, $4, $5, $6, $7, $8, $9::jsonb,
-                        $10::jsonb, $11, $12)
+                        $10::jsonb, $11, $12, $13, $14)
                 ON CONFLICT (id) DO UPDATE SET
-                    title              = EXCLUDED.title,
-                    chart_type         = EXCLUDED.chart_type,
-                    position_row       = EXCLUDED.position_row,
-                    position_col       = EXCLUDED.position_col,
-                    span_cols          = EXCLUDED.span_cols,
-                    span_rows          = EXCLUDED.span_rows,
-                    query_spec_json    = EXCLUDED.query_spec_json,
-                    plotly_config_json = EXCLUDED.plotly_config_json,
-                    skill_path         = EXCLUDED.skill_path,
-                    updated_at         = NOW()
+                    title               = EXCLUDED.title,
+                    chart_type          = EXCLUDED.chart_type,
+                    position_row        = EXCLUDED.position_row,
+                    position_col        = EXCLUDED.position_col,
+                    span_cols           = EXCLUDED.span_cols,
+                    span_rows           = EXCLUDED.span_rows,
+                    query_spec_json     = EXCLUDED.query_spec_json,
+                    plotly_config_json  = EXCLUDED.plotly_config_json,
+                    skill_path          = EXCLUDED.skill_path,
+                    updated_by_id       = EXCLUDED.updated_by_id,
+                    updated_by_username = EXCLUDED.updated_by_username,
+                    updated_at          = NOW()
                 """,
                 str(chart.id), str(chart.board_id), chart.title, chart.chart_type,
                 chart.position_row, chart.position_col, chart.span_cols,
                 chart.span_rows, chart.query_spec or {}, chart.plotly_config or {},
                 chart.created_by_ai, chart.skill_path or None,
+                chart.updated_by_id, chart.updated_by_username,
             )
             return chart
 

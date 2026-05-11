@@ -123,6 +123,8 @@ class RaioXService:
         is_shared: bool | None = None,
         allowed_roles: list[str] | None = None,
         allowed_departments: list[str] | None = None,
+        actor_id: str | None = None,
+        actor_username: str | None = None,
     ) -> RaioXBoard | None:
         board = await self._boards.get(board_id)
         if not board:
@@ -145,6 +147,12 @@ class RaioXService:
         if board.allowed_roles or board.allowed_departments:
             board.is_shared = False
         board.updated_at = datetime.utcnow()
+        # Actor da edição administrativa — gravado para auditoria simétrica
+        # ao actor de radar_card_visibility.
+        if actor_id is not None:
+            board.updated_by_id = actor_id
+        if actor_username is not None:
+            board.updated_by_username = actor_username
         return await self._boards.save(board)
 
     async def delete_board(self, board_id: UUID) -> bool:
@@ -193,6 +201,9 @@ class RaioXService:
     async def update_chart(
         self,
         chart_id: UUID,
+        *,
+        actor_id: str | None = None,
+        actor_username: str | None = None,
         **fields: Any,
     ) -> RaioXChart | None:
         chart = await self._charts.get(chart_id)
@@ -206,6 +217,10 @@ class RaioXService:
             if hasattr(chart, k):
                 setattr(chart, k, v)
         chart.updated_at = datetime.utcnow()
+        if actor_id is not None:
+            chart.updated_by_id = actor_id
+        if actor_username is not None:
+            chart.updated_by_username = actor_username
         return await self._charts.save(chart)
 
     async def delete_chart(self, chart_id: UUID) -> bool:
