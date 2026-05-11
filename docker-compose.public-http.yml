@@ -1,0 +1,207 @@
+# Vértice — stack HTTP pública (sem Caddy, sem TLS, sem domínio).
+#
+# Para deploy em VPS quando o acesso será via http://VPS_IP:PORT (ex.:
+# http://187.77.46.137:8010). Útil quando você ainda não tem domínio
+# registrado ou quando o ambiente é interno/staging.
+#
+# Diferenças em relação a docker-compose.yml (produção com Caddy/TLS):
+#   - Sem container Caddy, sem ACME, sem Let's Encrypt.
+#   - O serviço `vertice` (uvicorn na porta 8000 interna) é exposto
+#     diretamente em ${PUBLIC_PORT:-8010} do host.
+#   - `--proxy-headers` permanece ativo no uvicorn (sem efeito sem reverse
+#     proxy, mas inofensivo).
+#
+# Subir:
+#   docker compose -f docker-compose.public-http.yml --env-file .env.production up -d --build
+#
+# Atualizar:
+#   git pull && docker compose -f docker-compose.public-http.yml --env-file .env.production up -d --build
+#
+# IMPORTANTE: este compose NÃO oferece HTTPS. Não use em produção real
+# voltada ao público — exposições sem TLS expõem credenciais e tokens em
+# trânsito. Migre para `docker-compose.yml` (com Caddy + Let's Encrypt)
+# assim que tiver domínio.
+
+x-logging: &default-logging
+  driver: json-file
+  options:
+    max-size: "10m"
+    max-file: "5"
+
+services:
+
+  # ----------------------------------------------------------------- App
+  vertice:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: vertice:${VERTICE_TAG:-latest}
+    container_name: vertice-app
+    restart: unless-stopped
+    # Exposição direta. ${PUBLIC_PORT} também aceita o nome herdado
+    # ${PUBLIC_HTTPS_PORT} para compat com .env.production existente.
+    ports:
+      - "${PUBLIC_PORT:-${PUBLIC_HTTPS_PORT:-8010}}:8000"
+    environment:
+      # Banco — internal docker network
+      DATABASE_URL: ${DATABASE_URL:-postgresql://vertice:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-vertice}}
+      PG_POOL_MIN_SIZE: ${PG_POOL_MIN_SIZE:-5}
+      PG_POOL_MAX_SIZE: ${PG_POOL_MAX_SIZE:-20}
+      PG_POOL_MAX_INACTIVE_CONNECTION_LIFETIME: ${PG_POOL_MAX_INACTIVE_CONNECTION_LIFETIME:-300.0}
+      PG_COMMAND_TIMEOUT: ${PG_COMMAND_TIMEOUT:-30.0}
+      PG_STATEMENT_CACHE_SIZE: ${PG_STATEMENT_CACHE_SIZE:-1024}
+      # App
+      APP_NAME: ${APP_NAME:-Vértice}
+      APP_ENV: ${APP_ENV:-production}
+      APP_HOST: 0.0.0.0
+      APP_PORT: 8000
+      APP_SECRET_KEY: ${APP_SECRET_KEY:?APP_SECRET_KEY não definido — gere com openssl rand -hex 32}
+      # APP_BASE_URL — se vazio, o app trata como URL relativa. Para que
+      # links absolutos saiam corretamente quando exibidos em e-mails ou
+      # API, defina algo como http://187.77.46.137:8010.
+      APP_BASE_URL: ${APP_BASE_URL:-}
+      # Auth — o primeiro acesso a /login com tabela `users` vazia cria
+      # o usuário ROOT com username/senha que o operador digitar. Sem
+      # credenciais default em env.
+      JWT_ALGORITHM: ${JWT_ALGORITHM:-HS256}
+      JWT_EXPIRES_MINUTES: ${JWT_EXPIRES_MINUTES:-480}
+      # LLMs (opt-in; sem chave → modo mock automático)
+      AZURE_OPENAI_API_KEY: ${AZURE_OPENAI_API_KEY:-}
+      AZURE_OPENAI_ENDPOINT: ${AZURE_OPENAI_ENDPOINT:-}
+      AZURE_OPENAI_API_VERSION: ${AZURE_OPENAI_API_VERSION:-2024-08-01-preview}
+      AZURE_OPENAI_DEPLOYMENT: ${AZURE_OPENAI_DEPLOYMENT:-gpt-4o}
+      MARITACA_API_KEY: ${MARITACA_API_KEY:-}
+      MARITACA_MODEL: ${MARITACA_MODEL:-sabia-4}
+      MARITACA_BASE_URL: ${MARITACA_BASE_URL:-https://chat.maritaca.ai/api}
+      GAIA_API_KEY: ${GAIA_API_KEY:-}
+      GAIA_MODEL: ${GAIA_MODEL:-gaia-4b}
+      GAIA_BASE_URL: ${GAIA_BASE_URL:-}
+      # Router
+      ROUTER_DEFAULT_MODEL: ${ROUTER_DEFAULT_MODEL:-sabia-4}
+      ROUTER_FALLBACK_MODEL: ${ROUTER_FALLBACK_MODEL:-gpt-4o}
+      ROUTER_CHEAP_MODEL: ${ROUTER_CHEAP_MODEL:-gaia-4b}
+      # Observability
+      LANGFUSE_PUBLIC_KEY: ${LANGFUSE_PUBLIC_KEY:-}
+      LANGFUSE_SECRET_KEY: ${LANGFUSE_SECRET_KEY:-}
+      LANGFUSE_HOST: ${LANGFUSE_HOST:-https://cloud.langfuse.com}
+      MLFLOW_TRACKING_URI: ${MLFLOW_TRACKING_URI:-}
+      OTEL_EXPORTER_OTLP_ENDPOINT: ${OTEL_EXPORTER_OTLP_ENDPOINT:-}
+      OTEL_SERVICE_NAME: ${OTEL_SERVICE_NAME:-vertice}
+      # Política
+      OPA_URL: ${OPA_URL:-}
+      # Guardrails
+      GUARDRAIL_INPUT_MAX_CHARS: ${GUARDRAIL_INPUT_MAX_CHARS:-20000}
+      GUARDRAIL_INJECTION_BLOCK: ${GUARDRAIL_INJECTION_BLOCK:-true}
+      GUARDRAIL_PII_REDACT: ${GUARDRAIL_PII_REDACT:-true}
+      UVICORN_WORKERS: ${UVICORN_WORKERS:-2}
+    volumes:
+      # Skills criadas/editadas via UI persistem aqui entre redeploys.
+      - vertice_skills:/app/app/skills
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks: [internal]
+    deploy:
+      resources:
+        limits:
+          memory: ${VERTICE_MEM_LIMIT:-1g}
+          cpus: ${VERTICE_CPU_LIMIT:-1.5}
+        reservations:
+          memory: ${VERTICE_MEM_RESERVE:-256m}
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://127.0.0.1:8000/health"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+    logging: *default-logging
+
+  # ----------------------------------------------------------------- Postgres
+  postgres:
+    image: postgres:16-alpine
+    container_name: vertice-postgres
+    restart: unless-stopped
+    expose:
+      - "5432"
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-vertice}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD não definido — defina no painel do Hostinger}
+      POSTGRES_DB: ${POSTGRES_DB:-vertice}
+      POSTGRES_INITDB_ARGS: "--data-checksums"
+      PGDATA: /var/lib/postgresql/data/pgdata
+    command:
+      - "postgres"
+      - "-c"
+      - "max_connections=${PG_MAX_CONNECTIONS:-200}"
+      - "-c"
+      - "shared_buffers=${PG_SHARED_BUFFERS:-256MB}"
+      - "-c"
+      - "effective_cache_size=${PG_EFFECTIVE_CACHE_SIZE:-1GB}"
+      - "-c"
+      - "work_mem=${PG_WORK_MEM:-8MB}"
+      - "-c"
+      - "maintenance_work_mem=${PG_MAINTENANCE_WORK_MEM:-64MB}"
+      - "-c"
+      - "wal_level=replica"
+      - "-c"
+      - "max_wal_size=${PG_MAX_WAL_SIZE:-2GB}"
+      - "-c"
+      - "random_page_cost=1.1"
+      - "-c"
+      - "log_min_duration_statement=${PG_LOG_MIN_DURATION_MS:-1000}"
+      - "-c"
+      - "log_lock_waits=on"
+      - "-c"
+      - "track_io_timing=on"
+    volumes:
+      - vertice_pgdata:/var/lib/postgresql/data
+    networks: [internal]
+    deploy:
+      resources:
+        limits:
+          memory: ${POSTGRES_MEM_LIMIT:-1g}
+          cpus: ${POSTGRES_CPU_LIMIT:-1.0}
+        reservations:
+          memory: ${POSTGRES_MEM_RESERVE:-256m}
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-vertice} -d ${POSTGRES_DB:-vertice}"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+      start_period: 10s
+    logging: *default-logging
+
+  # ----------------------------------------------------------------- Backup
+  pgbackup:
+    image: postgres:16-alpine
+    container_name: vertice-pgbackup
+    restart: unless-stopped
+    environment:
+      PGHOST: postgres
+      PGPORT: 5432
+      PGUSER: ${POSTGRES_USER:-vertice}
+      PGPASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD não definido — defina no painel do Hostinger}
+      PGDATABASE: ${POSTGRES_DB:-vertice}
+      BACKUP_KEEP_DAYS: ${BACKUP_KEEP_DAYS:-7}
+      BACKUP_AT_HOUR_UTC: ${BACKUP_AT_HOUR_UTC:-3}
+    volumes:
+      - ./scripts/backup.sh:/usr/local/bin/backup.sh:ro
+      - vertice_backups:/var/backups/postgres
+    entrypoint: ["/bin/sh", "/usr/local/bin/backup.sh"]
+    networks: [internal]
+    depends_on:
+      postgres:
+        condition: service_healthy
+    logging: *default-logging
+
+networks:
+  internal:
+    driver: bridge
+
+volumes:
+  vertice_pgdata:
+    name: vertice_pgdata
+  vertice_backups:
+    name: vertice_backups
+  vertice_skills:
+    name: vertice_skills
