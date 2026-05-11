@@ -257,72 +257,89 @@ async def init_db() -> None:
     Idempotente: pode ser chamado em todo startup. As migrações usam
     `ADD COLUMN IF NOT EXISTS` (Postgres 9.6+) e `CREATE TABLE IF NOT EXISTS`,
     eliminando as PRAGMA table_info() check necessárias no SQLite.
+
+    Concorrência: uvicorn com N workers chama isto N vezes em paralelo no
+    boot. CREATE TABLE em si é idempotente, mas o Postgres ainda tropeça
+    em `pg_type_typname_nsp_index` quando dois backends criam a mesma
+    tabela ao mesmo tempo (cada CREATE TABLE registra um row-type implícito
+    com o mesmo nome). Um `pg_advisory_lock` serializa os boots — o
+    segundo worker espera o primeiro terminar e vê tudo já criado.
     """
     schema = _SCHEMA_PATH.read_text(encoding="utf-8")
     seed = _SEED_PATH.read_text(encoding="utf-8")
 
     p = await get_pool()
     async with p.acquire() as conn:
-        await _exec_script(conn, schema)
-        await _exec_script(conn, seed)
+        # Lock arbitrário (qualquer 64-bit int) — releases automaticamente
+        # ao fim da session/conexão. Aqui usamos um valor estável para que
+        # qualquer worker no mesmo banco pegue o mesmo lock.
+        _INIT_DB_LOCK_KEY = 8731234567890
+        await conn.execute("SELECT pg_advisory_lock($1)", _INIT_DB_LOCK_KEY)
+        try:
+            await _exec_script(conn, schema)
+            await _exec_script(conn, seed)
 
-        # Bootstrap módulos default — idempotente via `ON CONFLICT DO NOTHING`.
-        defaults = [
-            Module(
-                id=new_uuid(),
-                name="radar",
-                endpoint_url="/api/radar/v1/process",
-                status=ModuleStatus.active,
-                config_params={"threshold": 0.7, "sanitization": True, "failsafe": False},
-                description="Voz do Cliente — cards de análise sobre transcrições.",
-                skill_path="app/skills/radar_intent.md",
-            ),
-            Module(
-                id=new_uuid(),
-                name="churn",
-                endpoint_url="/api/churn/v1/process",
-                status=ModuleStatus.active,
-                config_params={"threshold": 0.65, "auto_grow_taxonomy": True},
-                description="Classificador hierárquico de motivos de cancelamento.",
-                skill_path="app/skills/churn_classifier.md",
-            ),
-        ]
-        for m in defaults:
-            await conn.execute(
-                """
-                INSERT INTO modules (id, name, endpoint_url, status, config_params,
-                                     description, skill_path)
-                VALUES ($1::uuid, $2, $3, $4, $5::jsonb, $6, $7)
-                ON CONFLICT (name) DO NOTHING
-                """,
-                str(m.id), m.name, m.endpoint_url, m.status.value,
-                m.config_params, m.description, m.skill_path,
-            )
-
-        # Bootstrap taxonomia churn raiz (idempotente).
-        existing = await conn.fetchval("SELECT COUNT(*) FROM churn_nodes")
-        if existing == 0:
-            roots = [
-                ("Preço", []),
-                ("Qualidade do serviço", ["Sinal/cobertura", "Velocidade", "Quedas"]),
-                ("Atendimento", ["Tempo de espera", "Falta de resolução"]),
-                ("Concorrência", ["Oferta melhor", "Indicação de terceiros"]),
-                ("Mudança de necessidade", []),
+            # Bootstrap módulos default — idempotente via `ON CONFLICT DO NOTHING`.
+            defaults = [
+                Module(
+                    id=new_uuid(),
+                    name="radar",
+                    endpoint_url="/api/radar/v1/process",
+                    status=ModuleStatus.active,
+                    config_params={"threshold": 0.7, "sanitization": True, "failsafe": False},
+                    description="Voz do Cliente — cards de análise sobre transcrições.",
+                    skill_path="app/skills/radar_intent.md",
+                ),
+                Module(
+                    id=new_uuid(),
+                    name="churn",
+                    endpoint_url="/api/churn/v1/process",
+                    status=ModuleStatus.active,
+                    config_params={"threshold": 0.65, "auto_grow_taxonomy": True},
+                    description="Classificador hierárquico de motivos de cancelamento.",
+                    skill_path="app/skills/churn_classifier.md",
+                ),
             ]
-            for label, children in roots:
-                rid = str(new_uuid())
+            for m in defaults:
                 await conn.execute(
-                    "INSERT INTO churn_nodes (id, label, parent_id, depth) "
-                    "VALUES ($1::uuid, $2, NULL, 0)",
-                    rid, label,
+                    """
+                    INSERT INTO modules (id, name, endpoint_url, status, config_params,
+                                         description, skill_path)
+                    VALUES ($1::uuid, $2, $3, $4, $5::jsonb, $6, $7)
+                    ON CONFLICT (name) DO NOTHING
+                    """,
+                    str(m.id), m.name, m.endpoint_url, m.status.value,
+                    m.config_params, m.description, m.skill_path,
                 )
-                for c in children:
-                    cid = str(new_uuid())
+
+            # Bootstrap taxonomia churn raiz (idempotente).
+            existing = await conn.fetchval("SELECT COUNT(*) FROM churn_nodes")
+            if existing == 0:
+                roots = [
+                    ("Preço", []),
+                    ("Qualidade do serviço", ["Sinal/cobertura", "Velocidade", "Quedas"]),
+                    ("Atendimento", ["Tempo de espera", "Falta de resolução"]),
+                    ("Concorrência", ["Oferta melhor", "Indicação de terceiros"]),
+                    ("Mudança de necessidade", []),
+                ]
+                for label, children in roots:
+                    rid = str(new_uuid())
                     await conn.execute(
                         "INSERT INTO churn_nodes (id, label, parent_id, depth) "
-                        "VALUES ($1::uuid, $2, $3::uuid, 1)",
-                        cid, c, rid,
+                        "VALUES ($1::uuid, $2, NULL, 0)",
+                        rid, label,
                     )
+                    for c in children:
+                        cid = str(new_uuid())
+                        await conn.execute(
+                            "INSERT INTO churn_nodes (id, label, parent_id, depth) "
+                            "VALUES ($1::uuid, $2, $3::uuid, 1)",
+                            cid, c, rid,
+                        )
+        finally:
+            # Libera explicitamente — apesar de o lock cair sozinho quando
+            # a conexão for devolvida ao pool. Belt-and-suspenders.
+            await conn.execute("SELECT pg_advisory_unlock($1)", _INIT_DB_LOCK_KEY)
 
 
 # ---------------------------------------------------------------------------
