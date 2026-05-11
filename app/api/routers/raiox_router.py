@@ -162,6 +162,8 @@ async def update_board(
         is_shared=body.is_shared,
         allowed_roles=body.allowed_roles,
         allowed_departments=body.allowed_departments,
+        actor_id=str(user.id) if user.id else None,
+        actor_username=user.username,
     )
     if not board:
         raise HTTPException(404, "board não encontrado")
@@ -236,7 +238,12 @@ async def update_chart(
     if "query_spec" in fields and fields["query_spec"] is not None:
         fields["query_spec"] = body.query_spec.model_dump()
     try:
-        chart = await svc.update_chart(chart_id, **fields)
+        chart = await svc.update_chart(
+            chart_id,
+            actor_id=str(user.id) if user.id else None,
+            actor_username=user.username,
+            **fields,
+        )
     except ValueError as e:
         raise HTTPException(400, str(e))
     if not chart:

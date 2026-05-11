@@ -81,8 +81,13 @@ RUN mkdir -p /opt/skills_seed \
  && chown -R vertice:vertice /opt/skills_seed
 
 # Entrypoint shim: seed skills no primeiro boot, depois exec uvicorn.
+# `sed` defensivo: se o checkout deste repo trouxe o script com CRLF
+# (cenário comum em Windows + git autocrlf), normaliza para LF — caso
+# contrário tini falha com "exec ...: No such file or directory" no
+# shebang `#!/bin/sh\r`.
 COPY --chown=vertice:vertice scripts/docker_entrypoint.sh /usr/local/bin/docker_entrypoint.sh
-RUN chmod +x /usr/local/bin/docker_entrypoint.sh
+RUN sed -i 's/\r$//' /usr/local/bin/docker_entrypoint.sh \
+ && chmod +x /usr/local/bin/docker_entrypoint.sh
 
 USER vertice
 

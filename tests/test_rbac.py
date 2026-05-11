@@ -423,6 +423,50 @@ async def test_radar_preferences_isolated_por_usuario(client: AsyncClient):
     assert r_b.json() == {"lastSelectedCase": "B"}
 
 
+# ---- Actor tracking em PATCH /api/raiox/boards/{id} e /charts/{id} -------
+
+@pytest.mark.asyncio
+async def test_raiox_board_update_registra_actor(client: AsyncClient):
+    """PATCH em board do RaioX persiste quem fez a última edição.
+
+    Antes, admin A podia editar board criado por admin B sem deixar
+    rastro do ato administrativo. Agora `updated_by_id/username` gravam.
+    """
+    from uuid import UUID
+    from app.adapters.db.repositories.raiox_repo import PgRaioXBoardRepository
+
+    await init_db()
+    auth = AuthService(PgUserRepository())
+    creator = await auth.register("rx_creator", "vertice2026", roles=["admin"])
+    editor = await auth.register("rx_editor", "vertice2026", roles=["admin"])
+    creator_token = auth.issue_token(creator)
+    editor_token = auth.issue_token(editor)
+
+    # creator cria um board
+    r = await client.post(
+        "/api/raiox/boards",
+        json={"name": "B0", "description": "", "is_shared": True},
+        headers=_h(creator_token),
+    )
+    assert r.status_code == 201, r.text
+    board_id = r.json()["id"]
+
+    # editor (admin diferente) edita
+    r = await client.patch(
+        f"/api/raiox/boards/{board_id}",
+        json={"description": "edited by editor"},
+        headers=_h(editor_token),
+    )
+    assert r.status_code == 200, r.text
+
+    record = await PgRaioXBoardRepository().get(UUID(board_id))
+    assert record.description == "edited by editor"
+    assert record.updated_by_id == str(editor.id)
+    assert record.updated_by_username == editor.username
+    # owner_id continua sendo o criador original
+    assert record.owner_id == str(creator.id)
+
+
 # ---- Actor tracking em mudança de DONO (admin/cards/{uid}/owner) ---------
 
 @pytest.mark.asyncio

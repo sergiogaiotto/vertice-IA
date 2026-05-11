@@ -347,6 +347,9 @@ class RaioXBoard:
     cover_emoji: str = "🩻"
     created_at: datetime = field(default_factory=datetime.utcnow)
     updated_at: datetime = field(default_factory=datetime.utcnow)
+    # Actor da última edição administrativa (PATCH /api/raiox/boards/{id}).
+    updated_by_id: str | None = None
+    updated_by_username: str | None = None
 
 
 @dataclass
@@ -370,6 +373,9 @@ class RaioXChart:
     created_by_ai: bool = False
     created_at: datetime = field(default_factory=datetime.utcnow)
     updated_at: datetime = field(default_factory=datetime.utcnow)
+    # Actor da última edição administrativa (PATCH /api/raiox/charts/{id}).
+    updated_by_id: str | None = None
+    updated_by_username: str | None = None
 
 
 @dataclass

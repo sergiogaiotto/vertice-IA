@@ -1,0 +1,7 @@
+# Force LF line endings on shell scripts and config files that are read
+# by Linux containers. Without this, Windows checkouts can introduce CRLF
+# (e.g. on the docker_entrypoint shim), which makes `exec` fail at runtime.
+*.sh text eol=lf
+Dockerfile text eol=lf
+docker-compose*.yml text eol=lf
+Caddyfile text eol=lf

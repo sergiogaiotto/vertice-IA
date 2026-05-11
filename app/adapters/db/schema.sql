@@ -356,6 +356,11 @@ CREATE TABLE IF NOT EXISTS raiox_boards (
     updated_at          TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 CREATE INDEX IF NOT EXISTS idx_raiox_boards_owner ON raiox_boards(owner_id);
+-- Trilha do último editor — actor tracking simétrico a radar_card_visibility.
+ALTER TABLE raiox_boards
+    ADD COLUMN IF NOT EXISTS updated_by_id TEXT;
+ALTER TABLE raiox_boards
+    ADD COLUMN IF NOT EXISTS updated_by_username TEXT;
 
 CREATE TABLE IF NOT EXISTS raiox_charts (
     id                 UUID PRIMARY KEY,
@@ -374,6 +379,10 @@ CREATE TABLE IF NOT EXISTS raiox_charts (
     updated_at         TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 CREATE INDEX IF NOT EXISTS idx_raiox_charts_board ON raiox_charts(board_id);
+ALTER TABLE raiox_charts
+    ADD COLUMN IF NOT EXISTS updated_by_id TEXT;
+ALTER TABLE raiox_charts
+    ADD COLUMN IF NOT EXISTS updated_by_username TEXT;
 
 CREATE TABLE IF NOT EXISTS raiox_analyses (
     id              UUID PRIMARY KEY,
