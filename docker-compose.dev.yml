@@ -7,21 +7,27 @@
 #   - SEM Caddy (sem TLS, sem domínio): app exposta direto em 8000.
 #   - Postgres exposto em 5432 do host para você conectar via DBeaver/psql.
 #   - Volume bind-mount `./app:/app/app` para hot-reload do uvicorn.
-#   - Mock de LLM padrão (sem chaves no .env).
+#   - Mock de LLM padrão (sem chaves).
 #
-# Subindo a porta de Postgres 5432 conflita se você tem outro Postgres
-# rodando localmente. Nesse caso, mude `POSTGRES_HOST_PORT=5433` no .env
-# (ou rode sem o serviço postgres aqui e aponte DATABASE_URL para o seu
-# Postgres existente).
+# DESIGN: este compose é AUTOCONTIDO — DATABASE_URL, POSTGRES_USER/DB/PASSWORD
+# e APP_SECRET_KEY são fixos aqui dentro porque apontam para o serviço
+# `postgres` criado neste mesmo compose. O Docker Compose carrega `.env` da
+# raiz automaticamente (para variable substitution); se você tem um `.env`
+# de outro ambiente apontando para um Postgres externo, esses valores
+# vazariam pelo `${VAR:-default}` e o container tentaria conectar no
+# Postgres errado. Por isso evitamos a indireção aqui. Para customizar
+# portas locais (conflito com outro serviço), use as duas únicas vars
+# externas: APP_HOST_PORT e POSTGRES_HOST_PORT.
 
 services:
   postgres:
     image: postgres:16-alpine
     container_name: vertice-postgres-dev
     environment:
-      POSTGRES_USER: ${POSTGRES_USER:-vertice}
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-vertice}
-      POSTGRES_DB: ${POSTGRES_DB:-vertice}
+      # Credenciais FIXAS para o Postgres interno do compose dev.
+      POSTGRES_USER: vertice
+      POSTGRES_PASSWORD: vertice
+      POSTGRES_DB: vertice
       POSTGRES_INITDB_ARGS: "--data-checksums"
     command:
       - "postgres"
@@ -36,12 +42,14 @@ services:
       - "-c"
       - "random_page_cost=1.1"
     ports:
-      # Override via .env: POSTGRES_HOST_PORT=5433 (se 5432 já está em uso)
+      # APP_HOST_PORT só ajusta a porta exposta no host se 5432 já estiver
+      # em uso (ex.: você roda um Postgres nativo na máquina). O container
+      # mesmo sempre escuta em 5432 internamente.
       - "${POSTGRES_HOST_PORT:-5432}:5432"
     volumes:
       - vertice_pgdata_dev:/var/lib/postgresql/data
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-vertice} -d ${POSTGRES_DB:-vertice}"]
+      test: ["CMD-SHELL", "pg_isready -U vertice -d vertice"]
       interval: 5s
       timeout: 3s
       retries: 20
@@ -54,17 +62,25 @@ services:
       postgres:
         condition: service_healthy
     environment:
-      DATABASE_URL: ${DATABASE_URL:-postgresql://vertice:vertice@postgres:5432/vertice}
-      PG_POOL_MIN_SIZE: ${PG_POOL_MIN_SIZE:-5}
-      PG_POOL_MAX_SIZE: ${PG_POOL_MAX_SIZE:-20}
+      # FIXO: aponta para o serviço `postgres` deste compose.
+      DATABASE_URL: postgresql://vertice:vertice@postgres:5432/vertice
+      APP_SECRET_KEY: dev-only-not-a-secret-change-in-prod
+      APP_ENV: development
+      PG_POOL_MIN_SIZE: "5"
+      PG_POOL_MAX_SIZE: "20"
+      # Reload do uvicorn já cobre hot-reload — 1 worker é suficiente em dev.
+      UVICORN_WORKERS: "1"
     ports:
       - "${APP_HOST_PORT:-8000}:8000"
-    # env_file opcional — se não existir, descomente:
-    # env_file:
-    #   - .env
     volumes:
+      # Bind-mount do código pra hot-reload. Skills moram em /app/app/skills,
+      # então qualquer arquivo criado via UI também aparece no repo local
+      # (útil em dev, diferente do prod que usa volume nomeado).
       - ./app:/app/app
     restart: unless-stopped
+    # --reload sobrescreve o entrypoint padrão (uvicorn --workers N). O seed
+    # de skills do entrypoint não precisa rodar aqui porque o bind-mount já
+    # traz os skills do repo.
     command: uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
 
 volumes:
