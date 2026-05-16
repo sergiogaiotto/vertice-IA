@@ -39,6 +39,7 @@ from starlette.middleware.sessions import SessionMiddleware
 from app import __version__
 from app.adapters.db.postgres import close_pool, init_db
 from app.api.routers import (
+    access_router,
     api_endpoints_router,
     auth_router,
     audit_router,
@@ -145,6 +146,7 @@ app.include_router(blocks_router.router, prefix="/api/blocks", tags=["blocks"])
 app.include_router(audit_router.router, prefix="/api/audit", tags=["audit"])
 app.include_router(presentations_router.router, prefix="/api/presentations", tags=["presentations"])
 app.include_router(api_endpoints_router.router, prefix="/api/api-endpoints", tags=["api-endpoints"])
+app.include_router(access_router.router, prefix="/api/access", tags=["access"])
 
 
 @app.get("/health", include_in_schema=False)

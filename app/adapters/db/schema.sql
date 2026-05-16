@@ -520,6 +520,41 @@ CREATE TABLE IF NOT EXISTS artifacts (
 CREATE INDEX IF NOT EXISTS idx_artifacts_created_at
     ON artifacts(created_at DESC);
 
+-- ===== Funcionalidades por Perfil — matriz (role × dept × feature) =====
+-- Tela administrativa onde root configura quais funcionalidades cada perfil
+-- pode acessar. Resolve gaps que page-level role gates não cobrem: por
+-- exemplo, "analista_n3 do dept vendas vê /radar, do dept compras não vê".
+--
+-- Política de match (helper FeatureAccessService.can_access):
+--   1. Sem nenhuma regra para (role, dept, feature) → ALLOW (default).
+--      Migrate-safe: instalações existentes mantêm comportamento atual.
+--   2. Regra com dept específico vence regra com dept='' (wildcard).
+--   3. access=FALSE em qualquer regra match → DENY.
+--   4. access=TRUE em regra match → ALLOW explícito.
+--   5. ``root`` no set de roles do user → ALLOW (bypass total, supremo).
+--
+-- ``role`` armazena UM role por linha. Para um user com múltiplos roles,
+-- o helper checa cada role separadamente — ALLOW se PELO MENOS UM permite.
+-- ``department`` armazena dept exato OU '' (wildcard que casa qualquer).
+-- ``feature_key`` é um slug curto ('radar', 'raiox' atualmente; futuro:
+-- 'prompts', 'gallery', etc.).
+CREATE TABLE IF NOT EXISTS feature_access (
+    id                       UUID PRIMARY KEY,
+    role                     TEXT NOT NULL,
+    department               TEXT NOT NULL DEFAULT '',
+    feature_key              TEXT NOT NULL,
+    access                   BOOLEAN NOT NULL,
+    created_by_id            TEXT,
+    created_by_username      TEXT,
+    updated_by_id            TEXT,
+    updated_by_username      TEXT,
+    created_at               TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at               TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    UNIQUE (role, department, feature_key)
+);
+CREATE INDEX IF NOT EXISTS idx_feature_access_lookup
+    ON feature_access(role, feature_key);
+
 -- Failsafe inbox
 CREATE TABLE IF NOT EXISTS failsafe_actions (
     id           UUID PRIMARY KEY,

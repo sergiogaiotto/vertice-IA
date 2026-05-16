@@ -38,11 +38,46 @@ templates = Jinja2Templates(directory=str(BASE_DIR / "templates"))
 router = APIRouter()
 
 
-def _ctx(request: Request, user: User | None, **extras):
+async def _visible_features_for(user: User | None) -> set[str]:
+    """Resolve o set de features (radar/raiox/...) que o user enxerga
+    segundo a matriz "Funcionalidades por Perfil".
+
+    - Sem usuário: set vazio (não vai aparecer nada).
+    - Com root: TODAS as features (bypass).
+    - Demais: consulta o service.
+
+    Toda página passa esse set no contexto Jinja como `visible_features`
+    pra que o `nav_left.html` filtre o grupo "Funcionalidade" sem
+    consultar o banco no template.
+    """
+    if not user:
+        return set()
+    from app.core.services.feature_access_service import (
+        CONTROLLED_FEATURES,
+        FeatureAccessService,
+    )
+    if "root" in (user.roles or []):
+        return set(CONTROLLED_FEATURES)
+    svc = FeatureAccessService()
+    return await svc.visible_features(user.roles or [], user.department or "")
+
+
+async def _ctx(request: Request, user: User | None, **extras):
+    """Contexto base do Jinja, async porque consulta a matriz
+    "Funcionalidades por Perfil" para resolver `visible_features` — o
+    set de features que o user enxerga, usado pelo `nav_left.html`
+    para filtrar entries do grupo "Funcionalidade".
+
+    Decisão de design: async em vez de fazer o lookup numa middleware
+    porque a maioria dos handlers já é async e o overhead é único
+    (1 query). Caller que NÃO renderiza o nav (ex.: respostas de erro
+    JSON, redirects) não passa por aqui.
+    """
     return {
         "request": request,
         "user": user,
         "active_module": extras.pop("active_module", None),
+        "visible_features": await _visible_features_for(user),
         **extras,
     }
 
@@ -51,11 +86,22 @@ def _require_any_role(user: User | None, allowed: list[str]) -> User:
     """Bloqueia acesso à página se o usuário não tem ao menos um dos roles.
 
     Usado como gate no servidor para os grupos Configurações/Monitoramento/
-    Administrativo. analista_n3 só passa em rotas com role 'analista_n3' OR sem gate.
+    Administrativo.
+
+    **Root supremacy**: ``root`` é papel supremo e SEMPRE passa, mesmo que
+    não esteja listado em ``allowed`` — corrige o sintoma de root tomar 403
+    nas próprias telas administrativas. Sem este bypass, todo gate precisaria
+    listar ``root`` explicitamente; o bypass evita a duplicação.
+
+    analista_n3 só passa em rotas com role 'analista_n3' OR sem gate.
     """
     if not user:
         raise HTTPException(status.HTTP_401_UNAUTHORIZED, "autenticação requerida")
-    if not any(r in allowed for r in (user.roles or [])):
+    user_roles = user.roles or []
+    # Bypass do root — corolário da política "root tem todos os poderes".
+    if "root" in user_roles:
+        return user
+    if not any(r in allowed for r in user_roles):
         raise HTTPException(
             status.HTTP_403_FORBIDDEN,
             f"acesso restrito · requer um dos papéis: {', '.join(allowed)}"
@@ -93,7 +139,7 @@ async def cockpit(
 
     return templates.TemplateResponse(
         "cockpit/index.html",
-        _ctx(
+        await _ctx(
             request, user,
             active_module="cockpit",
             activity=activity,
@@ -148,6 +194,25 @@ async def logout_page(request: Request):
 
 # ---------- Radar (BKO Inteligente) ----------
 
+async def _assert_feature_access(user: User, feature_key: str) -> None:
+    """Bloqueia acesso à página se a matriz "Funcionalidades por Perfil"
+    nega a feature. Root sempre passa (bypass dentro de `can_access`).
+
+    Levanta 403 quando o user não tem acesso. Usado por /radar e /raiox.
+    """
+    from app.core.services.feature_access_service import FeatureAccessService
+    svc = FeatureAccessService()
+    allowed = await svc.can_access(
+        user.roles or [], user.department or "", feature_key
+    )
+    if not allowed:
+        raise HTTPException(
+            status.HTTP_403_FORBIDDEN,
+            f"acesso à funcionalidade '{feature_key}' negado pela política "
+            f"de Funcionalidades por Perfil",
+        )
+
+
 @router.get("/radar", response_class=HTMLResponse)
 async def radar_page(
     request: Request,
@@ -157,6 +222,7 @@ async def radar_page(
 ):
     if not user:
         return RedirectResponse("/login")
+    await _assert_feature_access(user, "radar")
     detail = None
     selected_case = None
     transcript = None
@@ -171,7 +237,7 @@ async def radar_page(
 
     return templates.TemplateResponse(
         "radar/index.html",
-        _ctx(
+        await _ctx(
             request, user,
             active_module="radar",
             selected_case=selected_case,
@@ -190,13 +256,14 @@ async def radar_case_page(
 ):
     if not user:
         return RedirectResponse("/login")
+    await _assert_feature_access(user, "radar")
     detail = await bko.get_case_with_transcript(case_number)
     if not detail:
         # caso pode ter sido excluído — redireciona para o estado vazio em vez de 404
         return RedirectResponse("/radar")
     return templates.TemplateResponse(
         "radar/index.html",
-        _ctx(
+        await _ctx(
             request, user,
             active_module="radar",
             selected_case=detail["case"],
@@ -216,6 +283,7 @@ async def raiox_page(
 ):
     if not user:
         return RedirectResponse("/login")
+    await _assert_feature_access(user, "raiox")
     # Todos os usuários autenticados acessam (analista_n3 em modo leitura).
     can_edit = any(r in {"admin", "supervisor"} for r in (user.roles or []))
     # Cache-busting do raiox.js: usa mtime do arquivo como version param,
@@ -225,7 +293,7 @@ async def raiox_page(
     asset_v = str(int(os.path.getmtime(js_path))) if js_path.exists() else "1"
     return templates.TemplateResponse(
         "raiox/index.html",
-        _ctx(
+        await _ctx(
             request, user,
             active_module="raiox",
             can_edit=can_edit,
@@ -248,7 +316,7 @@ async def churn_page(
     roots = await svc.get_taxonomy()
     return templates.TemplateResponse(
         "churn/index.html",
-        _ctx(request, user, active_module="churn", roots=roots),
+        await _ctx(request, user, active_module="churn", roots=roots),
     )
 
 
@@ -267,7 +335,7 @@ async def prompts_page(
     churn_prompts = await svc.list_for_module("churn")
     return templates.TemplateResponse(
         "prompts/index.html",
-        _ctx(
+        await _ctx(
             request, user,
             active_module="prompts",
             radar_prompts=radar_prompts,
@@ -342,7 +410,7 @@ async def finops_page(
 
     return templates.TemplateResponse(
         "finops/index.html",
-        _ctx(
+        await _ctx(
             request, user,
             active_module="finops",
             by_module=by_module, by_model=by_model,
@@ -370,7 +438,7 @@ async def audit_page(
     _require_any_role(user, ['admin', 'supervisor', 'finops'])
     return templates.TemplateResponse(
         "audit/index.html",
-        _ctx(request, user, active_module="audit"),
+        await _ctx(request, user, active_module="audit"),
     )
 
 
@@ -388,7 +456,7 @@ async def failsafe_page(
     pending = await svc.list_pending()
     return templates.TemplateResponse(
         "failsafe/inbox.html",
-        _ctx(request, user, active_module="failsafe", pending=pending),
+        await _ctx(request, user, active_module="failsafe", pending=pending),
     )
 
 
@@ -420,7 +488,7 @@ async def modules_page(
     ]
     return templates.TemplateResponse(
         "modules/index.html",
-        _ctx(request, user, active_module="modules", modules=modules),
+        await _ctx(request, user, active_module="modules", modules=modules),
     )
 
 
@@ -484,7 +552,7 @@ async def users_page(
     ]
     return templates.TemplateResponse(
         "users/index.html",
-        _ctx(request, user, active_module="users", users=users),
+        await _ctx(request, user, active_module="users", users=users),
     )
 
 
@@ -497,11 +565,38 @@ async def apis_page(
 ):
     if not user:
         return RedirectResponse("/login")
-    if "admin" not in user.roles:
-        raise HTTPException(403, "apenas admin pode gerenciar APIs")
+    _require_any_role(user, ['admin'])
     return templates.TemplateResponse(
         "apis/index.html",
-        _ctx(request, user, active_module="apis"),
+        await _ctx(request, user, active_module="apis"),
+    )
+
+
+# ---------- Funcionalidades por Perfil (matriz) ----------
+
+@router.get("/access", response_class=HTMLResponse)
+async def access_page(
+    request: Request,
+    user: User | None = Depends(current_user_optional),
+):
+    """Tela administrativa da matriz "Funcionalidades por Perfil".
+
+    Acesso: root vê e edita; admin vê em modo read-only (decisão de
+    política — root é o ator supremo que define quem vê o quê). A API
+    `/api/access/rule` rejeita PUT/DELETE de admin com 403, então o
+    read-only é enforced no backend e replicado no frontend para UX.
+    """
+    if not user:
+        return RedirectResponse("/login")
+    _require_any_role(user, ['admin'])
+    is_root = "root" in (user.roles or [])
+    return templates.TemplateResponse(
+        "access/index.html",
+        await _ctx(
+            request, user,
+            active_module="access",
+            can_edit_matrix=is_root,
+        ),
     )
 
 
@@ -512,11 +607,10 @@ async def gallery_page(
 ):
     if not user:
         return RedirectResponse("/login")
-    if "admin" not in user.roles:
-        raise HTTPException(403, "apenas admin pode acessar a Galeria")
+    _require_any_role(user, ['admin'])
     return templates.TemplateResponse(
         "gallery/index.html",
-        _ctx(request, user, active_module="gallery"),
+        await _ctx(request, user, active_module="gallery"),
     )
 
 
@@ -528,11 +622,10 @@ async def gallery_detail_page(
 ):
     if not user:
         return RedirectResponse("/login")
-    if "admin" not in user.roles:
-        raise HTTPException(403, "apenas admin pode acessar a Galeria")
+    _require_any_role(user, ['admin'])
     return templates.TemplateResponse(
         "gallery/detail.html",
-        _ctx(request, user, active_module="gallery", presentation_id=presentation_id),
+        await _ctx(request, user, active_module="gallery", presentation_id=presentation_id),
     )
 
 
@@ -569,7 +662,7 @@ async def skills_page(
         }
     return templates.TemplateResponse(
         "skills/index.html",
-        _ctx(request, user, active_module="skills", skills=skills, selected=selected),
+        await _ctx(request, user, active_module="skills", skills=skills, selected=selected),
     )
 
 
@@ -613,7 +706,7 @@ async def blocks_page(
         })
     return templates.TemplateResponse(
         "blocks/index.html",
-        _ctx(request, user, active_module="blocks", blocks=blocks),
+        await _ctx(request, user, active_module="blocks", blocks=blocks),
     )
 
 
@@ -640,17 +733,40 @@ async def cards_em_tela_page(
     # `created_at`/`updated_at` voltam do Postgres como `datetime` — o filtro
     # `tojson` do Jinja usa `json.dumps` puro e estoura em datetime, então
     # converte para ISO string aqui (o JS faz `new Date(...)` em cima).
+    # Lista completa de campos datetime devolvidos por _row_to_dict — TODOS
+    # precisam ser convertidos para ISO antes do `tojson` no template (que
+    # usa `json.dumps` puro e estoura em datetime).
+    # Inclui colunas de auditoria adicionadas em commits posteriores:
+    # visibility_changed_at, owner_changed_at. Bug latente: se algum card
+    # tinha esses campos preenchidos, /admin/cards-em-tela retornava 500.
+    _DT_FIELDS = (
+        "created_at",
+        "updated_at",
+        "visibility_changed_at",
+        "owner_changed_at",
+    )
     for r in rows:
         v = r.get("visibility") or "private"
+        dept = r.get("sharer_department")
+        dept_suffix = f"@{dept}" if dept else ""
         if v == "private":
             r["who_can_see"] = ["dono"]
         elif v == "public_lideranca":
-            r["who_can_see"] = ["dono", "admin", "supervisor"]
+            r["who_can_see"] = [
+                "dono",
+                f"admin{dept_suffix}",
+                f"supervisor{dept_suffix}",
+            ]
         elif v == "public_analista":
-            r["who_can_see"] = ["dono", "admin", "supervisor", "analista"]
+            r["who_can_see"] = [
+                "dono",
+                f"admin{dept_suffix}",
+                f"supervisor{dept_suffix}",
+                f"analista{dept_suffix}",
+            ]
         else:
             r["who_can_see"] = ["dono"]
-        for k in ("created_at", "updated_at"):
+        for k in _DT_FIELDS:
             ts = r.get(k)
             if hasattr(ts, "isoformat"):
                 r[k] = ts.isoformat()
@@ -666,5 +782,5 @@ async def cards_em_tela_page(
 
     return templates.TemplateResponse(
         "admin/cards_em_tela.html",
-        _ctx(request, user, active_module="cards_em_tela", cards=rows, user_options=user_options),
+        await _ctx(request, user, active_module="cards_em_tela", cards=rows, user_options=user_options),
     )

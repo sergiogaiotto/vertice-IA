@@ -530,9 +530,12 @@ async def test_visibility_change_registra_actor(client: AsyncClient):
 
     await init_db()
     auth = AuthService(PgUserRepository())
-    # admin que vai fazer a mudança
-    admin = await auth.register(username="vis_admin", password="vertice2026", roles=["admin"])
-    token = auth.issue_token(admin)
+    # Usa root como ator administrativo: bypassa o gate de dept introduzido
+    # pela política dept-scoped sharing (admin/supervisor precisam de dept
+    # preenchido E mesmo dept que o dono pra mexer em card alheio). Root é
+    # o caminho mínimo pra testar actor tracking sem montar dept em ambos.
+    actor = await auth.register(username="vis_admin", password="vertice2026", roles=["root"])
+    token = auth.issue_token(actor)
     # dono original do card
     owner = await auth.register(username="vis_owner", password="vertice2026", roles=["analista_n3"])
 
@@ -559,9 +562,11 @@ async def test_visibility_change_registra_actor(client: AsyncClient):
     assert record is not None
     assert record["visibility"] == "public_lideranca"
     assert record["previous_visibility"] == "private"
-    assert record["visibility_changed_by_id"] == str(admin.id)
-    assert record["visibility_changed_by_username"] == admin.username
+    assert record["visibility_changed_by_id"] == str(actor.id)
+    assert record["visibility_changed_by_username"] == actor.username
     assert record["visibility_changed_at"] is not None
+    # Root publica sem filtro de dept — sharer_department deve ficar NULL.
+    assert record["sharer_department"] is None
 
 
 # ---- Radar uploads exigem multipart; testa apenas se gate de papel rejeita -
