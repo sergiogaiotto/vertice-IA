@@ -35,6 +35,60 @@ _OUTPUT_HINTS: dict[OutputType, str] = {
 }
 
 
+# Marker visível para o LLM saber que o trecho intermediário foi removido,
+# evitando que ele tente "completar" o contexto faltante por inferência.
+_TRUNCATE_MARKER = "\n\n[... trecho intermediário da transcrição omitido ...]\n\n"
+
+
+def _smart_truncate_transcript(
+    text: str,
+    max_chars: int = 12000,
+    tail_ratio: float = 0.4,
+) -> str:
+    """Encurta uma transcrição preservando início E final.
+
+    Transcrições de atendimento têm estrutura típica:
+      - INÍCIO: saudação, identificação, abertura do problema
+      - MEIO: idas e vindas, confirmações, repetições (frequentemente redundante)
+      - FIM: oferta de solução, aceite/recusa, desfecho
+
+    Truncar só pelo início (`text[:N]`) descarta o desfecho — justamente o
+    trecho mais relevante para análise de intenção, churn, resolução, etc.
+    Esta função pega ``(1 - tail_ratio) * max_chars`` do INÍCIO e
+    ``tail_ratio * max_chars`` do FINAL, concatenados com um marker que
+    avisa o LLM que houve corte.
+
+    Args:
+        text: a transcrição (ou qualquer texto livre).
+        max_chars: tamanho-alvo do resultado (incluindo o marker). Default
+                   12000 ≈ 3000 tokens — bem dentro do contexto do sabia-4
+                   (32k tokens) com folga para system_prompt + output.
+        tail_ratio: fração do max_chars reservada para o FINAL. Default 0.4
+                    (40% fim, 60% início). Para módulos onde o final é
+                    crítico (resolução), aumentar; para classificação de
+                    tópico (início basta), diminuir.
+
+    Returns:
+        - texto original se ``len(text) <= max_chars``
+        - ``head + marker + tail`` caso contrário
+        - string vazia se ``text`` for None/empty
+    """
+    if not text:
+        return ""
+    if len(text) <= max_chars:
+        return text
+    if max_chars <= len(_TRUNCATE_MARKER):
+        # caso degenerado: max_chars muito pequeno para acomodar o marker
+        # — devolve só o início, sem marker (fallback compatível).
+        return text[:max_chars]
+    available = max_chars - len(_TRUNCATE_MARKER)
+    tail_len = int(available * tail_ratio)
+    head_len = available - tail_len
+    head = text[:head_len]
+    tail = text[-tail_len:] if tail_len > 0 else ""
+    return f"{head}{_TRUNCATE_MARKER}{tail}"
+
+
 class RadarService:
     def __init__(
         self,
@@ -287,11 +341,18 @@ Transcrição (parcial):
             )
         system = "\n\n".join(system_parts)
 
+        # Antes: hard-cap em 6000 chars do início. Para transcrições longas
+        # (>6000 chars, frequentes em ligações de atendimento) isso descartava
+        # o FINAL — justamente onde fica o desfecho, oferta de solução,
+        # aceite/recusa. _smart_truncate_transcript preserva início + fim
+        # com marker de omissão no meio. Default 12000 chars (~3000 tokens),
+        # bem abaixo do contexto do sabia-4 (32k).
+        truncated_for_llm = _smart_truncate_transcript(sanitized_transcript)
         user_msg = (
             f"Módulo: {module.name}\n"
             f"Descrição: {module.description}\n"
             f"Campo de entrada: {input_label}\n\n"
-            f"Conteúdo:\n\"\"\"{sanitized_transcript[:6000]}\"\"\""
+            f"Conteúdo:\n\"\"\"{truncated_for_llm}\"\"\""
         )
 
         # Tipo de saída do guardrail: vem do `config_params.output_type` do
