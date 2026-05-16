@@ -116,8 +116,22 @@
           </label>
           <input x-model="form.data.department"
                  :readonly="form.editing"
-                 placeholder="ex: vendas, suporte... ou vazio"
+                 list="access-departments-list"
+                 placeholder="escolha um existente, digite um novo ou deixe vazio"
                  class="w-full h-9 px-3 border border-neutral-200 rounded-md text-sm read-only:bg-neutral-50" />
+          <!-- Datalist alimentado por /api/users/departments — mostra os
+               departamentos já cadastrados em `users`. O input aceita texto
+               livre (criar nova regra para um dept ainda inexistente é
+               válido; o dept casará quando algum user for atribuído a ele). -->
+          <datalist id="access-departments-list">
+            <template x-for="d in availableDepartments" :key="d">
+              <option :value="d"></option>
+            </template>
+          </datalist>
+          <p class="text-[10px] text-neutral-400 mt-0.5"
+             x-text="availableDepartments.length
+                       ? `${availableDepartments.length} departamento(s) cadastrado(s) — texto livre permitido`
+                       : 'nenhum departamento cadastrado ainda — digite ou deixe vazio'"></p>
         </div>
         <div>
           <label class="block text-xs text-neutral-500 mb-1">funcionalidade</label>
@@ -160,6 +174,13 @@ function accessApp() {
   return {
     rules: [],
     features: [],
+    // Departamentos já cadastrados em `users` — alimenta o datalist do
+    // input de departamento no modal. Endpoint /api/users/departments
+    // já existia e está autorizado para admin/root (mesmos roles que
+    // chegam nesta tela). Texto livre continua permitido — criar regra
+    // para um dept inexistente é válido (apenas não casa com ninguém
+    // até que algum user seja atribuído a esse dept).
+    availableDepartments: [],
     canEdit: {{ (can_edit_matrix or False) | tojson }},
     form: {
       open: false,
@@ -174,6 +195,13 @@ function accessApp() {
         this.features = m.features || [];
       } catch (e) {
         toast('Falha ao carregar matriz: ' + (e.message || ''), 'error');
+      }
+      // Carrega departamentos em paralelo — falha silenciosa: a tela
+      // ainda funciona, só perde a sugestão do datalist.
+      try {
+        this.availableDepartments = await window.api('GET', '/api/users/departments');
+      } catch (e) {
+        this.availableDepartments = [];
       }
     },
 

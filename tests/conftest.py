@@ -112,6 +112,9 @@ _KNOWN_TABLES = (
     "transcripts", "bko_cases",
     "prompts",
     "modules",
+    "feature_access",   # matriz Funcionalidades por Perfil — regras vazavam
+                        # entre testes e bloqueavam smoke de /radar com deny
+                        # criado por teste de feature_access anterior.
     "user_roles", "users",
     # roles/permissions/permissions deixam o seed em paz: testes esperam ver
     # roles base.
