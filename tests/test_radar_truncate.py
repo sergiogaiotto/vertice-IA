@@ -94,3 +94,60 @@ def test_caso_realistic_22631_chars():
     )
     # Início também preservado
     assert "Atendente: Início" in out
+
+
+# ---------------------------------------------------------------
+# Regressão da política input_max_chars × output_type
+# ---------------------------------------------------------------
+#
+# Para o módulo radar, `run_module_on_text` escolhe `max_chars` em
+# função do `output_type`:
+#   - LIVRE     → 50000 (UI promete "sem corte · todo o texto preservado")
+#   - RELATORIO → 20000
+#   - ANALISE   → 15000
+#   - demais    → 12000
+#
+# Os testes abaixo não chamam o método (precisaria mockar LLM); apenas
+# documentam o comportamento esperado da função pura quando o caller
+# passa esses caps, para detectar regressão na função se algum dia
+# alguém remexer no algoritmo.
+
+
+def test_output_type_livre_preserva_transcricao_completa():
+    """Quando o módulo é configurado com `output_type=LIVRE`,
+    `run_module_on_text` passa max_chars=50000. Transcrições típicas
+    (até ~50k chars) precisam passar INTACTAS — sem marker, sem corte —
+    respeitando a promessa do UI."""
+    # 30k chars — caso comum de ligação longa com bastante conteúdo
+    text = "Atendente: linha. Cliente: resposta. " * 800
+    assert 25000 < len(text) < 50000, "preparação falhou"
+    out = _smart_truncate_transcript(text, max_chars=50000)
+    assert out == text, "LIVRE deveria preservar texto inteiro dentro do cap"
+    assert _TRUNCATE_MARKER not in out
+
+
+def test_output_type_livre_ainda_aplica_truncate_em_casos_extremos():
+    """Transcrições MUITO longas (>50k chars) ainda recebem head+tail
+    mesmo com LIVRE — necessário pra não overflow do contexto sabia-4
+    (32k tokens). É um trade-off explícito: preservação total < ter
+    espaço pro modelo gerar resposta."""
+    # 80k chars — caso extremo (~2h de ligação transcrita)
+    text = "X" * 50000 + "Y" * 30000
+    out = _smart_truncate_transcript(text, max_chars=50000)
+    assert _TRUNCATE_MARKER in out
+    # Início preservado
+    assert out.startswith("X")
+    # Final preservado
+    assert out.endswith("Y")
+    # Cap respeitado
+    assert len(out) <= 50000
+
+
+def test_output_type_default_aplica_cap_12000():
+    """Default (output_type=SUMARIO etc.) aplica cap 12000 — comportamento
+    base do truncate. Mesmo cenário de 22k chars do teste acima, agora
+    explícito sobre o cap."""
+    text = ("Atendente: ola. Cliente: ola. " * 800)  # ~24k chars
+    out = _smart_truncate_transcript(text, max_chars=12000)
+    assert _TRUNCATE_MARKER in out
+    assert len(out) <= 12000

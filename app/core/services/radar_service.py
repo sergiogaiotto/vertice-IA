@@ -341,24 +341,13 @@ Transcrição (parcial):
             )
         system = "\n\n".join(system_parts)
 
-        # Antes: hard-cap em 6000 chars do início. Para transcrições longas
-        # (>6000 chars, frequentes em ligações de atendimento) isso descartava
-        # o FINAL — justamente onde fica o desfecho, oferta de solução,
-        # aceite/recusa. _smart_truncate_transcript preserva início + fim
-        # com marker de omissão no meio. Default 12000 chars (~3000 tokens),
-        # bem abaixo do contexto do sabia-4 (32k).
-        truncated_for_llm = _smart_truncate_transcript(sanitized_transcript)
-        user_msg = (
-            f"Módulo: {module.name}\n"
-            f"Descrição: {module.description}\n"
-            f"Campo de entrada: {input_label}\n\n"
-            f"Conteúdo:\n\"\"\"{truncated_for_llm}\"\"\""
-        )
-
         # Tipo de saída do guardrail: vem do `config_params.output_type` do
         # módulo quando response_type='text'. Default 'SUMARIO' por compat.
         # Para api/table sempre 'JSON' (extração estrita do bloco JSON).
         # Cada tipo tem cap próprio no guardrail (LIVRE = sem corte).
+        # Resolvido ANTES do truncate de input pra que o cap de chars do
+        # input respeite a promessa do output_type — em particular, LIVRE
+        # ("sem corte · todo o texto preservado" no UI) recebe cap alto.
         configured_output = "SUMARIO"
         try:
             if isinstance(module.config_params, dict):
@@ -384,6 +373,41 @@ Transcrição (parcial):
             "JSON":      4096,
         }
         text_max_tokens = TOKEN_BUDGETS.get(configured_output, 800)
+
+        # Cap de chars do INPUT, em função do output_type escolhido no módulo.
+        # Casos a respeitar:
+        #   - LIVRE: UI promete "sem corte · todo o texto preservado". Cap
+        #            alto (50000) — cobre 99% das transcrições reais sem
+        #            cortar. Em ligações extremamente longas (>50k chars),
+        #            ainda há head+tail pra evitar overflow do contexto.
+        #            50000 chars ≈ 12500 tokens, deixa folga pra system_prompt
+        #            + 4096 output dentro do contexto sabia-4 (32k).
+        #   - JSON:  outputs estruturados não precisam do final inteiro pra
+        #            decidir uma classificação — 12000 chega.
+        #   - demais: 12000 default (~3000 tokens), proporcional ao tamanho
+        #            do output esperado.
+        INPUT_CHAR_BUDGETS = {
+            "LIVRE":      50000,
+            "RELATORIO":  20000,  # análises longas se beneficiam de mais contexto
+            "ANALISE":    15000,
+        }
+        input_max_chars = INPUT_CHAR_BUDGETS.get(configured_output, 12000)
+
+        # Antes: hard-cap em 6000 chars do início. Para transcrições longas
+        # (>6000 chars, frequentes em ligações de atendimento) isso descartava
+        # o FINAL — justamente onde fica o desfecho, oferta de solução,
+        # aceite/recusa. _smart_truncate_transcript preserva início + fim
+        # com marker de omissão no meio. Tamanho do cap depende do
+        # `output_type` (ver INPUT_CHAR_BUDGETS acima).
+        truncated_for_llm = _smart_truncate_transcript(
+            sanitized_transcript, max_chars=input_max_chars
+        )
+        user_msg = (
+            f"Módulo: {module.name}\n"
+            f"Descrição: {module.description}\n"
+            f"Campo de entrada: {input_label}\n\n"
+            f"Conteúdo:\n\"\"\"{truncated_for_llm}\"\"\""
+        )
 
         guardrail_format = "JSON" if is_structured else configured_output
 
