@@ -14,7 +14,11 @@
   <div class="flex items-center justify-between mb-5">
     <div>
       <h1 class="text-lg font-medium">Usuários</h1>
-      <p class="text-xs text-neutral-500">Gerencie acessos, papéis e estado dos usuários da plataforma.</p>
+      <p class="text-xs text-neutral-500">
+        <span x-show="actorAuthority === 'root'">Você é root — gerência total da plataforma.</span>
+        <span x-show="actorAuthority === 'admin'">Gerência admin — root é gerenciado apenas por outro root.</span>
+        <span x-show="actorAuthority === 'supervisor'">Supervisão restrita: você gerencia analistas do seu departamento (<strong x-text="actorDepartment || '— sem dept cadastrado —'"></strong>).</span>
+      </p>
     </div>
 
     <div class="flex items-center gap-2">
@@ -25,10 +29,22 @@
           <circle cx="5" cy="5" r="3.5" stroke="currentColor" stroke-width="1.2"/><path d="M7.5 7.5 L10 10" stroke="currentColor" stroke-width="1.2" stroke-linecap="round"/>
         </svg>
       </div>
-      <button @click="openNew = true" class="text-xs h-9 px-3 bg-brand-600 hover:bg-brand-800 text-white rounded-md font-medium flex items-center gap-1.5">
+      <button @click="openNewUser()"
+              :disabled="!canCreateAny()"
+              :title="createTooltip()"
+              class="text-xs h-9 px-3 bg-brand-600 hover:bg-brand-800 text-white rounded-md font-medium flex items-center gap-1.5 disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:bg-brand-600">
         <span class="text-base leading-none">+</span> novo usuário
       </button>
     </div>
+  </div>
+
+  <!-- Aviso pra supervisor sem dept cadastrado -->
+  <div x-show="actorAuthority === 'supervisor' && !actorDepartment"
+       class="mb-4 px-3 py-2 bg-amber-50 border border-amber-200 rounded-md text-[12px] text-amber-800">
+    Você é supervisor mas não tem departamento cadastrado.
+    Cadastre seu departamento no próprio perfil — supervisor só gerencia
+    analistas do mesmo departamento. Até lá, esta lista fica vazia e os
+    botões de criação ficam desabilitados.
   </div>
 
   <!-- Stats compactos -->
@@ -62,33 +78,52 @@
         <div class="flex-1 min-w-0">
           <div class="flex items-center gap-2">
             <span class="text-sm font-medium" x-text="u.username"></span>
+            <span x-show="u.roles.includes('root')" class="text-[10px] px-1.5 py-0.5 bg-purple-100 text-purple-700 rounded font-medium">root</span>
             <span x-show="!u.is_active" class="text-[10px] px-1.5 py-0.5 bg-neutral-100 text-neutral-500 rounded">inativo</span>
           </div>
           <div class="flex flex-wrap gap-1 mt-0.5">
             <template x-for="r in u.roles" :key="r">
               <span class="text-[10px] px-1.5 py-0.5 rounded"
-                    :class="r === 'admin' ? 'bg-ai-50 text-ai-800' : 'bg-neutral-100 text-neutral-600'"
+                    :class="r === 'root' ? 'bg-purple-50 text-purple-700' : (r === 'admin' ? 'bg-ai-50 text-ai-800' : 'bg-neutral-100 text-neutral-600')"
                     x-text="r"></span>
             </template>
             <span x-show="u.roles.length === 0" class="text-[10px] text-neutral-400 italic">sem papéis</span>
           </div>
         </div>
 
-        <!-- Ações -->
+        <!-- Ações - sempre visíveis, mas disabled+tooltip quando o actor não pode -->
         <div class="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition">
-          <button @click="editUser(u)" class="text-[11px] px-2 py-1 hover:bg-neutral-100 rounded text-neutral-600">editar</button>
-          <button @click="resetPassword(u)" class="text-[11px] px-2 py-1 hover:bg-neutral-100 rounded text-neutral-600">reset senha</button>
-          <button @click="toggleActive(u)" class="text-[11px] px-2 py-1 hover:bg-neutral-100 rounded"
+          <button @click="editUser(u)"
+                  :disabled="!canManage(u)"
+                  :title="manageTooltip(u)"
+                  class="text-[11px] px-2 py-1 hover:bg-neutral-100 rounded text-neutral-600 disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:bg-transparent">editar</button>
+          <button @click="resetPassword(u)"
+                  :disabled="!canManage(u)"
+                  :title="manageTooltip(u)"
+                  class="text-[11px] px-2 py-1 hover:bg-neutral-100 rounded text-neutral-600 disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:bg-transparent">reset senha</button>
+          <button @click="toggleActive(u)"
+                  :disabled="!canToggleActive(u)"
+                  :title="toggleActiveTooltip(u)"
+                  class="text-[11px] px-2 py-1 hover:bg-neutral-100 rounded disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:bg-transparent"
                   :class="u.is_active ? 'text-neutral-600' : 'text-brand-600'">
             <span x-text="u.is_active ? 'desativar' : 'ativar'"></span>
           </button>
-          <button @click="deleteUser(u)" class="text-[11px] px-2 py-1 hover:bg-risk-50 text-risk-600 rounded">excluir</button>
+          <button @click="deleteUser(u)"
+                  :disabled="!canDelete(u)"
+                  :title="deleteTooltip(u)"
+                  class="text-[11px] px-2 py-1 hover:bg-risk-50 text-risk-600 rounded disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:bg-transparent">excluir</button>
         </div>
       </div>
     </template>
 
     <div x-show="filtered().length === 0" class="px-6 py-10 text-center text-sm text-neutral-400">
-      Nenhum usuário corresponde ao filtro.
+      <span x-show="!users.length && actorAuthority === 'supervisor' && !actorDepartment">
+        Cadastre seu departamento para ver/gerenciar analistas.
+      </span>
+      <span x-show="!users.length && actorAuthority === 'supervisor' && actorDepartment">
+        Nenhum analista cadastrado no departamento <strong x-text="actorDepartment"></strong>.
+      </span>
+      <span x-show="users.length > 0">Nenhum usuário corresponde ao filtro.</span>
     </div>
   </div>
 
@@ -96,7 +131,11 @@
   <div x-show="openNew" x-cloak class="fixed inset-0 bg-black/40 flex items-center justify-center z-40">
     <div @click.outside="openNew = false" class="bg-white rounded-xl p-6 w-[440px] max-w-[92vw]">
       <h3 class="text-base font-medium mb-1">Novo usuário</h3>
-      <p class="text-xs text-neutral-500 mb-4">Defina credenciais iniciais e papéis. A senha pode ser trocada depois.</p>
+      <p class="text-xs text-neutral-500 mb-4">
+        <span x-show="actorAuthority === 'supervisor'">Como supervisor, você só pode criar analistas no seu departamento (<strong x-text="actorDepartment"></strong>).</span>
+        <span x-show="actorAuthority === 'admin'">Você pode criar usuários de qualquer papel, exceto root (somente root cria root).</span>
+        <span x-show="actorAuthority === 'root'">Você pode criar usuários de qualquer papel.</span>
+      </p>
 
       <div class="space-y-3">
         <div>
@@ -127,9 +166,12 @@
         </div>
         <div>
           <label class="block text-xs text-neutral-500 mb-1">departamento</label>
-          <input x-model="form.department" list="users-departments-list"
+          <input x-model="form.department"
+                 :readonly="actorAuthority === 'supervisor'"
+                 :title="actorAuthority === 'supervisor' ? 'supervisor só cria no próprio dept' : ''"
+                 list="users-departments-list"
                  placeholder="escolha um existente ou digite um novo"
-                 class="w-full h-9 px-3 border border-neutral-200 rounded-md text-sm" />
+                 class="w-full h-9 px-3 border border-neutral-200 rounded-md text-sm read-only:bg-neutral-50 read-only:cursor-not-allowed" />
           <p class="text-[10px] text-neutral-400 mt-0.5"
              x-text="availableDepartments.length ? `${availableDepartments.length} departamento(s) cadastrado(s) — texto livre permitido` : 'nenhum cadastrado ainda — digite o primeiro'"></p>
         </div>
@@ -138,8 +180,11 @@
           <label class="block text-xs text-neutral-500 mb-1">papéis</label>
           <div class="flex flex-wrap gap-1.5">
             <template x-for="r in availableRoles" :key="r">
-              <button type="button" @click="toggleRoleForm(r)"
-                      class="text-[11px] px-2.5 py-1 rounded-full border transition"
+              <button type="button"
+                      @click="canAssignRole(r) && toggleRoleForm(r)"
+                      :disabled="!canAssignRole(r)"
+                      :title="assignRoleTooltip(r)"
+                      class="text-[11px] px-2.5 py-1 rounded-full border transition disabled:opacity-30 disabled:cursor-not-allowed"
                       :class="form.roles.includes(r) ? 'bg-brand-600 text-white border-brand-600' : 'border-neutral-200 text-neutral-600 hover:bg-neutral-50'"
                       x-text="r"></button>
             </template>
@@ -154,7 +199,7 @@
     </div>
   </div>
 
-  <!-- Modal: editar — todos os campos do Novo (exceto senha, via reset senha) -->
+  <!-- Modal: editar -->
   <div x-show="editing" x-cloak class="fixed inset-0 bg-black/40 flex items-center justify-center z-40">
     <div @click.outside="editing = null" class="bg-white rounded-xl p-6 w-[440px] max-w-[92vw]">
       <div class="flex items-center gap-3 mb-4">
@@ -187,9 +232,12 @@
         </div>
         <div>
           <label class="block text-xs text-neutral-500 mb-1">departamento</label>
-          <input x-model="editing.department" list="users-departments-list"
+          <input x-model="editing.department"
+                 :readonly="actorAuthority === 'supervisor'"
+                 :title="actorAuthority === 'supervisor' ? 'supervisor não move usuário entre depts' : ''"
+                 list="users-departments-list"
                  placeholder="escolha um existente ou digite um novo"
-                 class="w-full h-9 px-3 border border-neutral-200 rounded-md text-sm" />
+                 class="w-full h-9 px-3 border border-neutral-200 rounded-md text-sm read-only:bg-neutral-50 read-only:cursor-not-allowed" />
           <p class="text-[10px] text-neutral-400 mt-0.5"
              x-text="availableDepartments.length ? `${availableDepartments.length} departamento(s) cadastrado(s) — texto livre permitido` : 'nenhum cadastrado ainda — digite o primeiro'"></p>
         </div>
@@ -198,8 +246,11 @@
           <label class="block text-xs text-neutral-500 mb-1.5">papéis</label>
           <div class="flex flex-wrap gap-1.5">
             <template x-for="r in availableRoles" :key="r">
-              <button type="button" @click="toggleRoleEdit(r)"
-                      class="text-[11px] px-2.5 py-1 rounded-full border transition"
+              <button type="button"
+                      @click="canAssignRole(r) && toggleRoleEdit(r)"
+                      :disabled="!canAssignRole(r)"
+                      :title="assignRoleTooltip(r)"
+                      class="text-[11px] px-2.5 py-1 rounded-full border transition disabled:opacity-30 disabled:cursor-not-allowed"
                       :class="editing && editing.roles.includes(r) ? 'bg-brand-600 text-white border-brand-600' : 'border-neutral-200 text-neutral-600 hover:bg-neutral-50'"
                       x-text="r"></button>
             </template>
@@ -218,6 +269,21 @@
 
 <script>
 function usersApp() {
+  // Contexto do actor (usuário logado) — usado para gating no frontend.
+  // Backend reaplica todas as regras; UI só desabilita pra dar feedback
+  // imediato sem viagem ao servidor.
+  const actorRoles = {{ (user.roles or []) | tojson }};
+  const actorDepartment = {{ (user.department or '') | tojson }};
+  const actorId = "{{ user.id if user else '' }}";
+
+  // Hierarquia de autoridade — primeira batida ganha.
+  function authority(roles) {
+    if (roles.includes('root')) return 'root';
+    if (roles.includes('admin')) return 'admin';
+    if (roles.includes('supervisor')) return 'supervisor';
+    return null;
+  }
+
   return {
     users: {{ users | tojson }}.map(u => ({
       ...u,
@@ -226,12 +292,21 @@ function usersApp() {
         Array.from(u.username).reduce((a,c)=>a+c.charCodeAt(0),0) % 7
       ]
     })),
-    availableRoles: ['root', 'admin', 'supervisor', 'analista_n3', 'finops'],
+    availableRoles: ['root', 'admin', 'supervisor', 'analista_n3', 'analista_n2', 'analista_n1', 'finops'],
     availableDepartments: [],
     filter: '',
     openNew: false,
     editing: null,
     form: { username: '', password: '', full_name: '', email: '', phone: '', department: '', title: '', roles: ['analista_n3'] },
+
+    // Estado derivado do actor — usado em template via x-show/x-text.
+    actorRoles,
+    actorDepartment,
+    actorId,
+    actorAuthority: authority(actorRoles),
+    isRoot: actorRoles.includes('root'),
+    isAdmin: actorRoles.includes('admin'),
+    isSupervisor: actorRoles.includes('supervisor'),
 
     async init() {
       try {
@@ -248,6 +323,105 @@ function usersApp() {
         u.username.toLowerCase().includes(q) ||
         u.roles.some(r => r.toLowerCase().includes(q))
       );
+    },
+
+    // ===== Helpers de policy (espelho do backend users_router) =====
+    // Aqui apenas para feedback visual; o backend é a fonte de verdade.
+
+    isAnalistaOnly(roles) {
+      if (!roles || !roles.length) return false;
+      return roles.every(r => r.startsWith('analista_'));
+    },
+
+    // Pode o actor gerenciar (editar/reset/etc) o usuário target?
+    canManage(target) {
+      if (this.isRoot) return true;
+      if (this.isAdmin) return !target.roles.includes('root');
+      if (this.isSupervisor) {
+        if (!this.actorDepartment) return false;
+        if (!this.isAnalistaOnly(target.roles)) return false;
+        return (target.department || '') === this.actorDepartment;
+      }
+      return false;
+    },
+    manageTooltip(target) {
+      if (this.canManage(target)) return '';
+      if (target.roles.includes('root') && !this.isRoot) {
+        return 'apenas root pode gerenciar usuários root';
+      }
+      if (this.isSupervisor) {
+        if (!this.actorDepartment) return 'cadastre seu departamento antes de gerenciar usuários';
+        if (!this.isAnalistaOnly(target.roles)) return 'supervisor só gerencia analistas';
+        return 'supervisor só gerencia usuários do próprio departamento';
+      }
+      return 'sem permissão para gerenciar este usuário';
+    },
+
+    canToggleActive(target) {
+      // ninguém desativa a si mesmo
+      if (this.actorId === target.id && target.is_active) return false;
+      return this.canManage(target);
+    },
+    toggleActiveTooltip(target) {
+      if (this.actorId === target.id && target.is_active) {
+        return 'não é permitido desativar o próprio usuário';
+      }
+      return this.manageTooltip(target);
+    },
+
+    canDelete(target) {
+      if (this.actorId === target.id) return false;
+      if (this.isSupervisor) return false;       // supervisor não exclui
+      if (this.isRoot) return true;
+      if (this.isAdmin) return !target.roles.includes('root');
+      return false;
+    },
+    deleteTooltip(target) {
+      if (this.canDelete(target)) return '';
+      if (this.actorId === target.id) return 'não é permitido excluir o próprio usuário';
+      if (this.isSupervisor) return 'supervisor não pode excluir usuários';
+      if (target.roles.includes('root') && !this.isRoot) return 'apenas root pode excluir usuários root';
+      return 'sem permissão para excluir este usuário';
+    },
+
+    // Pode o actor atribuir/atribuir o role `r` em um usuário?
+    canAssignRole(r) {
+      if (r === 'root') return this.isRoot;
+      if (this.isRoot || this.isAdmin) return true;
+      if (this.isSupervisor) return r.startsWith('analista_');
+      return false;
+    },
+    assignRoleTooltip(r) {
+      if (this.canAssignRole(r)) return '';
+      if (r === 'root') return 'apenas root pode atribuir o papel root';
+      if (this.isSupervisor) return 'supervisor só atribui papéis analista_n*';
+      return 'sem permissão';
+    },
+
+    // O actor pode criar ALGUM usuário? Usado pra desabilitar o "+ novo".
+    canCreateAny() {
+      if (this.isRoot || this.isAdmin) return true;
+      if (this.isSupervisor) return !!this.actorDepartment;
+      return false;
+    },
+    createTooltip() {
+      if (this.canCreateAny()) return '';
+      if (this.isSupervisor && !this.actorDepartment) {
+        return 'cadastre seu departamento antes de criar usuários';
+      }
+      return 'sem permissão para criar usuários';
+    },
+
+    // Quando supervisor abre o modal, pré-preenche dept = actor.department
+    // e força roles padrão pra analista_n3 (que ele pode atribuir).
+    openNewUser() {
+      this.openNew = true;
+      if (this.isSupervisor) {
+        this.form.department = this.actorDepartment;
+        if (!this.form.roles.every(r => r.startsWith('analista_'))) {
+          this.form.roles = ['analista_n3'];
+        }
+      }
     },
 
     toggleRoleForm(r) {
@@ -269,11 +443,15 @@ function usersApp() {
         this.users.push(created);
         toast(`Usuário ${created.username} criado.`, 'success');
         this.openNew = false;
-        // Se digitou departamento novo, refresca o datalist
         if (this.form.department && !this.availableDepartments.includes(this.form.department)) {
           this.availableDepartments = [...this.availableDepartments, this.form.department].sort();
         }
-        this.form = { username: '', password: '', full_name: '', email: '', phone: '', department: '', title: '', roles: ['analista_n3'] };
+        // Reset com defaults sensatos para o role do actor
+        this.form = {
+          username: '', password: '', full_name: '', email: '', phone: '',
+          department: this.isSupervisor ? this.actorDepartment : '',
+          title: '', roles: ['analista_n3'],
+        };
       } catch (e) { toast(e.message, 'error'); }
     },
 
@@ -292,7 +470,6 @@ function usersApp() {
         });
         // 2) roles (chamada separada — endpoint dedicado preserva a auditoria)
         const updated = await window.api('PATCH', `/api/users/${this.editing.id}/roles`, { roles: this.editing.roles });
-        // Atualiza datalist se editou para um departamento novo
         if (this.editing.department && !this.availableDepartments.includes(this.editing.department)) {
           this.availableDepartments = [...this.availableDepartments, this.editing.department].sort();
         }
