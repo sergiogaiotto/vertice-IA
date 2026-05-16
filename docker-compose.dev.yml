@@ -70,6 +70,20 @@ services:
       PG_POOL_MAX_SIZE: "20"
       # Reload do uvicorn já cobre hot-reload — 1 worker é suficiente em dev.
       UVICORN_WORKERS: "1"
+      # LLMs — opt-in via `.env` da raiz (Compose carrega automaticamente).
+      # Sem a var no .env, `${VAR:-}` injeta string vazia → adapter cai em modo
+      # mock. Espelha o bloco do docker-compose.yml (prod) para que o dev se
+      # comporte igual quando você preenche chaves.
+      AZURE_OPENAI_API_KEY: ${AZURE_OPENAI_API_KEY:-}
+      AZURE_OPENAI_ENDPOINT: ${AZURE_OPENAI_ENDPOINT:-}
+      AZURE_OPENAI_API_VERSION: ${AZURE_OPENAI_API_VERSION:-2024-08-01-preview}
+      AZURE_OPENAI_DEPLOYMENT: ${AZURE_OPENAI_DEPLOYMENT:-gpt-4o}
+      MARITACA_API_KEY: ${MARITACA_API_KEY:-}
+      MARITACA_MODEL: ${MARITACA_MODEL:-sabia-4}
+      MARITACA_BASE_URL: ${MARITACA_BASE_URL:-https://chat.maritaca.ai/api}
+      GAIA_API_KEY: ${GAIA_API_KEY:-}
+      GAIA_MODEL: ${GAIA_MODEL:-gaia-4b}
+      GAIA_BASE_URL: ${GAIA_BASE_URL:-}
     ports:
       - "${APP_HOST_PORT:-8000}:8000"
     volumes:
