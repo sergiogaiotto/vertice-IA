@@ -95,20 +95,25 @@
       <div class="space-y-3">
         <div>
           <label class="block text-xs text-neutral-500 mb-1">papel</label>
-          <input x-model="form.data.role"
-                 list="access-roles-list"
-                 placeholder="ex: analista_n3, supervisor, admin..."
-                 :readonly="form.editing"
-                 class="w-full h-9 px-3 border border-neutral-200 rounded-md text-sm font-mono read-only:bg-neutral-50" />
-          <datalist id="access-roles-list">
-            <option value="root"></option>
-            <option value="admin"></option>
-            <option value="supervisor"></option>
-            <option value="analista_n1"></option>
-            <option value="analista_n2"></option>
-            <option value="analista_n3"></option>
-            <option value="finops"></option>
-          </datalist>
+          <!-- Select com lista fixa de papéis administráveis pela matriz.
+               Ordem: hierarquia descendente (admin → supervisor → analistas)
+               + finops por último.
+               `root` NÃO entra: o helper `can_access` bypassa root antes
+               de consultar regras, então qualquer regra cadastrada para
+               root seria silenciosamente ignorada. Excluir aqui evita
+               confusão e mantém a UI alinhada com o comportamento real.
+               Em modo edição, `role` é parte da chave única (role, dept,
+               feat) — fica disabled. Alpine mantém o valor via x-model. -->
+          <select x-model="form.data.role"
+                  :disabled="form.editing"
+                  class="w-full h-9 px-3 border border-neutral-200 rounded-md text-sm font-mono bg-white disabled:bg-neutral-50 disabled:cursor-not-allowed">
+            <option value="admin">admin</option>
+            <option value="supervisor">supervisor</option>
+            <option value="analista_n3">analista_n3</option>
+            <option value="analista_n2">analista_n2</option>
+            <option value="analista_n1">analista_n1</option>
+            <option value="finops">finops</option>
+          </select>
         </div>
         <div>
           <label class="block text-xs text-neutral-500 mb-1">
