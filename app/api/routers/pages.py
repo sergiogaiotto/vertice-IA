@@ -51,11 +51,22 @@ def _require_any_role(user: User | None, allowed: list[str]) -> User:
     """Bloqueia acesso à página se o usuário não tem ao menos um dos roles.
 
     Usado como gate no servidor para os grupos Configurações/Monitoramento/
-    Administrativo. analista_n3 só passa em rotas com role 'analista_n3' OR sem gate.
+    Administrativo.
+
+    **Root supremacy**: ``root`` é papel supremo e SEMPRE passa, mesmo que
+    não esteja listado em ``allowed`` — corrige o sintoma de root tomar 403
+    nas próprias telas administrativas. Sem este bypass, todo gate precisaria
+    listar ``root`` explicitamente; o bypass evita a duplicação.
+
+    analista_n3 só passa em rotas com role 'analista_n3' OR sem gate.
     """
     if not user:
         raise HTTPException(status.HTTP_401_UNAUTHORIZED, "autenticação requerida")
-    if not any(r in allowed for r in (user.roles or [])):
+    user_roles = user.roles or []
+    # Bypass do root — corolário da política "root tem todos os poderes".
+    if "root" in user_roles:
+        return user
+    if not any(r in allowed for r in user_roles):
         raise HTTPException(
             status.HTTP_403_FORBIDDEN,
             f"acesso restrito · requer um dos papéis: {', '.join(allowed)}"
@@ -497,8 +508,7 @@ async def apis_page(
 ):
     if not user:
         return RedirectResponse("/login")
-    if "admin" not in user.roles:
-        raise HTTPException(403, "apenas admin pode gerenciar APIs")
+    _require_any_role(user, ['admin'])
     return templates.TemplateResponse(
         "apis/index.html",
         _ctx(request, user, active_module="apis"),
@@ -512,8 +522,7 @@ async def gallery_page(
 ):
     if not user:
         return RedirectResponse("/login")
-    if "admin" not in user.roles:
-        raise HTTPException(403, "apenas admin pode acessar a Galeria")
+    _require_any_role(user, ['admin'])
     return templates.TemplateResponse(
         "gallery/index.html",
         _ctx(request, user, active_module="gallery"),
@@ -528,8 +537,7 @@ async def gallery_detail_page(
 ):
     if not user:
         return RedirectResponse("/login")
-    if "admin" not in user.roles:
-        raise HTTPException(403, "apenas admin pode acessar a Galeria")
+    _require_any_role(user, ['admin'])
     return templates.TemplateResponse(
         "gallery/detail.html",
         _ctx(request, user, active_module="gallery", presentation_id=presentation_id),
@@ -640,17 +648,40 @@ async def cards_em_tela_page(
     # `created_at`/`updated_at` voltam do Postgres como `datetime` — o filtro
     # `tojson` do Jinja usa `json.dumps` puro e estoura em datetime, então
     # converte para ISO string aqui (o JS faz `new Date(...)` em cima).
+    # Lista completa de campos datetime devolvidos por _row_to_dict — TODOS
+    # precisam ser convertidos para ISO antes do `tojson` no template (que
+    # usa `json.dumps` puro e estoura em datetime).
+    # Inclui colunas de auditoria adicionadas em commits posteriores:
+    # visibility_changed_at, owner_changed_at. Bug latente: se algum card
+    # tinha esses campos preenchidos, /admin/cards-em-tela retornava 500.
+    _DT_FIELDS = (
+        "created_at",
+        "updated_at",
+        "visibility_changed_at",
+        "owner_changed_at",
+    )
     for r in rows:
         v = r.get("visibility") or "private"
+        dept = r.get("sharer_department")
+        dept_suffix = f"@{dept}" if dept else ""
         if v == "private":
             r["who_can_see"] = ["dono"]
         elif v == "public_lideranca":
-            r["who_can_see"] = ["dono", "admin", "supervisor"]
+            r["who_can_see"] = [
+                "dono",
+                f"admin{dept_suffix}",
+                f"supervisor{dept_suffix}",
+            ]
         elif v == "public_analista":
-            r["who_can_see"] = ["dono", "admin", "supervisor", "analista"]
+            r["who_can_see"] = [
+                "dono",
+                f"admin{dept_suffix}",
+                f"supervisor{dept_suffix}",
+                f"analista{dept_suffix}",
+            ]
         else:
             r["who_can_see"] = ["dono"]
-        for k in ("created_at", "updated_at"):
+        for k in _DT_FIELDS:
             ts = r.get(k)
             if hasattr(ts, "isoformat"):
                 r[k] = ts.isoformat()
