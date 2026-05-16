@@ -144,7 +144,7 @@
               <span class="dot" :class="test.result?.ok ? 'dot-success' : 'dot-risk'"></span>
               <span x-text="`HTTP ${test.result?.status || '—'}`" class="font-mono"></span>
               <span class="text-neutral-400" x-text="`${test.result?.duration_ms || 0}ms`"></span>
-              <span x-show="test.result?.error" class="text-risk-700" x-text="test.result.error"></span>
+              <span x-show="test.result?.error" class="text-risk-700" x-text="test.result?.error"></span>
             </div>
             <pre class="p-3 text-[11px] font-mono whitespace-pre-wrap max-h-64 overflow-auto" x-text="prettyResp(test.result?.body)"></pre>
           </div>
