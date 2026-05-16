@@ -15,6 +15,7 @@ from app.api.deps import (
     get_radar_state_repo,
     get_registry_service,
     get_skill_service,
+    get_user_repo,
     require_roles,
     require_user,
 )
@@ -93,6 +94,10 @@ class RadarStatePutResponse(BaseModel):
 
 def _is_lideranca(user: User) -> bool:
     return any(r in {"admin", "supervisor", "root"} for r in (user.roles or []))
+
+
+def _is_root(user: User) -> bool:
+    return "root" in (user.roles or [])
 
 
 def _is_analista(user: User) -> bool:
@@ -337,16 +342,27 @@ async def set_card_visibility(
     card_uid: str,
     body: CardVisibilityUpdateRequest,
     visibility_repo=Depends(get_radar_card_visibility_repo),
+    user_repo=Depends(get_user_repo),
     user: User = Depends(require_user),
 ):
     """Atualiza a visibilidade de um card.
 
-    Regras:
-    - Default sempre é `private`.
-    - Apenas o **dono** pode setar `private` (resetar para privado um card
-      que ele mesmo havia compartilhado).
-    - Apenas **admin/supervisor/root** podem setar `public_lideranca` ou
-      `public_analista` — em cards próprios OU em cards de outros usuários.
+    Política consolidada (Voz do Cliente):
+
+    * Default sempre é ``private``.
+    * Apenas o **dono** ou **liderança** pode reverter para ``private``.
+    * Para tornar ``public_lideranca`` ou ``public_analista``:
+        - ``root``       → sem restrição. ``sharer_department`` fica NULL,
+          card visível cross-dept para audiência elegível pelo role tier.
+        - ``admin`` /
+          ``supervisor``  → DEVE ter ``user.department`` preenchido.
+          ``sharer_department`` recebe ``user.department``. Se o card é de
+          OUTRO usuário, o dono deve estar no mesmo dept que o ator (impede
+          admin/supervisor de mexer em cards alheios cross-dept).
+        - demais         → 403. Analista (qualquer nível) não pode publicar.
+
+    Erros explícitos com `detail` em PT-BR para o frontend exibir tooltip
+    útil ao usuário.
     """
     new_vis = (body.visibility or "").strip()
     if new_vis not in ("private", "public_lideranca", "public_analista"):
@@ -358,23 +374,59 @@ async def set_card_visibility(
 
     is_owner = record["owner_id"] == str(user.id)
     lideranca = _is_lideranca(user)
+    is_root = _is_root(user)
+    actor_department = (user.department or "").strip()
 
     if new_vis == "private":
         # somente dono pode reverter para privado
         if not is_owner and not lideranca:
             raise HTTPException(403, "apenas o dono ou liderança pode reverter para privado")
+        # caller_department não importa em reversão — repo limpa para NULL.
+        new_sharer_dept: str | None = None
     else:
-        # public_* exige liderança
+        # public_* exige liderança (admin/supervisor/root). Analistas bloqueados.
         if not lideranca:
             raise HTTPException(
                 403, "apenas admin/supervisor pode tornar um card público"
             )
+        if is_root:
+            # Root publica sem filtro de dept — sharer_department fica NULL,
+            # card visível para todos os elegíveis cross-dept.
+            new_sharer_dept = None
+        else:
+            # admin/supervisor: exige dept preenchido.
+            if not actor_department:
+                raise HTTPException(
+                    403,
+                    "cadastre seu departamento em /usuarios antes de "
+                    "compartilhar cards",
+                )
+            # Cross-dept check: se está mexendo em card de OUTRO usuário,
+            # o dono original precisa estar no mesmo dept que o ator.
+            # Em card próprio (is_owner=True), pula a checagem.
+            if not is_owner:
+                owner_dept = await user_repo.get_department_by_id(
+                    record["owner_id"]
+                )
+                if owner_dept is None:
+                    # dono sumiu/foi deletado — bloqueia por segurança
+                    raise HTTPException(
+                        403, "dono do card não encontrado — ação bloqueada"
+                    )
+                if (owner_dept or "").strip() != actor_department:
+                    raise HTTPException(
+                        403,
+                        "não é possível compartilhar card de usuário de "
+                        "outro departamento",
+                    )
+            new_sharer_dept = actor_department
 
     ok = await visibility_repo.update_visibility(
         card_uid,
         new_vis,
         actor_id=str(user.id),
         actor_username=user.username,
+        actor_department=new_sharer_dept,
     )
     if not ok:
         raise HTTPException(500, "falha ao atualizar visibility")
@@ -388,13 +440,22 @@ async def list_shared_cards(
 ):
     """Cards de OUTROS usuários que o usuário atual pode ver.
 
-    Filtragem por role:
-    - admin/supervisor/root → public_lideranca + public_analista
-    - analista (e demais) → apenas public_analista
+    Duas camadas de filtragem aplicadas no repo:
+
+    1. **Role tier**:
+       - admin/supervisor/root → public_lideranca + public_analista
+       - analista (e demais)   → apenas public_analista
+
+    2. **Departamento** (exceto root):
+       - card só aparece se ``sharer_department`` casar com
+         ``user.department`` OU se for NULL (cards do root, cross-dept).
+       - usuários sem dept (``department=''``) ainda recebem cards
+         compartilhados pelo root, mas nenhum departamental.
     """
     rows = await visibility_repo.list_visible_to(
         user_id=str(user.id),
         user_roles=user.roles or [],
+        user_department=(user.department or "").strip(),
     )
     return {"items": rows, "count": len(rows)}
 
@@ -429,15 +490,29 @@ async def admin_list_all_cards(
     if not _is_lideranca(user):
         raise HTTPException(403, "apenas admin/supervisor")
     rows = await visibility_repo.list_all()
-    # enriquece cada linha com `who_can_see` para a tela administrativa
+    # Enriquece cada linha com `who_can_see` refletindo a política atual de
+    # visibilidade + filtro de departamento. Quando `sharer_department` está
+    # preenchido, a audiência é restrita ao mesmo dept (compartilhador era
+    # admin/supervisor). NULL = root compartilhou, audiência cross-dept.
     for r in rows:
         v = r.get("visibility") or "private"
+        dept = r.get("sharer_department")
+        dept_suffix = f"@{dept}" if dept else ""
         if v == "private":
             r["who_can_see"] = ["dono"]
         elif v == "public_lideranca":
-            r["who_can_see"] = ["dono", "admin", "supervisor"]
+            r["who_can_see"] = [
+                "dono",
+                f"admin{dept_suffix}",
+                f"supervisor{dept_suffix}",
+            ]
         elif v == "public_analista":
-            r["who_can_see"] = ["dono", "admin", "supervisor", "analista"]
+            r["who_can_see"] = [
+                "dono",
+                f"admin{dept_suffix}",
+                f"supervisor{dept_suffix}",
+                f"analista{dept_suffix}",
+            ]
         else:
             r["who_can_see"] = ["dono"]
     return {"items": rows, "count": len(rows)}

@@ -148,3 +148,18 @@ class PgUserRepository(UserRepository):
         async with connect() as db:
             n = await db.fetchval("SELECT COUNT(*) FROM users")
             return int(n or 0)
+
+    async def get_department_by_id(self, user_id: str) -> str | None:
+        """Retorna apenas o departamento do usuário — lightweight, sem
+        carregar roles ou hash. Usado por checks de policy (radar visibility
+        cross-dept). Retorna ``None`` se o usuário não existe; string vazia
+        se existe mas não tem dept cadastrado.
+
+        ``user_id`` aceita tanto UUID quanto str — interno faz cast.
+        """
+        async with connect() as db:
+            row = await db.fetchval(
+                "SELECT department FROM users WHERE id = $1::uuid",
+                str(user_id),
+            )
+            return row if row is not None else None

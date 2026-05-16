@@ -25,6 +25,7 @@ class PgRadarCardVisibilityRepository:
         "visibility_changed_by_id, visibility_changed_by_username, "
         "visibility_changed_at, "
         "owner_changed_by_id, owner_changed_by_username, owner_changed_at, "
+        "sharer_department, "
         "created_at, updated_at"
     )
 
@@ -68,23 +69,60 @@ class PgRadarCardVisibilityRepository:
             return {r["card_uid"] for r in rows}
 
     async def list_visible_to(
-        self, user_id: str, user_roles: list[str]
+        self,
+        user_id: str,
+        user_roles: list[str],
+        user_department: str = "",
     ) -> list[dict]:
-        """Cards de OUTROS usuários que o `user_id` pode ver dado o set de
-        roles."""
+        """Cards de OUTROS usuários que o ``user_id`` pode ver, aplicando duas
+        camadas de filtragem:
+
+        1. **Role tier** — admin/supervisor/root veem `public_lideranca` +
+           `public_analista`. Demais (incluindo analista_n*) veem só
+           `public_analista`.
+        2. **Departamento** — exceto para ``root``, o card só é visível se seu
+           ``sharer_department`` casar com ``user_department``. Cards com
+           ``sharer_department IS NULL`` (compartilhados pelo root) são
+           cross-dept e aparecem para todo mundo elegível pelo role tier.
+
+        ``user_department`` vem do contexto do request (``User.department``).
+        Vazio em usuário sem dept cadastrado faz a query não retornar nada
+        que tenha sharer_department definido — comportamento desejado: quem
+        não tem dept não recebe shares departamentais.
+        """
         is_lideranca = any(r in {"admin", "supervisor", "root"} for r in user_roles)
+        is_root = "root" in user_roles
         if is_lideranca:
             allowed = ["public_lideranca", "public_analista"]
         else:
             allowed = ["public_analista"]
-        sql = (
-            f"SELECT {self._COLS} "
-            "FROM radar_card_visibility "
-            "WHERE owner_id <> $1 AND visibility = ANY($2::text[]) "
-            "ORDER BY updated_at DESC"
-        )
+
+        if is_root:
+            # Root vê tudo, cross-dept.
+            sql = (
+                f"SELECT {self._COLS} "
+                "FROM radar_card_visibility "
+                "WHERE owner_id <> $1 AND visibility = ANY($2::text[]) "
+                "ORDER BY updated_at DESC"
+            )
+            params = (user_id, allowed)
+        else:
+            # Filtro de departamento: ou o sharer era root (NULL) ou o dept
+            # bate exatamente. Se user_department='', cards com NULL ainda
+            # aparecem (compartilhados pelo root); cards com dept específico
+            # não.
+            sql = (
+                f"SELECT {self._COLS} "
+                "FROM radar_card_visibility "
+                "WHERE owner_id <> $1 "
+                "  AND visibility = ANY($2::text[]) "
+                "  AND (sharer_department IS NULL "
+                "       OR sharer_department = $3) "
+                "ORDER BY updated_at DESC"
+            )
+            params = (user_id, allowed, user_department or "")
         async with connect() as db:
-            rows = await db.fetch(sql, user_id, allowed)
+            rows = await db.fetch(sql, *params)
             return [self._row_to_dict(r) for r in rows]
 
     async def list_all(self) -> list[dict]:
@@ -165,6 +203,7 @@ class PgRadarCardVisibilityRepository:
         visibility: str,
         actor_id: str | None = None,
         actor_username: str | None = None,
+        actor_department: str | None = None,
     ) -> bool:
         """Atualiza visibility e armazena a anterior em previous_visibility.
 
@@ -175,6 +214,15 @@ class PgRadarCardVisibilityRepository:
         administrativo sensível (admin/supervisor pode mudar visibility de
         cards alheios via /admin/cards-em-tela). NULL é aceito por compat,
         mas todos os callers de produção devem preencher.
+
+        ``actor_department`` define a audiência do card quando ele vira
+        público. Caller deve passar:
+          * dept do usuário (admin/supervisor) quando ele torna público;
+          * ``None`` quando root torna público (sem filtro de dept);
+          * qualquer valor quando reverte para ``private`` — coluna é
+            limpada para NULL automaticamente nesse caso.
+        Validação de policy (role autorizado, dept preenchido para não-root,
+        mesmo dept que o dono) é responsabilidade da camada de router/serviço.
         """
         if visibility not in VALID_VISIBILITY:
             return False
@@ -189,15 +237,20 @@ class PgRadarCardVisibilityRepository:
             current = row["visibility"] or "private"
             if current == visibility:
                 return True
+            # Reverter para private limpa o sharer_department — card perde
+            # a marca de audiência. Próxima publicação preenche de novo.
+            new_dept = None if visibility == "private" else actor_department
             result = await db.execute(
                 "UPDATE radar_card_visibility "
                 "SET visibility = $1, previous_visibility = $2, "
                 "    visibility_changed_by_id = $3, "
                 "    visibility_changed_by_username = $4, "
                 "    visibility_changed_at = NOW(), "
+                "    sharer_department = $5, "
                 "    updated_at = NOW() "
-                "WHERE card_uid = $5",
-                visibility, current, actor_id, actor_username, card_uid,
+                "WHERE card_uid = $6",
+                visibility, current, actor_id, actor_username,
+                new_dept, card_uid,
             )
             # `UPDATE 1` se conseguiu, `UPDATE 0` se não.
             return result.endswith(" 1")
@@ -302,6 +355,7 @@ class PgRadarCardVisibilityRepository:
             "owner_changed_by_id":            row["owner_changed_by_id"],
             "owner_changed_by_username":      row["owner_changed_by_username"],
             "owner_changed_at":               row["owner_changed_at"],
+            "sharer_department":              row["sharer_department"],
             "created_at":          row["created_at"],
             "updated_at":          row["updated_at"],
         }
