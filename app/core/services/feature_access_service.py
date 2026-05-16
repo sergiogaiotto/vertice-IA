@@ -34,9 +34,27 @@ from app.adapters.db.repositories.feature_access_repo import (
 
 # Catálogo de features controláveis. Mantenha em sync com:
 #   - `pages.py`: cada feature precisa de page guard chamando `can_access`
-#   - `nav_left.html`: cada feature aparece como entry no grupo "Funcionalidade"
+#   - `nav_left.html`: a entry no menu mapeia para a feature_key via
+#     `NAV_ENTRY_TO_FEATURE` abaixo (a entry key continua sendo o key
+#     interno de UI, ex.: 'radar', que casa com `active_module` para
+#     highlight; já a `feature_key` na matriz é o nome de DOMÍNIO,
+#     ex.: 'vozcliente', que aparece em /access pra usuários finais)
 #   - tela /access: lista as features como colunas da grid
-CONTROLLED_FEATURES = ("radar", "raiox")
+#
+# Histórico: 'radar' (interno) → 'vozcliente' (nome de produto exibido).
+# A migration em schema.sql renomeia linhas pré-existentes para que regras
+# antigas continuem aplicáveis ao mesmo módulo sob o novo nome.
+CONTROLLED_FEATURES = ("vozcliente", "raiox")
+
+# Mapeamento entry-key-no-menu → feature_key-na-matriz. Permite que o
+# `active_module` (UI) e o nome técnico das pastas/rotas (`/radar`,
+# `app/templates/radar/`) continuem como estão, sem renomear código,
+# enquanto a face de domínio exibida ao usuário fica em sync com o
+# label "Voz do Cliente".
+NAV_ENTRY_TO_FEATURE = {
+    "radar": "vozcliente",
+    "raiox": "raiox",
+}
 
 
 class FeatureAccessService:

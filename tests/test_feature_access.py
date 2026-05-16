@@ -69,11 +69,11 @@ async def test_can_access_root_bypassa_tudo():
     """
     await init_db()
     svc = FeatureAccessService()
-    # Cria regra deny pra TODO mundo na feature radar
-    await svc.set_rule(role="root", department="", feature_key="radar", access=False)
+    # Cria regra deny pra TODO mundo na feature vozcliente
+    await svc.set_rule(role="root", department="", feature_key="vozcliente", access=False)
     # Mesmo assim, user com role 'root' acessa (bypass acontece ANTES da consulta)
-    assert await svc.can_access(["root"], "", "radar") is True
-    assert await svc.can_access(["root"], "qualquer_dept", "radar") is True
+    assert await svc.can_access(["root"], "", "vozcliente") is True
+    assert await svc.can_access(["root"], "qualquer_dept", "vozcliente") is True
 
 
 @pytest.mark.asyncio
@@ -89,11 +89,11 @@ async def test_can_access_default_allow_sem_regra():
     svc = FeatureAccessService()
     # Banco vazio (TRUNCATE entre testes) — qualquer role com regra
     # não-cadastrada passa.
-    assert await svc.can_access(["analista_n3"], "vendas", "radar") is True
+    assert await svc.can_access(["analista_n3"], "vendas", "vozcliente") is True
     assert await svc.can_access(["supervisor"], "", "raiox") is True
-    assert await svc.can_access(["analista_n1"], "qualquer_dept", "radar") is True
+    assert await svc.can_access(["analista_n1"], "qualquer_dept", "vozcliente") is True
     # Sem nenhum role → DENY (segurança: ausência de identidade não cria acesso)
-    assert await svc.can_access([], "", "radar") is False
+    assert await svc.can_access([], "", "vozcliente") is False
 
 
 @pytest.mark.asyncio
@@ -108,7 +108,7 @@ async def test_can_access_deny_explicito_para_role_dept():
     # Outro dept não é afetado
     assert await svc.can_access(["analista_n3"], "suporte", "raiox") is True
     # Outra feature não é afetada
-    assert await svc.can_access(["analista_n3"], "vendas", "radar") is True
+    assert await svc.can_access(["analista_n3"], "vendas", "vozcliente") is True
     # Outro role não é afetado
     assert await svc.can_access(["supervisor"], "vendas", "raiox") is True
 
@@ -227,7 +227,7 @@ async def test_put_rule_admin_403(client: AsyncClient):
     _, tok = await _make_user("rule_admin", ["admin"])
     r = await client.put(
         "/api/access/rule",
-        json={"role": "analista_n3", "department": "", "feature_key": "radar", "access": False},
+        json={"role": "analista_n3", "department": "", "feature_key": "vozcliente", "access": False},
         headers=_h(tok),
     )
     assert r.status_code == 403
@@ -252,7 +252,7 @@ async def test_put_rule_root_cria(client: AsyncClient):
 async def test_put_rule_root_atualiza_existente(client: AsyncClient):
     """Segundo PUT com mesma (role, dept, feature) atualiza access."""
     _, tok = await _make_user("rule_root_upd", ["root"])
-    payload = {"role": "analista_n3", "department": "", "feature_key": "radar", "access": False}
+    payload = {"role": "analista_n3", "department": "", "feature_key": "vozcliente", "access": False}
     r = await client.put("/api/access/rule", json=payload, headers=_h(tok))
     assert r.status_code == 200
 
@@ -295,7 +295,7 @@ async def test_delete_rule_admin_403(client: AsyncClient):
     _, tok = await _make_user("rule_del_admin", ["admin"])
     r = await client.request(
         "DELETE", "/api/access/rule",
-        json={"role": "x", "department": "", "feature_key": "radar"},
+        json={"role": "x", "department": "", "feature_key": "vozcliente"},
         headers=_h(tok),
     )
     assert r.status_code == 403
@@ -312,9 +312,10 @@ async def test_radar_page_bloqueado_por_matriz(client: AsyncClient):
     sendo papel autenticado (que normalmente acessa funcionalidades
     "all"). Confirma que a matriz tem prioridade sobre role gate de
     nav_left."""
-    # Cria regra deny pra todos analistas_n3 em radar
+    # Cria regra deny pra todos analistas_n3 em vozcliente (a feature
+    # exibida em /access; a rota /radar continua mapeada a essa feature).
     svc = FeatureAccessService()
-    await svc.set_rule(role="analista_n3", department="", feature_key="radar", access=False)
+    await svc.set_rule(role="analista_n3", department="", feature_key="vozcliente", access=False)
 
     _, tok = await _make_user("radar_blocked", ["analista_n3"], department="x")
     r = await client.get("/radar", headers=_h(tok))
@@ -326,7 +327,7 @@ async def test_radar_page_root_bypassa_matriz(client: AsyncClient):
     """Root sempre acessa, mesmo com regra deny. Página /radar testada
     porque o bypass acontece em duas camadas (can_access + nav)."""
     svc = FeatureAccessService()
-    await svc.set_rule(role="root", department="", feature_key="radar", access=False)
+    await svc.set_rule(role="root", department="", feature_key="vozcliente", access=False)
 
     _, tok = await _make_user("radar_root_bypass", ["root"])
     r = await client.get("/radar", headers=_h(tok))

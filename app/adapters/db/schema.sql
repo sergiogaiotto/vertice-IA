@@ -555,6 +555,17 @@ CREATE TABLE IF NOT EXISTS feature_access (
 CREATE INDEX IF NOT EXISTS idx_feature_access_lookup
     ON feature_access(role, feature_key);
 
+-- Migration: renomeação da feature 'radar' → 'vozcliente' na matriz.
+-- O módulo continua sendo o mesmo (rotas /radar, pasta templates/radar/,
+-- código Python referenciando 'radar' como nome interno) — só a face
+-- exposta na tela administrativa /access muda para o nome de produto.
+-- Idempotente: re-execuções não fazem nada (WHERE só casa linhas com
+-- a chave antiga).
+UPDATE feature_access
+   SET feature_key = 'vozcliente',
+       updated_at = NOW()
+ WHERE feature_key = 'radar';
+
 -- Failsafe inbox
 CREATE TABLE IF NOT EXISTS failsafe_actions (
     id           UUID PRIMARY KEY,
