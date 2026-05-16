@@ -432,11 +432,42 @@ async def users_page(
     user: User | None = Depends(current_user_optional),
     svc: UserAdminService = Depends(get_user_admin_service),
 ):
+    """Página /users — gerência de usuários.
+
+    Acesso por role:
+      - root:        vê todos os usuários (lista completa do banco).
+      - admin:       vê todos.
+      - supervisor:  vê APENAS usuários analista_n* do MESMO departamento;
+                     sem dept preenchido recebe lista vazia + aviso na UI.
+      - demais:      403.
+
+    O backend (users_router) reaplica essas regras nas APIs — esta página
+    apenas serve o HTML inicial com o subset visível ao actor.
+    """
     if not user:
         return RedirectResponse("/login")
-    if "admin" not in user.roles:
-        raise HTTPException(403, "apenas admin pode gerenciar usuários")
+    actor_roles = set(user.roles or [])
+    is_root = "root" in actor_roles
+    is_admin = "admin" in actor_roles
+    is_supervisor = "supervisor" in actor_roles
+    if not (is_root or is_admin or is_supervisor):
+        raise HTTPException(403, "apenas root/admin/supervisor pode gerenciar usuários")
+
     users_raw = await svc.list_all()
+
+    # Supervisor: filtra só analistas do próprio dept.
+    if is_supervisor and not is_admin and not is_root:
+        actor_dept = (user.department or "").strip()
+        if not actor_dept:
+            users_raw = []
+        else:
+            users_raw = [
+                u for u in users_raw
+                if u.roles
+                and all(r.startswith("analista_") for r in u.roles)
+                and (u.department or "").strip() == actor_dept
+            ]
+
     users = [
         {
             "id": str(u.id),

@@ -3,37 +3,51 @@
        class="transition-all duration-200 bg-white border-r border-neutral-200 h-full flex flex-col py-3 overflow-y-auto">
 
   {#
-    Cada grupo tem allowed_roles. Se vazio (ou contém 'all'), todo usuário
+    Cada grupo tem `allowed_roles`. Se vazio (ou contém 'all'), todo usuário
     autenticado vê. Senão, só usuários com ao menos UM dos roles listados.
-    analista_n3 fica restrito a Cockpit + Funcionalidade.
+
+    Cada entry pode opcionalmente ter um `allowed_roles` próprio (5º elemento
+    da tupla) — quando presente, sobrescreve a regra do grupo para AQUELE
+    item. Útil quando, no grupo Administrativo (ex.: 'root'+'admin'+'supervisor'),
+    o item "APIs" deve ser visível apenas a 'root'+'admin'.
+
+    Política consolidada:
+      - root está em TODOS os `allowed_roles` administrativos — é o papel
+        supremo, vê tudo.
+      - "Usuários": root/admin/supervisor (supervisor vê apenas analistas
+        do próprio dept; o backend reaplica o filtro).
+      - "Funcionalidade" (radar, raiox): visível a todos os autenticados.
+        Quando a matriz "Funcionalidades por Perfil" entrar em vigor, este
+        filtro também passará a respeitar a matriz.
+    analista_n* permanece restrito a Cockpit + Funcionalidade.
   #}
   {% set user_roles = (user.roles if user and user.roles else []) %}
-  {% set is_privileged = ('admin' in user_roles or 'supervisor' in user_roles or 'finops' in user_roles) %}
+  {% set is_privileged = ('admin' in user_roles or 'supervisor' in user_roles or 'finops' in user_roles or 'root' in user_roles) %}
 
   {% set groups = [
     {'label': None, 'allowed_roles': ['all'], 'entries': [
-      ('cockpit', 'Cockpit', '/', 'M3 12 L12 3 L21 12 M5 10 V20 H19 V10')
+      ('cockpit', 'Cockpit', '/', 'M3 12 L12 3 L21 12 M5 10 V20 H19 V10', None)
     ]},
     {'label': 'Funcionalidade', 'allowed_roles': ['all'], 'entries': [
-      ('radar', 'Voz do Cliente', '/radar', 'M9 9 L15 9 M9 13 L13 13 M3 5 H21 V19 H3 Z'),
-      ('raiox', 'Raio X Cliente', '/raiox', 'M12 3 A9 9 0 1 0 12 21 A9 9 0 1 0 12 3 Z M5 12 H19 M12 5 V19 M7.5 7.5 L16.5 16.5 M16.5 7.5 L7.5 16.5')
+      ('radar', 'Voz do Cliente', '/radar', 'M9 9 L15 9 M9 13 L13 13 M3 5 H21 V19 H3 Z', None),
+      ('raiox', 'Raio X Cliente', '/raiox', 'M12 3 A9 9 0 1 0 12 21 A9 9 0 1 0 12 3 Z M5 12 H19 M12 5 V19 M7.5 7.5 L16.5 16.5 M16.5 7.5 L7.5 16.5', None)
     ]},
-    {'label': 'Configurações', 'allowed_roles': ['admin', 'supervisor'], 'entries': [
-      ('prompts', 'Prompts', '/prompts', 'M5 4 H19 V20 H5 Z M9 9 H15 M9 13 H15 M9 17 H13'),
-      ('skills', 'Skills', '/skills', 'M4 4 H20 V20 H4 Z M8 8 H16 M8 12 H16 M8 16 H12'),
-      ('modules', 'Módulos', '/modules', 'M12 2 L22 7 V17 L12 22 L2 17 V7 Z M12 2 V12 M12 12 L22 7 M12 12 L2 7'),
-      ('blocks', 'Inventário', '/blocks', 'M4 4 H10 V10 H4 Z M14 4 H20 V10 H14 Z M4 14 H10 V20 H4 Z M14 14 H20 V20 H14 Z')
+    {'label': 'Configurações', 'allowed_roles': ['root', 'admin', 'supervisor'], 'entries': [
+      ('prompts', 'Prompts', '/prompts', 'M5 4 H19 V20 H5 Z M9 9 H15 M9 13 H15 M9 17 H13', None),
+      ('skills', 'Skills', '/skills', 'M4 4 H20 V20 H4 Z M8 8 H16 M8 12 H16 M8 16 H12', None),
+      ('modules', 'Módulos', '/modules', 'M12 2 L22 7 V17 L12 22 L2 17 V7 Z M12 2 V12 M12 12 L22 7 M12 12 L2 7', None),
+      ('blocks', 'Inventário', '/blocks', 'M4 4 H10 V10 H4 Z M14 4 H20 V10 H14 Z M4 14 H10 V20 H4 Z M14 14 H20 V20 H14 Z', None)
     ]},
-    {'label': 'Monitoramento', 'allowed_roles': ['admin', 'supervisor', 'finops'], 'entries': [
-      ('finops', 'FinOps', '/finops', 'M12 3 V21 M7 7 Q7 4 11 4 H14 Q17 4 17 7 Q17 10 14 10 H10 Q7 10 7 13 Q7 16 10 16 H14 Q17 16 17 19 Q17 21 14 21 H11'),
-      ('failsafe', 'Failsafe', '/failsafe', 'M12 3 L20 6 V12 Q20 17 12 21 Q4 17 4 12 V6 Z'),
-      ('audit', 'Rastreabilidade', '/audit', 'M5 4 H19 V20 H5 Z M9 9 H15 M9 13 H15 M9 17 H13 M3 4 H5 M3 12 H5 M3 20 H5')
+    {'label': 'Monitoramento', 'allowed_roles': ['root', 'admin', 'supervisor', 'finops'], 'entries': [
+      ('finops', 'FinOps', '/finops', 'M12 3 V21 M7 7 Q7 4 11 4 H14 Q17 4 17 7 Q17 10 14 10 H10 Q7 10 7 13 Q7 16 10 16 H14 Q17 16 17 19 Q17 21 14 21 H11', None),
+      ('failsafe', 'Failsafe', '/failsafe', 'M12 3 L20 6 V12 Q20 17 12 21 Q4 17 4 12 V6 Z', None),
+      ('audit', 'Rastreabilidade', '/audit', 'M5 4 H19 V20 H5 Z M9 9 H15 M9 13 H15 M9 17 H13 M3 4 H5 M3 12 H5 M3 20 H5', None)
     ]},
-    {'label': 'Administrativo', 'allowed_roles': ['admin', 'supervisor'], 'entries': [
-      ('users', 'Usuários', '/users', 'M12 4 A4 4 0 1 0 12 12 A4 4 0 1 0 12 4 Z M4 21 V19 Q4 15 12 15 Q20 15 20 19 V21'),
-      ('apis', 'APIs', '/apis', 'M3 12 H7 M17 12 H21 M9 5 L9 19 M15 5 L15 19 M5 8 H7 M5 16 H7 M17 8 H19 M17 16 H19'),
-      ('gallery', 'Galeria', '/gallery', 'M3 5 H21 V19 H3 Z M3 9 H21 M9 5 V19 M15 5 V19'),
-      ('cards_em_tela', 'Cards em tela', '/admin/cards-em-tela', 'M4 4 H20 V8 H4 Z M4 10 H20 V14 H4 Z M4 16 H20 V20 H4 Z')
+    {'label': 'Administrativo', 'allowed_roles': ['root', 'admin', 'supervisor'], 'entries': [
+      ('users', 'Usuários', '/users', 'M12 4 A4 4 0 1 0 12 12 A4 4 0 1 0 12 4 Z M4 21 V19 Q4 15 12 15 Q20 15 20 19 V21', ['root', 'admin', 'supervisor']),
+      ('apis', 'APIs', '/apis', 'M3 12 H7 M17 12 H21 M9 5 L9 19 M15 5 L15 19 M5 8 H7 M5 16 H7 M17 8 H19 M17 16 H19', ['root', 'admin']),
+      ('gallery', 'Galeria', '/gallery', 'M3 5 H21 V19 H3 Z M3 9 H21 M9 5 V19 M15 5 V19', ['root', 'admin', 'supervisor']),
+      ('cards_em_tela', 'Cards em tela', '/admin/cards-em-tela', 'M4 4 H20 V8 H4 Z M4 10 H20 V14 H4 Z M4 16 H20 V20 H4 Z', ['root', 'admin'])
     ]}
   ] %}
 
@@ -41,23 +55,39 @@
   {% for group in groups %}
     {% set show_group = ('all' in group.allowed_roles) or (user_roles | select('in', group.allowed_roles) | list | length > 0) %}
     {% if show_group %}
-      {% if group.label %}
-        <div x-show="!collapsed" x-transition class="nav-section-label">
-          {{ group.label }}
-        </div>
-        <div x-show="collapsed" class="border-t border-neutral-100 my-2 mx-1"></div>
-      {% endif %}
-
-      {% for key, label, href, path in group.entries %}
-        <a href="{{ href }}"
-           :title="collapsed ? '{{ label }}' : ''"
-           class="nav-link {% if active_module == key %}active{% endif %}">
-          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" class="shrink-0">
-            <path d="{{ path }}" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/>
-          </svg>
-          <span x-show="!collapsed" x-transition class="truncate">{{ label }}</span>
-        </a>
+      {#
+        Resolve, para cada entry, o set efetivo de roles permitidas:
+        usa o override do entry (5º elemento) se presente, senão herda
+        do grupo. Em seguida, filtra entries que o usuário não pode ver.
+      #}
+      {% set visible_entries = [] %}
+      {% for entry in group.entries %}
+        {% set entry_allowed = entry[4] if entry[4] is not none else group.allowed_roles %}
+        {% set entry_visible = ('all' in entry_allowed) or (user_roles | select('in', entry_allowed) | list | length > 0) %}
+        {% if entry_visible %}
+          {% set _ = visible_entries.append(entry) %}
+        {% endif %}
       {% endfor %}
+
+      {% if visible_entries %}
+        {% if group.label %}
+          <div x-show="!collapsed" x-transition class="nav-section-label">
+            {{ group.label }}
+          </div>
+          <div x-show="collapsed" class="border-t border-neutral-100 my-2 mx-1"></div>
+        {% endif %}
+
+        {% for key, label, href, path, _override in visible_entries %}
+          <a href="{{ href }}"
+             :title="collapsed ? '{{ label }}' : ''"
+             class="nav-link {% if active_module == key %}active{% endif %}">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" class="shrink-0">
+              <path d="{{ path }}" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/>
+            </svg>
+            <span x-show="!collapsed" x-transition class="truncate">{{ label }}</span>
+          </a>
+        {% endfor %}
+      {% endif %}
     {% endif %}
   {% endfor %}
   </nav>
