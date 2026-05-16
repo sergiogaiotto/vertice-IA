@@ -326,11 +326,29 @@ Transcrição (parcial):
 
         guardrail_format = "JSON" if is_structured else configured_output
 
+        # Temperature configurável por módulo via `config_params.temperature`.
+        # Sem o campo: usa 0.2 (default histórico do router). Caller pode
+        # forçar determinismo (0.0) para módulos cuja inconsistência entre
+        # execuções é problemática — ex.: o módulo `radar` (Voz do Cliente),
+        # onde a mesma transcrição gerava respostas de tamanho/estrutura
+        # diferentes entre auto-execute (troca de caso) e re-executar manual.
+        # Aceita 0.0 a 1.0; valores fora viram default seguro.
+        cfg_temp = None
+        try:
+            if isinstance(module.config_params, dict):
+                raw = module.config_params.get("temperature")
+                if isinstance(raw, (int, float)) and 0.0 <= float(raw) <= 1.0:
+                    cfg_temp = float(raw)
+        except Exception:
+            pass
+        temperature = cfg_temp if cfg_temp is not None else 0.2
+
         llm = await self.router.complete(
             system_prompt=system,
             user_prompt=user_msg,
             output_type=configured_output if not is_structured else "SUMARIO",
             max_tokens=4096 if is_structured else text_max_tokens,
+            temperature=temperature,
             # JSON mode da OpenAI/Maritaca garante saída sintaticamente válida
             force_json=is_structured,
         )

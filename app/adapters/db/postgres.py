@@ -286,7 +286,12 @@ async def init_db() -> None:
                     name="radar",
                     endpoint_url="/api/radar/v1/process",
                     status=ModuleStatus.active,
-                    config_params={"threshold": 0.7, "sanitization": True, "failsafe": False},
+                    # temperature=0.0 → output determinístico. Sem isso, com
+                    # default 0.2, a mesma transcrição gerava respostas com
+                    # tamanho/estrutura diferentes entre auto-execute (troca
+                    # de caso) e re-executar manual. radar_service lê esse
+                    # campo via `module.config_params["temperature"]`.
+                    config_params={"threshold": 0.7, "sanitization": True, "failsafe": False, "temperature": 0.0},
                     description="Voz do Cliente — cards de análise sobre transcrições.",
                     skill_path="app/skills/radar_intent.md",
                 ),

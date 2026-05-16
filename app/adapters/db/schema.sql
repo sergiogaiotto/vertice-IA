@@ -555,6 +555,20 @@ CREATE TABLE IF NOT EXISTS feature_access (
 CREATE INDEX IF NOT EXISTS idx_feature_access_lookup
     ON feature_access(role, feature_key);
 
+-- Migration: força temperature=0 no módulo `radar` (Voz do Cliente).
+-- Sem isso, com default 0.2 do router, a mesma transcrição gerava respostas
+-- de tamanho/estrutura distintos entre auto-execute (troca de caso) e
+-- re-executar manual — variação intrínseca de LLM com temp > 0. Como o
+-- módulo é usado pra análise estruturada (intenção, justificativa), o
+-- ganho de determinismo supera a perda de diversidade.
+-- Operador `||` faz MERGE em JSONB (insere/atualiza apenas a key). Filtro
+-- `NOT (... ? 'temperature')` torna a migration idempotente — só atinge
+-- linhas sem o campo, preservando overrides manuais já feitos pelo admin.
+UPDATE modules
+   SET config_params = COALESCE(config_params, '{}'::jsonb) || '{"temperature": 0.0}'::jsonb
+ WHERE name = 'radar'
+   AND NOT (COALESCE(config_params, '{}'::jsonb) ? 'temperature');
+
 -- Migration: renomeação da feature 'radar' → 'vozcliente' na matriz.
 -- O módulo continua sendo o mesmo (rotas /radar, pasta templates/radar/,
 -- código Python referenciando 'radar' como nome interno) — só a face
