@@ -53,14 +53,17 @@
   ] %}
 
   {#
-    `visible_features` é um set vindo do contexto (resolvido pelo
-    `_ctx` em pages.py via `FeatureAccessService.visible_features`).
+    `visible_nav_keys` é o set de keys de entrada do menu (ex.: 'radar',
+    'raiox') que o user enxerga, já traduzido a partir das feature_keys
+    da matriz (ex.: 'vozcliente', 'raiox') pelo helper
+    `_visible_nav_keys_for` em pages.py. O template trabalha sempre com
+    entry keys (estáveis); o mapeamento entry→feature fica no backend.
+
     Para o grupo "Funcionalidade", cada entry só aparece se sua chave
-    está nesse set — implementa a matriz "Funcionalidades por Perfil".
-    Para os demais grupos, este filtro é no-op (eles não têm entries
-    em CONTROLLED_FEATURES).
+    está nesse set. Para outros grupos, este filtro é no-op (eles não
+    têm entries com correspondência na matriz).
   #}
-  {% set _vf = visible_features if visible_features is defined else None %}
+  {% set _vf = visible_nav_keys if visible_nav_keys is defined else None %}
 
   <nav class="flex flex-col gap-0.5 px-2">
   {% for group in groups %}

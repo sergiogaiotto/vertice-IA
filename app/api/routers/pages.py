@@ -39,16 +39,16 @@ router = APIRouter()
 
 
 async def _visible_features_for(user: User | None) -> set[str]:
-    """Resolve o set de features (radar/raiox/...) que o user enxerga
-    segundo a matriz "Funcionalidades por Perfil".
+    """Resolve o set de `feature_key`s (domínio da matriz, ex.: 'vozcliente',
+    'raiox') que o user enxerga.
 
-    - Sem usuário: set vazio (não vai aparecer nada).
+    - Sem usuário: set vazio.
     - Com root: TODAS as features (bypass).
     - Demais: consulta o service.
 
-    Toda página passa esse set no contexto Jinja como `visible_features`
-    pra que o `nav_left.html` filtre o grupo "Funcionalidade" sem
-    consultar o banco no template.
+    Use `_visible_nav_keys_for` se você quer o set traduzido para as keys
+    de entrada do menu (ex.: 'radar' em vez de 'vozcliente'), que é o que
+    `nav_left.html` espera.
     """
     if not user:
         return set()
@@ -62,22 +62,45 @@ async def _visible_features_for(user: User | None) -> set[str]:
     return await svc.visible_features(user.roles or [], user.department or "")
 
 
-async def _ctx(request: Request, user: User | None, **extras):
-    """Contexto base do Jinja, async porque consulta a matriz
-    "Funcionalidades por Perfil" para resolver `visible_features` — o
-    set de features que o user enxerga, usado pelo `nav_left.html`
-    para filtrar entries do grupo "Funcionalidade".
+async def _visible_nav_keys_for(user: User | None) -> set[str]:
+    """Mesma resolução de `_visible_features_for`, mas traduzida para as
+    keys de entrada do menu (`nav_left.html`).
 
-    Decisão de design: async em vez de fazer o lookup numa middleware
-    porque a maioria dos handlers já é async e o overhead é único
-    (1 query). Caller que NÃO renderiza o nav (ex.: respostas de erro
-    JSON, redirects) não passa por aqui.
+    O nav usa keys internas (ex.: 'radar' para a entry "Voz do Cliente"),
+    mantidas estáveis pra continuidade de UI (highlight via active_module,
+    nome de pasta `app/templates/radar/`, rotas `/radar`). A matriz
+    administrativa usa nomes de produto (ex.: 'vozcliente'). O mapeamento
+    `NAV_ENTRY_TO_FEATURE` em FeatureAccessService liga os dois mundos.
+    """
+    from app.core.services.feature_access_service import NAV_ENTRY_TO_FEATURE
+    feats = await _visible_features_for(user)
+    return {
+        nav_key
+        for nav_key, feat_key in NAV_ENTRY_TO_FEATURE.items()
+        if feat_key in feats
+    }
+
+
+async def _ctx(request: Request, user: User | None, **extras):
+    """Contexto base do Jinja. Injeta dois sets relacionados:
+
+      - ``visible_features``: chaves da matriz (`vozcliente`, `raiox`).
+        Útil pra qualquer template que queira mostrar ao usuário "que
+        features de produto ele tem acesso".
+      - ``visible_nav_keys``: chaves de entrada do menu (`radar`, `raiox`).
+        Usado por `nav_left.html` para filtrar o grupo "Funcionalidade"
+        sem ter que conhecer o mapping entry→feature.
+
+    Async porque consulta a matriz "Funcionalidades por Perfil" (1 query).
+    Caller que NÃO renderiza o nav (respostas JSON, redirects) não passa
+    por aqui.
     """
     return {
         "request": request,
         "user": user,
         "active_module": extras.pop("active_module", None),
         "visible_features": await _visible_features_for(user),
+        "visible_nav_keys": await _visible_nav_keys_for(user),
         **extras,
     }
 
@@ -222,7 +245,7 @@ async def radar_page(
 ):
     if not user:
         return RedirectResponse("/login")
-    await _assert_feature_access(user, "radar")
+    await _assert_feature_access(user, "vozcliente")
     detail = None
     selected_case = None
     transcript = None
@@ -256,7 +279,7 @@ async def radar_case_page(
 ):
     if not user:
         return RedirectResponse("/login")
-    await _assert_feature_access(user, "radar")
+    await _assert_feature_access(user, "vozcliente")
     detail = await bko.get_case_with_transcript(case_number)
     if not detail:
         # caso pode ter sido excluído — redireciona para o estado vazio em vez de 404
