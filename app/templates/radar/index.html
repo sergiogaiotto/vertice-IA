@@ -11,6 +11,34 @@
 <div x-data="radarApp()" x-init="init()" class="px-6 py-5 pb-12 max-w-full">
 
   <!-- ============================================================ -->
+  <!-- Overlay de reprocessamento global. Ativado pelo               -->
+  <!-- `autoRunIfContextChanged` quando o usuário troca de caso e o  -->
+  <!-- conjunto de módulos contextuais começa a re-executar.          -->
+  <!-- Cobre a tela inteira (z-50, fixed inset-0) para impedir        -->
+  <!-- interação com cards em estado parcial. Some quando o           -->
+  <!-- Promise.all final resolve (cobre módulos + charts + diagrams + -->
+  <!-- SQL replay). `aria-live=polite` permite que leitor de tela      -->
+  <!-- anuncie a mensagem dinâmica.                                   -->
+  <!-- ============================================================ -->
+  <div x-show="isReprocessing"
+       x-cloak
+       x-transition.opacity.duration.150ms
+       class="fixed inset-0 z-50 bg-neutral-900/40 backdrop-blur-sm flex items-center justify-center"
+       aria-live="polite"
+       aria-busy="true"
+       role="status">
+    <div class="bg-white rounded-xl shadow-xl border border-neutral-200 px-6 py-5 max-w-md mx-4 flex items-center gap-4">
+      <div class="w-10 h-10 border-4 border-neutral-200 border-t-brand-600 rounded-full animate-spin shrink-0"></div>
+      <div class="min-w-0">
+        <div class="text-sm font-medium text-neutral-900">Reprocessando caso</div>
+        <div class="text-[12px] text-neutral-600 mt-0.5"
+             x-text="reprocessingMessage || 'Aguarde — todos os módulos estão sendo re-executados para o novo caso.'"></div>
+        <div class="text-[10px] text-neutral-400 mt-1.5 italic">a tela é liberada automaticamente quando terminar</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ============================================================ -->
   <!-- Header: stats + uploads + seletor de caso                    -->
   <!-- ============================================================ -->
   <div class="flex items-center gap-3 mb-4 flex-wrap">
@@ -1982,6 +2010,18 @@ function radarApp() {
     uploadResult: null,
     autoRunSkippedReason: null,  // 'no-case' | 'no-transcript' | 'same-context' | null     // { success, title, subtitle, imported?, failed?, error? }
 
+    // Reprocessamento global: quando o usuário troca de caso, todos os
+    // módulos contextuais re-executam (autoRunIfContextChanged). Durante
+    // essa janela, mostramos um overlay cinza bloqueando a tela inteira
+    // — interação com qualquer card naquele momento confundiria estado.
+    // Esta flag controla o overlay. Setada para true logo antes de
+    // disparar as execuções da fase 1/2/3 e false no finally do
+    // Promise.all (cobre erro também). Inclui o tempo do regenerate dos
+    // diagrams (que agora também entra no Promise.all em vez de
+    // fire-and-forget).
+    isReprocessing: false,
+    reprocessingMessage: '',
+
     // Configuração de gráfico (módulo virtual __chart__)
     chartConfig: {
       open: false,
@@ -2451,8 +2491,12 @@ function radarApp() {
         });
       });
 
-      // FASE 3: Diagrams — re-gera baseado no card-fonte ATUAL (que pode ter
-      // sido reprocessado na FASE 1). Espera 1.5s para fontes terminarem.
+      // FASE 3: Diagrams — re-gera baseado no card-fonte ATUAL (que pode
+      // ter sido reprocessado na FASE 1). O regenerate lê o `result` da
+      // fonte; precisamos esperar fase 1/2 terminarem antes. Solução:
+      // envolver num setTimeout de 1.5s + Promise pra entrar no
+      // Promise.all final (overlay só some quando diagrams também terminam).
+      // Antes era fire-and-forget; agora é await'd.
       const diagramsToRegen = [];
       this.groups.forEach((group, gIdx) => {
         group.cards.forEach((card, cIdx) => {
@@ -2462,27 +2506,37 @@ function radarApp() {
           }
         });
       });
+      const diagramPromises = [];
       if (diagramsToRegen.length > 0) {
-        // delay para esperar módulos+charts da fase 1/2 terminarem antes de
-        // regenerar diagrams (que extraem texto deles)
-        setTimeout(() => {
-          diagramsToRegen.forEach(([gIdx, cIdx]) => this._regenerateDiagramForContextChange(gIdx, cIdx));
-        }, 1500);
+        const diagramTask = new Promise(resolve => {
+          setTimeout(async () => {
+            try {
+              await Promise.all(diagramsToRegen.map(
+                ([gIdx, cIdx]) => this._regenerateDiagramForContextChange(gIdx, cIdx)
+              ));
+            } catch (_) { /* erros tratados em _regenerateDiagramForContextChange */ }
+            resolve();
+          }, 1500);
+        });
+        diagramPromises.push(diagramTask);
       }
 
       const totalExecuted = executedModules + executedCharts + regeneratedDiagrams + replayedSql;
       const totalCleared = clearedChats + clearedSql;
+
+      // Computa `parts` (módulos/charts/diagrams/SQL) uma única vez — usado
+      // tanto no toast inicial quanto na mensagem do overlay.
+      const parts = [];
+      if (executedModules > 0)     parts.push(`${executedModules} módulo(s)`);
+      if (executedCharts > 0)      parts.push(`${executedCharts} gráfico(s)`);
+      if (regeneratedDiagrams > 0) parts.push(`${regeneratedDiagrams} diagrama(s)`);
+      if (replayedSql > 0)         parts.push(`${replayedSql} SQL (auto-replay)`);
+
+      const cleared = [];
+      if (clearedChats > 0) cleared.push(`${clearedChats} chat(s)`);
+      if (clearedSql > 0)   cleared.push(`${clearedSql} SQL`);
+
       if (totalExecuted > 0 || totalCleared > 0) {
-        const parts = [];
-        if (executedModules > 0)     parts.push(`${executedModules} módulo(s)`);
-        if (executedCharts > 0)      parts.push(`${executedCharts} gráfico(s)`);
-        if (regeneratedDiagrams > 0) parts.push(`${regeneratedDiagrams} diagrama(s)`);
-        if (replayedSql > 0)         parts.push(`${replayedSql} SQL (auto-replay)`);
-
-        const cleared = [];
-        if (clearedChats > 0) cleared.push(`${clearedChats} chat(s)`);
-        if (clearedSql > 0)   cleared.push(`${clearedSql} SQL`);
-
         let msg;
         if (totalExecuted > 0 && totalCleared > 0) {
           msg = `Reprocessando ${parts.join(' + ')} · ${cleared.join(' + ')} limpo(s).`;
@@ -2494,17 +2548,37 @@ function radarApp() {
         toast(msg, 'info', 4500);
       }
 
-      // Espera todas as execuções (módulos + charts + SQL replay) terminarem
-      // para garantir que o estado salvo no servidor já contém os resultados
-      // frescos. Sem este await, o saveState debounced subia um snapshot
-      // com loading=true / result vazio, e o `same-context` skip impedia
-      // re-execução depois. Cada executeCard/rerun/clearAndReprocessSql
+      // Espera todas as execuções (módulos + charts + SQL replay + diagrams)
+      // terminarem para garantir que o estado salvo no servidor já contém os
+      // resultados frescos. Sem este await, o saveState debounced subia um
+      // snapshot com loading=true / result vazio, e o `same-context` skip
+      // impedia re-execução depois. Cada executeCard/rerun/clearAndReprocessSql
       // também chama saveState no `finally`, então mesmo se o usuário sair
       // antes do Promise.all completar, o que tiver finalizado já está
       // persistido.
+      //
+      // Overlay de reprocessamento: ativado ANTES do Promise.all (quando
+      // sabemos que há trabalho real assíncrono), desativado no finally —
+      // cobre erro também. Mensagem reaproveita `parts` computado acima.
+      const allPromises = [
+        ...modulePromises,
+        ...chartPromises,
+        ...sqlReplayPromises,
+        ...diagramPromises,
+      ];
+      if (allPromises.length > 0) {
+        this.reprocessingMessage = parts.length
+          ? `Reprocessando ${parts.join(' + ')} para o novo caso…`
+          : 'Reprocessando…';
+        this.isReprocessing = true;
+      }
       try {
-        await Promise.all([...modulePromises, ...chartPromises, ...sqlReplayPromises]);
+        await Promise.all(allPromises);
       } catch (_) { /* erros individuais já tratados em executeCard/rerun/clearAndReprocessSql */ }
+      finally {
+        this.isReprocessing = false;
+        this.reprocessingMessage = '';
+      }
       // saveState final — coalesça via debounce em uma única gravação no
       // servidor mesmo após N execuções paralelas.
       if (totalExecuted > 0 || totalCleared > 0) {
