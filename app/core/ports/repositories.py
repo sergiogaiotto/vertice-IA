@@ -64,6 +64,9 @@ class UserRepository(ABC):
     @abstractmethod
     async def count_users(self) -> int: ...
 
+    @abstractmethod
+    async def get_department_by_id(self, user_id: str) -> str | None: ...
+
 
 class ModuleRepository(ABC):
     @abstractmethod

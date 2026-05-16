@@ -398,7 +398,7 @@
 
       <!-- Erro -->
       <div x-show="analysisView === 'detail' && !analysisLoading && analysisResult?.error" x-cloak class="p-5">
-        <div class="bg-risk-50 border border-risk-200 rounded p-3 text-xs text-risk-800" x-text="analysisResult.error"></div>
+        <div class="bg-risk-50 border border-risk-200 rounded p-3 text-xs text-risk-800" x-text="analysisResult?.error"></div>
       </div>
 
       <!-- Resultado -->
@@ -408,19 +408,19 @@
         <section class="bg-neutral-50 border border-neutral-200 rounded-lg p-3 text-[11px] text-neutral-600 grid grid-cols-2 gap-2">
           <div>
             <div class="text-[9px] uppercase tracking-wider text-neutral-400">gerada em</div>
-            <div class="font-mono" x-text="analysisResult.created_at ? new Date(analysisResult.created_at + 'Z').toLocaleString('pt-BR') : '—'"></div>
+            <div class="font-mono" x-text="analysisResult?.created_at ? new Date(analysisResult.created_at + 'Z').toLocaleString('pt-BR') : '—'"></div>
           </div>
           <div>
             <div class="text-[9px] uppercase tracking-wider text-neutral-400">por</div>
-            <div class="font-medium" x-text="analysisResult.username || '(anônimo)'"></div>
+            <div class="font-medium" x-text="analysisResult?.username || '(anônimo)'"></div>
           </div>
           <div>
             <div class="text-[9px] uppercase tracking-wider text-neutral-400">charts analisados</div>
-            <div x-text="`${analysisResult.charts_snapshot?.length || analysisResult.per_chart?.length || 0} · skills: ${(analysisResult.charts_snapshot || []).filter(c => c.skill).length}`"></div>
+            <div x-text="`${analysisResult?.charts_snapshot?.length || analysisResult?.per_chart?.length || 0} · skills: ${(analysisResult?.charts_snapshot || []).filter(c => c.skill).length}`"></div>
           </div>
           <div>
             <div class="text-[9px] uppercase tracking-wider text-neutral-400">custo · modelo</div>
-            <div x-text="`US$ ${(analysisResult.totals?.cost || 0).toFixed(5)} · ${analysisResult.totals?.model_used || '?'}`"></div>
+            <div x-text="`US$ ${(analysisResult?.totals?.cost || 0).toFixed(5)} · ${analysisResult?.totals?.model_used || '?'}`"></div>
           </div>
         </section>
 
@@ -467,7 +467,7 @@
         <section x-show="analysisResult?.per_chart?.length">
           <h3 class="text-[11px] uppercase tracking-wider text-neutral-500 font-semibold mb-2">Análise por chart</h3>
           <div class="space-y-3">
-            <template x-for="ca in analysisResult.per_chart" :key="ca.chart_id">
+            <template x-for="ca in (analysisResult?.per_chart || [])" :key="ca.chart_id">
               <div class="border border-neutral-200 rounded-lg p-3 bg-white">
                 <div class="flex items-start gap-2 mb-2">
                   <span class="text-[9px] px-1.5 py-0 bg-neutral-100 text-neutral-600 rounded font-mono shrink-0 uppercase" x-text="ca.chart_type"></span>

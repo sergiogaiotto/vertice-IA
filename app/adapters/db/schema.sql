@@ -480,6 +480,31 @@ ALTER TABLE radar_card_visibility
 ALTER TABLE radar_card_visibility
     ADD COLUMN IF NOT EXISTS owner_changed_at TIMESTAMPTZ;
 
+-- Departamento de quem tornou o card público (snapshot no momento do share).
+-- Define a audiência: cards com `sharer_department = X` só ficam visíveis para
+-- usuários cujo `users.department = X`. NULL = sem filtro de departamento
+-- (sharer era root, com privilégio cross-dept).
+-- Política completa:
+--   * root          → pode compartilhar sem restrição; sharer_department = NULL
+--   * admin         → pode compartilhar, MAS só se tem dept preenchido E o
+--                     dono do card está no mesmo dept; sharer_department = dept do admin
+--   * supervisor    → idem admin (mesmo dept)
+--   * analista_n*   → não pode compartilhar
+ALTER TABLE radar_card_visibility
+    ADD COLUMN IF NOT EXISTS sharer_department TEXT;
+
+-- Reset forçado: cards públicos pré-existentes voltam a `private` para que
+-- usuários reapliquem a visibilidade sob a nova regra de departamento.
+-- Idempotente — só atinge linhas em estado público, que após o UPDATE viram
+-- privadas e não voltam a bater no WHERE. `previous_visibility` preserva o
+-- valor anterior, permitindo que o usuário consulte qual era e re-aplique
+-- manualmente.
+UPDATE radar_card_visibility
+   SET previous_visibility = visibility,
+       visibility = 'private',
+       updated_at = NOW()
+ WHERE visibility IN ('public_lideranca', 'public_analista');
+
 -- Artefatos efêmeros gerados por execuções de módulo (CSV, MD, JSON…).
 -- TTL gerenciado no SELECT (filtra por created_at). GC opcional via DELETE
 -- WHERE created_at < NOW() - INTERVAL '30 min' (chamado manualmente).

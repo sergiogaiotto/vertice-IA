@@ -241,7 +241,19 @@
                         <span class="w-1.5 h-1.5 rounded-full shrink-0"
                               :class="card.loading ? 'bg-amber-400 animate-pulse' : (card.error ? 'bg-risk-500' : (card.result || (card.chat_history || []).length ? 'bg-brand-400' : 'bg-neutral-300'))"></span>
                         <div class="flex-1 min-w-0">
-                          <div class="text-[12px] font-medium truncate" x-text="card.module_name"></div>
+                          <div class="text-[12px] font-medium truncate flex items-center gap-1.5">
+                            <span class="truncate" x-text="card.module_name"></span>
+                            <!-- Tag de origem para cards clonados a partir do
+                                 painel "Compartilhados comigo". Indica que o
+                                 módulo veio da ideia de outro usuário, mas o
+                                 resultado aqui é da execução privada do viewer. -->
+                            <template x-if="card.cloned_from_username">
+                              <span class="text-[9px] px-1.5 py-0 bg-info-50 text-info-700 rounded shrink-0 font-normal"
+                                    :title="`clonado a partir do card compartilhado por @${card.cloned_from_username}. Resultado abaixo é da SUA execução, no SEU caso.`">
+                                🔗 de @<span x-text="card.cloned_from_username"></span>
+                              </span>
+                            </template>
+                          </div>
                           <div class="text-[10px] text-neutral-400 truncate flex items-center gap-1">
                             <span class="text-[9px] px-1 py-0 bg-neutral-100 text-neutral-600 rounded font-mono shrink-0" x-text="card.input_label"></span>
                             <span class="truncate" x-text="card.module_description || '(sem descrição)'"></span>
@@ -268,21 +280,27 @@
                               <span x-show="(card.visibility || 'private') === 'private'" class="text-brand-600">✓</span>
                             </button>
                             <button @click="setCardVisibility(card.uid, 'public_lideranca'); open = false"
-                                    :disabled="!isLideranca"
+                                    :disabled="!canSetPublic(card)"
                                     class="w-full text-left px-2.5 py-1.5 hover:bg-neutral-50 flex items-center gap-2 disabled:opacity-40 disabled:cursor-not-allowed"
-                                    :title="isLideranca ? '' : 'apenas admin/supervisor pode setar'">
+                                    :title="publicShareTooltip(card)">
                               <span>👔</span><span class="flex-1">Público liderança</span>
                               <span x-show="card.visibility === 'public_lideranca'" class="text-brand-600">✓</span>
                             </button>
                             <button @click="setCardVisibility(card.uid, 'public_analista'); open = false"
-                                    :disabled="!isLideranca"
+                                    :disabled="!canSetPublic(card)"
                                     class="w-full text-left px-2.5 py-1.5 hover:bg-neutral-50 flex items-center gap-2 disabled:opacity-40 disabled:cursor-not-allowed"
-                                    :title="isLideranca ? '' : 'apenas admin/supervisor pode setar'">
+                                    :title="publicShareTooltip(card)">
                               <span>👥</span><span class="flex-1">Público analista</span>
                               <span x-show="card.visibility === 'public_analista'" class="text-brand-600">✓</span>
                             </button>
                             <div x-show="!isLideranca" class="px-2.5 py-1 text-[9.5px] text-neutral-400 border-t border-neutral-100 mt-1">
-                              Apenas admin/supervisor pode alterar para os estados públicos.
+                              Apenas admin/supervisor/root pode tornar um card público.
+                            </div>
+                            <div x-show="isLideranca && !isRoot && !(userDepartment || '').trim()" class="px-2.5 py-1 text-[9.5px] text-amber-700 border-t border-neutral-100 mt-1">
+                              Cadastre seu departamento em <a href="/usuarios" class="underline">/usuarios</a> antes de compartilhar — a audiência é filtrada pelo dept do compartilhador.
+                            </div>
+                            <div x-show="isRoot" class="px-2.5 py-1 text-[9.5px] text-neutral-400 border-t border-neutral-100 mt-1">
+                              Você é root — cards públicos ficam visíveis cross-departamento.
                             </div>
                           </div>
                         </div>
@@ -1024,7 +1042,15 @@
             <div class="flex-1 min-w-0">
               <div class="text-[12px] font-medium truncate" x-text="sc.module_name || '(módulo)'"></div>
               <div class="text-[10px] text-neutral-400 truncate flex items-center gap-1.5">
-                <span class="text-[9px] px-1 py-0 bg-neutral-100 text-neutral-600 rounded shrink-0" x-text="`por ${sc.owner_username || '?'}`"></span>
+                <!-- Atribuição. Dois cenários:
+                     - criador == quem compartilhou (caso comum): "por X"
+                     - criador != quem compartilhou (admin tornou público um
+                       card de outro): "criado por X · compartilhado por Y"
+                     `visibility_changed_by_username` pode ser NULL em
+                     registros legados → fallback para owner_username. -->
+                <span class="text-[9px] px-1 py-0 bg-neutral-100 text-neutral-600 rounded shrink-0"
+                      x-text="sharedCardAttribution(sc)"
+                      :title="sharedCardAttributionTitle(sc)"></span>
                 <span class="truncate" x-text="sc.module_description || '(sem descrição)'"></span>
               </div>
             </div>
@@ -1045,7 +1071,16 @@
           </div>
           <footer class="px-3 py-1.5 border-t border-neutral-100 bg-neutral-50/40 text-[10px] text-neutral-400 flex items-center gap-2">
             <span x-text="`grupo: ${sc.group_title || '?'}`"></span>
-            <span class="ml-auto" x-text="sc.updated_at ? new Date(sc.updated_at).toLocaleString('pt-BR') : ''"></span>
+            <!-- Botão "executar no meu caso" — clona o módulo do card
+                 compartilhado para um grupo do viewer, com o caso/transcrição
+                 atual dele como input. Result fica privado para o viewer. -->
+            <button @click="cloneSharedCardToMyRadar(sc)"
+                    :disabled="!canCloneSharedCard(sc)"
+                    :title="cloneSharedCardTooltip(sc)"
+                    class="ml-auto text-[10px] px-2 py-0.5 bg-brand-600 hover:bg-brand-800 text-white rounded font-medium disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:bg-brand-600">
+              ▶ executar no meu caso
+            </button>
+            <span x-text="sc.updated_at ? new Date(sc.updated_at).toLocaleString('pt-BR') : ''"></span>
           </footer>
         </div>
       </template>
@@ -1851,7 +1886,7 @@
 // (presente em qualquer contexto).
 function genUUID() {
   if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
-    return genUUID();
+    return crypto.randomUUID();
   }
   if (typeof crypto !== 'undefined' && typeof crypto.getRandomValues === 'function') {
     const b = new Uint8Array(16);
@@ -1871,6 +1906,8 @@ function genUUID() {
 function radarApp() {
   const userRoles = {{ (user.roles or []) | tojson }};
   const userId = "{{ user.id if user else '' }}";
+  const userDepartment = {{ (user.department or '') | tojson }};
+  const userUsername = {{ (user.username or '') | tojson }};
   const transactionId = "{{ transcript.transaction_id if transcript else '' }}";
   const caseNumber = "{{ selected_case.case_number if selected_case else '' }}";
   // Storage por USUÁRIO e funcionalidade. CRÍTICO incluir userId — sem isso,
@@ -1908,9 +1945,20 @@ function radarApp() {
     availableFields,
     groups: [],
     canEdit: userRoles.includes('admin') || userRoles.includes('supervisor'),
-    // Liderança (admin/supervisor/root) — único papel que pode setar cards
-    // como público (lideranca/analista). Default `private` para todos.
+    // Liderança (admin/supervisor/root) — papel base para setar cards como
+    // público. Default `private` para todos. A elegibilidade efetiva para
+    // tornar público depende ainda do departamento (ver canSetPublic abaixo):
+    // admin/supervisor precisam de dept preenchido + dept do dono igual;
+    // root sempre pode.
     isLideranca: userRoles.includes('admin') || userRoles.includes('supervisor') || userRoles.includes('root'),
+    // Root: privilégio cross-departamento. Compartilha sem restrição e vê
+    // todos os cards públicos no painel "Compartilhados comigo".
+    isRoot: userRoles.includes('root'),
+    // Departamento do usuário logado — usado para gate de compartilhamento
+    // (admin/supervisor só compartilham se dept preenchido e em cards de
+    // donos do mesmo dept). Vazio bloqueia para não-root.
+    userDepartment: userDepartment,
+    userUsername: userUsername,
     // Cards compartilhados visíveis (de OUTROS usuários) — populados pelo
     // GET /api/radar/cards/shared. Renderizados em painel separado read-only.
     sharedCards: [],
@@ -2959,6 +3007,178 @@ function radarApp() {
       // private exige ser dono OU liderança
       if (this.isLideranca) return true;
       return !!(card && (card._isOwn === undefined ? true : card._isOwn));
+    },
+    // ----- Compartilhamento (public_*) com regra de departamento -----
+    // Política do backend (radar_router.set_card_visibility):
+    //   root: sem restrição
+    //   admin/supervisor: precisa de dept preenchido E, em cards alheios,
+    //                     dono no mesmo dept. Como esta popover roda sobre
+    //                     cards próprios do viewer (groups são per-user),
+    //                     a checagem aqui se reduz a "tenho dept?".
+    //   demais (analista*, etc.): 403 — botão fica desabilitado.
+    canSetPublic(card) {
+      if (this.isRoot) return true;
+      if (!this.isLideranca) return false;
+      // admin/supervisor: precisa de dept preenchido. O backend valida o
+      // cruzamento de dept com o dono (sempre o próprio viewer nessa UI),
+      // mas adiantamos o gate visual aqui.
+      return (this.userDepartment || '').trim().length > 0;
+    },
+    publicShareTooltip(card) {
+      if (this.isRoot) return '';
+      if (!this.isLideranca) return 'apenas admin/supervisor pode compartilhar';
+      if (!(this.userDepartment || '').trim()) {
+        return 'cadastre seu departamento em /usuarios antes de compartilhar';
+      }
+      return '';
+    },
+
+    // ----- Atribuição de cards no painel "Compartilhados comigo" -----
+    // Mostra "por X" quando o criador é o mesmo que tornou público; caso
+    // contrário, "criado por X · compartilhado por Y" — esse cenário ocorre
+    // quando admin/supervisor torna público um card de outro usuário.
+    // Registros legados (anteriores à coluna visibility_changed_by_username)
+    // caem no fallback "por owner_username".
+    sharedCardAttribution(sc) {
+      const creator   = sc.created_by_username || sc.owner_username || '?';
+      const sharer    = sc.visibility_changed_by_username;
+      if (!sharer || sharer === creator) {
+        return `por ${creator}`;
+      }
+      return `criado por ${creator} · compartilhado por ${sharer}`;
+    },
+    sharedCardAttributionTitle(sc) {
+      const parts = [];
+      if (sc.created_by_username) parts.push(`criado por ${sc.created_by_username}`);
+      if (sc.owner_username && sc.owner_username !== sc.created_by_username) {
+        parts.push(`dono atual: ${sc.owner_username}`);
+      }
+      if (sc.visibility_changed_by_username) {
+        parts.push(`tornado público por ${sc.visibility_changed_by_username}`);
+      }
+      if (sc.sharer_department) {
+        parts.push(`audiência: depto ${sc.sharer_department}`);
+      } else {
+        parts.push('audiência: cross-departamento (compartilhado pelo root)');
+      }
+      return parts.join(' · ');
+    },
+
+    // ----- Clonar card compartilhado para grupo do viewer -----
+    // Comportamento (alinhado com o que o usuário pediu):
+    //   1. Identifica o primeiro grupo com vaga (canAddCard).
+    //   2. Resolve o input_field. Snapshot do dono está em sc.card_json:
+    //        - Se o campo existe nos availableFields do viewer → usa direto.
+    //        - Senão → abre o field picker para o viewer escolher.
+    //   3. Cria card com novo uid, visibility='private', marcando
+    //      cloned_from_uid / cloned_from_username para rastreabilidade.
+    //   4. Executa imediatamente no caso atual do viewer.
+    canCloneSharedCard(sc) {
+      // precisa de pelo menos um grupo com vaga
+      const hasSlot = (this.groups || []).some(g => this.canAddCard(g));
+      // precisa de algum campo disponível (caso/transcrição selecionada),
+      // a menos que o módulo seja virtual (chat/sql/diagram/chart/present)
+      // que não consome campo direto. Por simplicidade, exige availableFields
+      // pra módulos normais; pra virtuais, não exige.
+      const moduleId = sc.module_id || (sc.card_json && sc.card_json.module_id);
+      const isVirtual = typeof moduleId === 'string' && moduleId.startsWith('__');
+      const hasFields = (this.availableFields || []).length > 0;
+      return hasSlot && (isVirtual || hasFields);
+    },
+    cloneSharedCardTooltip(sc) {
+      const hasSlot = (this.groups || []).some(g => this.canAddCard(g));
+      if (!hasSlot) {
+        return 'todos os grupos cheios — libere espaço ou crie um grupo';
+      }
+      const moduleId = sc.module_id || (sc.card_json && sc.card_json.module_id);
+      const isVirtual = typeof moduleId === 'string' && moduleId.startsWith('__');
+      if (!isVirtual && (this.availableFields || []).length === 0) {
+        return 'selecione um caso/transcrição antes de executar';
+      }
+      return 'roda este módulo no caso/transcrição que você está vendo agora';
+    },
+
+    async cloneSharedCardToMyRadar(sc) {
+      if (!this.canCloneSharedCard(sc)) {
+        toast(this.cloneSharedCardTooltip(sc), 'warn');
+        return;
+      }
+
+      // 1. Encontra primeiro grupo com vaga.
+      let gIdx = -1;
+      for (let i = 0; i < this.groups.length; i++) {
+        if (this.canAddCard(this.groups[i])) { gIdx = i; break; }
+      }
+      if (gIdx < 0) {
+        toast('Nenhum grupo com vaga. Crie um grupo ou libere espaço.', 'warn');
+        return;
+      }
+
+      // 2. Resolve módulo + input_field a partir do snapshot do dono.
+      const snap = sc.card_json || {};
+      const moduleId = sc.module_id || snap.module_id;
+      const moduleName = sc.module_name || snap.module_name || '(módulo)';
+      const moduleDescription = sc.module_description || snap.module_description || '';
+      if (!moduleId) {
+        toast('Card compartilhado sem módulo identificado.', 'error');
+        return;
+      }
+
+      // Módulos virtuais (__chat__, __chart__, __sql__, __diagram__, __present__)
+      // têm fluxo próprio que abre modais. Pra eles, em vez de clonar
+      // automaticamente, pré-seleciona no dropdown e abre o picker que o
+      // usuário já conhece.
+      if (typeof moduleId === 'string' && moduleId.startsWith('__')) {
+        this.groups[gIdx]._newModuleId = moduleId;
+        this.openFieldPicker(gIdx);
+        toast(`Configure ${moduleName} no seu caso para executar`, 'info', 3000);
+        return;
+      }
+
+      // Para módulos normais, tenta usar o input_field do snapshot. Se o
+      // campo não existe nos availableFields do viewer (caso ≠ do dono
+      // pode ter campos diferentes), cai no field picker manual.
+      const snapField = snap.input_field;
+      const matchedField = (this.availableFields || []).find(f => f.key === snapField);
+
+      if (!matchedField) {
+        // Abre o picker pra viewer escolher
+        this.groups[gIdx]._newModuleId = moduleId;
+        this.openFieldPicker(gIdx);
+        toast('Escolha o campo no qual rodar este módulo', 'info', 3500);
+        return;
+      }
+
+      // 3. Cria card com novo uid e roda imediatamente.
+      const newRow = this.nextRowForNewCard(this.groups[gIdx]);
+      const newUid = genUUID();
+      this.groups[gIdx].cards.push({
+        uid: newUid,
+        module_id: moduleId,
+        module_name: moduleName,
+        module_description: moduleDescription,
+        input_field: matchedField.key,
+        input_label: matchedField.label,
+        input_value: matchedField.value,
+        row: newRow,
+        result: '',
+        model_used: '',
+        tokens_input: 0,
+        tokens_output: 0,
+        cost_estimated: 0,
+        loading: true,
+        error: null,
+        visibility: 'private',
+        // Metadados de rastreabilidade da origem — usados pra mostrar a tag
+        // "🔗 de @X" no header do card clonado e pro futuro audit trail.
+        cloned_from_uid: sc.card_uid,
+        cloned_from_username: sc.created_by_username || sc.owner_username || null,
+      });
+      const cIdx = this.groups[gIdx].cards.length - 1;
+      this.saveState();
+      toast(`Clonado para "${this.groups[gIdx].title}" — executando...`, 'info', 2500);
+      await this.executeCard(gIdx, cIdx);
+      this.saveState();
     },
 
     async setCardVisibility(uid, visibility) {
