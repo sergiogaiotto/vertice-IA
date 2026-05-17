@@ -77,9 +77,14 @@ class PgRadarCardVisibilityRepository:
         """Cards de OUTROS usuários que o ``user_id`` pode ver, aplicando duas
         camadas de filtragem:
 
-        1. **Role tier** — admin/supervisor/root veem `public_lideranca` +
-           `public_analista`. Demais (incluindo analista_n*) veem só
-           `public_analista`.
+        1. **Role tier**:
+           - admin / supervisor / root     → veem `public_lideranca` +
+                                              `public_analista`
+           - analista_n* (n1, n2, n3, …)   → veem só `public_analista`
+           - demais roles (ex.: `finops`)  → NÃO recebem shares — `finops`
+             é função de governança financeira, não consumidor de análises
+             qualitativas; sem opt-in explícito não há razão pra receber
+             conteúdo de "público analista".
         2. **Departamento** — exceto para ``root``, o card só é visível se seu
            ``sharer_department`` casar com ``user_department``. Cards com
            ``sharer_department IS NULL`` (compartilhados pelo root) são
@@ -92,10 +97,15 @@ class PgRadarCardVisibilityRepository:
         """
         is_lideranca = any(r in {"admin", "supervisor", "root"} for r in user_roles)
         is_root = "root" in user_roles
+        is_analista = any(r.startswith("analista_") for r in user_roles)
         if is_lideranca:
             allowed = ["public_lideranca", "public_analista"]
-        else:
+        elif is_analista:
             allowed = ["public_analista"]
+        else:
+            # Demais roles (ex.: `finops`) não recebem shares por default.
+            # Devolve cedo — sem regras visíveis = lista vazia, evita query.
+            return []
 
         if is_root:
             # Root vê tudo, cross-dept.
