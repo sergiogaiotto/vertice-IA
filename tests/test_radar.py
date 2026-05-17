@@ -223,6 +223,30 @@ async def test_card_visibility_repo_role_filtering():
     seen_owner = await repo.list_visible_to(owner, ["analista_n3"])
     assert all(r["card_uid"] != "vis-anal" or r["owner_id"] != owner for r in seen_owner)
 
+    # finops NÃO recebe public_analista — `finops` é governança financeira,
+    # não consumidor de análises qualitativas. Regressão: antes, qualquer
+    # role fora de {admin,supervisor,root} caía no else e via public_analista.
+    seen_finops = await repo.list_visible_to(viewer, ["finops"])
+    uids = sorted([r["card_uid"] for r in seen_finops if r["card_uid"].startswith("vis-")])
+    assert uids == [], (
+        f"finops não deveria ver public_analista, mas viu: {uids}"
+    )
+
+    # n1, n2, n3 (analista_n*) recebem public_analista igualmente
+    for nivel in ("analista_n1", "analista_n2", "analista_n3"):
+        seen = await repo.list_visible_to(viewer, [nivel])
+        uids = sorted([r["card_uid"] for r in seen if r["card_uid"].startswith("vis-")])
+        assert uids == ["vis-anal"], (
+            f"{nivel} deveria ver public_analista, viu: {uids}"
+        )
+
+    # Role custom desconhecido NÃO recebe nada — segurança por default
+    seen_unknown = await repo.list_visible_to(viewer, ["custom_role_xyz"])
+    uids = sorted([r["card_uid"] for r in seen_unknown if r["card_uid"].startswith("vis-")])
+    assert uids == [], (
+        f"role desconhecido não deveria receber shares, recebeu: {uids}"
+    )
+
 
 @pytest.mark.asyncio
 async def test_card_visibility_repo_sync_removes_stale():
