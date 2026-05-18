@@ -34,6 +34,7 @@ router = APIRouter()
 
 
 def _to_out(m) -> ModuleOut:
+    kb_id = getattr(m, "knowledge_base_id", None)
     return ModuleOut(
         id=str(m.id),
         name=m.name,
@@ -44,7 +45,20 @@ def _to_out(m) -> ModuleOut:
         skill_path=m.skill_path,
         response_type=getattr(m, "response_type", "text") or "text",
         response_config=getattr(m, "response_config", {}) or {},
+        knowledge_base_id=str(kb_id) if kb_id else None,
     )
+
+
+def _parse_kb_id(raw: str | None):
+    """Aceita None (não tocar), "" (desassociar) ou UUID string."""
+    if raw is None:
+        return None
+    if raw == "":
+        return None  # interpretado como desassociar (set NULL)
+    try:
+        return UUID(raw)
+    except (ValueError, TypeError):
+        raise HTTPException(400, f"knowledge_base_id inválido: {raw}")
 
 
 # ============================================================
@@ -141,6 +155,7 @@ async def create_module(
         skill_path=body.skill_path,
         response_type=body.response_type,
         response_config=body.response_config,
+        knowledge_base_id=_parse_kb_id(body.knowledge_base_id),
     )
     return _to_out(m)
 
@@ -164,17 +179,24 @@ async def update_module(
     svc: RegistryService = Depends(get_registry_service),
     user: User = Depends(require_roles("admin", "supervisor")),
 ):
+    # `knowledge_base_id`: distinguir 3 estados:
+    #   - campo ausente no JSON → não tocar (sentinel _UNSET)
+    #   - "" ou null no JSON → desassociar (set None)
+    #   - UUID string → trocar associação
+    update_kwargs = dict(
+        endpoint_url=body.endpoint_url,
+        description=body.description,
+        config_params=body.config_params,
+        skill_path=body.skill_path,
+        status=body.status,
+        response_type=body.response_type,
+        response_config=body.response_config,
+    )
+    fields_set = body.model_fields_set
+    if "knowledge_base_id" in fields_set:
+        update_kwargs["knowledge_base_id"] = _parse_kb_id(body.knowledge_base_id)
     try:
-        m = await svc.update(
-            module_id,
-            endpoint_url=body.endpoint_url,
-            description=body.description,
-            config_params=body.config_params,
-            skill_path=body.skill_path,
-            status=body.status,
-            response_type=body.response_type,
-            response_config=body.response_config,
-        )
+        m = await svc.update(module_id, **update_kwargs)
     except ValueError as e:
         raise HTTPException(404, str(e))
     return _to_out(m)

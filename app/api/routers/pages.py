@@ -637,6 +637,28 @@ async def gallery_page(
     )
 
 
+# ---------- Base Conhecimento ----------
+
+@router.get("/knowledge", response_class=HTMLResponse)
+async def knowledge_page(
+    request: Request,
+    user: User | None = Depends(current_user_optional),
+):
+    """Tela de gerenciamento da Base de Conhecimento.
+
+    Acesso: somente root + admin. Permite cadastrar KBs, fazer upload
+    de documentos de qualquer tipo (Docling extrai), monitorar status
+    de processamento e testar busca semântica antes de associar a um módulo.
+    """
+    if not user:
+        return RedirectResponse("/login")
+    _require_any_role(user, ['admin'])
+    return templates.TemplateResponse(
+        "knowledge/index.html",
+        await _ctx(request, user, active_module="knowledge"),
+    )
+
+
 @router.get("/gallery/{presentation_id}", response_class=HTMLResponse)
 async def gallery_detail_page(
     presentation_id: str,

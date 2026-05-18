@@ -291,6 +291,51 @@ Transcrição (parcial):
         if prompt and prompt.output_guardrail:
             system_parts.append(f"# Guardrail de saída\n{prompt.output_guardrail}")
 
+        # Knowledge Base — quando o módulo tem KB associada, busca os chunks
+        # mais relevantes para o texto de entrada e injeta como contexto. A
+        # query do retrieval é a própria transcrição (já sanitizada); o
+        # embedder produz um vetor que captura o tema geral, e o retrieval
+        # devolve trechos de documentos da KB relevantes para o assunto.
+        # Failure-mode: erro no retrieval (KB vazia, embeddings em mock,
+        # extensão pgvector ausente) NÃO bloqueia a execução do módulo —
+        # apenas pula a injeção e loga.
+        kb_id = getattr(module, "knowledge_base_id", None)
+        if kb_id:
+            try:
+                from app.core.services.knowledge_service import KnowledgeService
+                kb_svc = KnowledgeService()
+                # Top-3 com cap de 6000 chars para não roubar muito espaço do
+                # input (transcrição) no contexto. Ajustável via config_params
+                # do módulo se quiser tunar caso a caso.
+                kb_top_k = 3
+                kb_max_chars = 6000
+                try:
+                    if isinstance(module.config_params, dict):
+                        kb_top_k = int(module.config_params.get("kb_top_k") or 3)
+                        kb_max_chars = int(module.config_params.get("kb_max_chars") or 6000)
+                except Exception:
+                    pass
+                kb_context = await kb_svc.build_context(
+                    kb_id,
+                    sanitized_transcript[:2000],  # query do retrieval
+                    top_k=kb_top_k,
+                    max_chars=kb_max_chars,
+                )
+                if kb_context:
+                    system_parts.append(
+                        "# Base de Conhecimento (contexto recuperado)\n"
+                        "Os trechos abaixo foram recuperados da base de conhecimento "
+                        "associada a este módulo. Use-os como referência primária. "
+                        "Se a informação necessária não estiver neles, indique a "
+                        "lacuna explicitamente em vez de inventar.\n\n"
+                        f"{kb_context}"
+                    )
+            except Exception as e:  # noqa: BLE001
+                import logging
+                logging.getLogger("vertice.knowledge").warning(
+                    "kb retrieval falhou para módulo %s: %s", module.name, e
+                )
+
         # instrução de formatação adaptada ao formato detectado
         # OVERRIDE: response_type='table' ou 'api' SEMPRE exigem JSON estrito,
         # independente do que a skill declarou

@@ -47,6 +47,7 @@ from app.api.routers import (
     churn_router,
     failsafe_router,
     finops_router,
+    knowledge_router,
     modules_router,
     pages,
     presentations_router,
@@ -147,6 +148,7 @@ app.include_router(audit_router.router, prefix="/api/audit", tags=["audit"])
 app.include_router(presentations_router.router, prefix="/api/presentations", tags=["presentations"])
 app.include_router(api_endpoints_router.router, prefix="/api/api-endpoints", tags=["api-endpoints"])
 app.include_router(access_router.router, prefix="/api/access", tags=["access"])
+app.include_router(knowledge_router.router, prefix="/api/knowledge", tags=["knowledge"])
 
 
 @app.get("/health", include_in_schema=False)

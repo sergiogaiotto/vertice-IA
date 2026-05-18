@@ -11,11 +11,13 @@ from app.core.ports.repositories import ModuleRepository
 
 _SELECT_COLS = (
     "id::text AS id, name, endpoint_url, status, config_params, description, "
-    "skill_path, response_type, response_config"
+    "skill_path, response_type, response_config, "
+    "knowledge_base_id::text AS knowledge_base_id"
 )
 
 
 def _row_to_module(row) -> Module:
+    kb_id_raw = row["knowledge_base_id"]
     return Module(
         id=UUID(row["id"]),
         name=row["name"],
@@ -26,6 +28,7 @@ def _row_to_module(row) -> Module:
         skill_path=row["skill_path"],
         response_type=row["response_type"] or "text",
         response_config=row["response_config"] or {},
+        knowledge_base_id=UUID(kb_id_raw) if kb_id_raw else None,
     )
 
 
@@ -73,19 +76,22 @@ class PgModuleRepository(ModuleRepository):
                 """
                 INSERT INTO modules (id, name, endpoint_url, status, config_params,
                                      description, skill_path, response_type,
-                                     response_config)
-                VALUES ($1::uuid, $2, $3, $4, $5::jsonb, $6, $7, $8, $9::jsonb)
+                                     response_config, knowledge_base_id)
+                VALUES ($1::uuid, $2, $3, $4, $5::jsonb, $6, $7, $8, $9::jsonb,
+                        $10::uuid)
                 ON CONFLICT (name) DO UPDATE SET
-                    endpoint_url    = EXCLUDED.endpoint_url,
-                    status          = EXCLUDED.status,
-                    config_params   = EXCLUDED.config_params,
-                    description     = EXCLUDED.description,
-                    skill_path      = EXCLUDED.skill_path,
-                    response_type   = EXCLUDED.response_type,
-                    response_config = EXCLUDED.response_config
+                    endpoint_url      = EXCLUDED.endpoint_url,
+                    status            = EXCLUDED.status,
+                    config_params     = EXCLUDED.config_params,
+                    description       = EXCLUDED.description,
+                    skill_path        = EXCLUDED.skill_path,
+                    response_type     = EXCLUDED.response_type,
+                    response_config   = EXCLUDED.response_config,
+                    knowledge_base_id = EXCLUDED.knowledge_base_id
                 """,
                 str(module.id), module.name, module.endpoint_url,
                 module.status.value, module.config_params, module.description,
                 module.skill_path, module.response_type, module.response_config,
+                str(module.knowledge_base_id) if module.knowledge_base_id else None,
             )
             return module
