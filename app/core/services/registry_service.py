@@ -48,6 +48,7 @@ class RegistryService:
         skill_path: str | None = None,
         response_type: str = "text",
         response_config: dict | None = None,
+        knowledge_base_id: UUID | None = None,
     ) -> Module:
         # endpoint_url do parâmetro é IGNORADO — sempre computa a partir do nome
         canonical_endpoint = self._compute_endpoint(name)
@@ -62,6 +63,7 @@ class RegistryService:
             skill_path=skill_path,
             response_type=response_type or "text",
             response_config=response_config or {},
+            knowledge_base_id=knowledge_base_id,
         )
         if existing:
             module.endpoint_url = canonical_endpoint
@@ -70,7 +72,13 @@ class RegistryService:
             module.skill_path = skill_path
             module.response_type = response_type or "text"
             module.response_config = response_config or {}
+            module.knowledge_base_id = knowledge_base_id
         return await self.modules.upsert(module)
+
+    # Sentinel para distinguir "campo ausente" de "set explícito como None".
+    # update() recebe `knowledge_base_id=_UNSET` quando o caller não passou
+    # o campo (não muda). Quando recebe None ou UUID, atualiza.
+    _UNSET = object()
 
     async def update(
         self,
@@ -82,6 +90,7 @@ class RegistryService:
         status: str | None = None,
         response_type: str | None = None,
         response_config: dict | None = None,
+        knowledge_base_id=_UNSET,
     ) -> Module:
         m = await self.modules.get(module_id)
         if not m:
@@ -99,6 +108,8 @@ class RegistryService:
             m.response_type = response_type
         if response_config is not None:
             m.response_config = response_config
+        if knowledge_base_id is not self._UNSET:
+            m.knowledge_base_id = knowledge_base_id
         return await self.modules.upsert(m)
 
     async def set_status(self, module_id: UUID, status: ModuleStatus) -> Module:

@@ -154,6 +154,24 @@
           </p>
         </div>
 
+        <!-- COMBO de Base de Conhecimento (opcional) -->
+        <div>
+          <label class="flex items-center justify-between text-xs text-neutral-500 mb-1">
+            <span>base de conhecimento <span class="text-neutral-400">(opcional)</span></span>
+            <a href="/knowledge" target="_blank" class="text-[10px] text-brand-700 hover:underline">gerenciar →</a>
+          </label>
+          <select x-model="form.knowledge_base_id"
+                  class="w-full h-9 px-2 border border-neutral-200 rounded-md text-sm bg-white">
+            <option value="">— sem base de conhecimento —</option>
+            <template x-for="kb in availableKnowledgeBases" :key="kb.id">
+              <option :value="kb.id" x-text="kb.description ? `${kb.name} · ${kb.description}` : kb.name"></option>
+            </template>
+          </select>
+          <p class="text-[10px] text-neutral-400 mt-1">
+            quando associada, os chunks mais relevantes são injetados no system prompt em cada execução
+          </p>
+        </div>
+
         <!-- COMBO de prompts: TODOS os prompts existentes, marcando os já associados -->
         <div x-show="formMode === 'edit'">
           <label class="flex items-center justify-between text-xs text-neutral-500 mb-1">
@@ -531,6 +549,7 @@ function modulesApp() {
     health: {},
     availableSkills: [],
     availablePrompts: [],
+    availableKnowledgeBases: [],
     selectedPromptId: '',
 
     // Form (criar OU editar)
@@ -538,7 +557,7 @@ function modulesApp() {
     formMode: 'create',  // 'create' | 'edit'
     editingId: null,
     originalSkillPath: '',
-    form: { name: '', endpoint_url: '', description: '', skill_path: '', config_params_text: '{}', response_type: 'text', response_config: {}, output_type: 'SUMARIO' },
+    form: { name: '', endpoint_url: '', description: '', skill_path: '', config_params_text: '{}', response_type: 'text', response_config: {}, output_type: 'SUMARIO', knowledge_base_id: '' },
     formSelectedPrompts: [],
     jsonError: '',
     availableApiEndpoints: [],
@@ -572,6 +591,12 @@ function modulesApp() {
       try {
         this.availableSkills = await window.api('GET', '/api/modules/skills/availability');
       } catch (e) { /* silencioso — fallback para input vazio */ }
+    },
+
+    async loadKnowledgeBases() {
+      try {
+        this.availableKnowledgeBases = await window.api('GET', '/api/knowledge/options');
+      } catch (e) { this.availableKnowledgeBases = []; }
     },
 
     /**
@@ -673,11 +698,13 @@ function modulesApp() {
         config_params_text: '{}',
         response_type: 'text', response_config: {},
         output_type: 'SUMARIO',
+        knowledge_base_id: '',
       };
       this.formSelectedPrompts = [];
       this.jsonError = '';
       this.loadPrompts();
       this.loadApiEndpoints();
+      this.loadKnowledgeBases();
       this.formOpen = true;
     },
 
@@ -710,12 +737,14 @@ function modulesApp() {
         // config_params no submit (mantemos a tabela JSON livre como source-of-truth
         // — o submitForm faz o merge para evitar drift entre o select e o textarea).
         output_type: (typeof cfg.output_type === 'string' && cfg.output_type) ? cfg.output_type : 'SUMARIO',
+        knowledge_base_id: m.knowledge_base_id || '',
       };
       this.formSelectedPrompts = [];
       this.jsonError = '';
       this.selectedPromptId = '';
       this.loadPrompts();
       this.loadApiEndpoints();
+      this.loadKnowledgeBases();
       this.formOpen = true;
     },
 
@@ -760,6 +789,7 @@ function modulesApp() {
             config_params,
             response_type: this.form.response_type || 'text',
             response_config: this.form.response_config || {},
+            knowledge_base_id: this.form.knowledge_base_id || null,
           });
           this.modules.unshift({ ...created, expanded: false });
 
@@ -801,6 +831,9 @@ function modulesApp() {
             config_params,
             response_type: this.form.response_type || 'text',
             response_config: this.form.response_config || {},
+            // "" → desassocia (set NULL); UUID → associa. O backend distingue
+            // ausente de explicit-null via `model_fields_set`.
+            knowledge_base_id: this.form.knowledge_base_id || "",
           });
           const idx = this.modules.findIndex(x => x.id === updated.id);
           if (idx >= 0) this.modules[idx] = { ...updated, expanded: this.modules[idx].expanded };

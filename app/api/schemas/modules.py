@@ -17,6 +17,7 @@ class ModuleOut(BaseModel):
     skill_path: str | None
     response_type: str = "text"
     response_config: dict[str, Any] = {}
+    knowledge_base_id: str | None = None
 
 
 class CreateModuleRequest(BaseModel):
@@ -27,6 +28,7 @@ class CreateModuleRequest(BaseModel):
     skill_path: str | None = None
     response_type: str = "text"          # 'text' | 'api' | 'table'
     response_config: dict[str, Any] = {}
+    knowledge_base_id: str | None = None  # FK opcional para KB
 
 
 class UpdateModuleRequest(BaseModel):
@@ -37,6 +39,8 @@ class UpdateModuleRequest(BaseModel):
     status: str | None = None
     response_type: str | None = None
     response_config: dict[str, Any] | None = None
+    # Sentinel "" significa "desassociar" (set NULL). None significa "não tocar".
+    knowledge_base_id: str | None = None
 
 
 class HealthCheckResult(BaseModel):

@@ -580,6 +580,100 @@ UPDATE feature_access
        updated_at = NOW()
  WHERE feature_key = 'radar';
 
+-- ============================================================
+-- Knowledge Base — documentos + chunks vetorizados (pgvector)
+-- ============================================================
+--
+-- Stack: Docling (extração) + Azure OpenAI text-embedding-3-small (1536 dims)
+-- + pgvector (busca semântica cosine). Tudo no Postgres — sem object storage
+-- nem dependência externa. BYTEA armazena o arquivo original (cap 25MB no
+-- adapter HTTP), markdown_extracted guarda o texto estruturado pelo Docling
+-- e knowledge_chunks contém os trechos vetorizados usados em retrieval.
+--
+-- Política de visibilidade: somente root/admin gerenciam KBs. Módulos podem
+-- referenciar uma KB via `modules.knowledge_base_id` (FK opcional, ON DELETE
+-- SET NULL) — quando set, o fluxo de execução do módulo injeta os top-K
+-- chunks recuperados como contexto no system prompt.
+
+CREATE EXTENSION IF NOT EXISTS vector;
+
+CREATE TABLE IF NOT EXISTS knowledge_bases (
+    id              UUID PRIMARY KEY,
+    name            TEXT NOT NULL UNIQUE,
+    description     TEXT NOT NULL DEFAULT '',
+    -- Modelo de embedding usado. Trocar o modelo invalida todos os chunks
+    -- (dimensões/espaço diferentes) — guarda aqui para detectar mismatch.
+    embedding_model TEXT NOT NULL DEFAULT 'text-embedding-3-small',
+    embedding_dims  INTEGER NOT NULL DEFAULT 1536,
+    -- Parâmetros do chunker (alteráveis sem schema migration).
+    chunk_size      INTEGER NOT NULL DEFAULT 800,       -- ~800 tokens por chunk
+    chunk_overlap   INTEGER NOT NULL DEFAULT 80,        -- 10% de overlap
+    created_by_id   TEXT,
+    created_by_username TEXT,
+    created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at      TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+CREATE INDEX IF NOT EXISTS idx_knowledge_bases_name ON knowledge_bases(name);
+
+CREATE TABLE IF NOT EXISTS knowledge_documents (
+    id                UUID PRIMARY KEY,
+    knowledge_base_id UUID NOT NULL REFERENCES knowledge_bases(id) ON DELETE CASCADE,
+    filename          TEXT NOT NULL,
+    mime_type         TEXT NOT NULL DEFAULT 'application/octet-stream',
+    size_bytes        BIGINT NOT NULL DEFAULT 0,
+    -- Conteúdo original. NULL após extração bem-sucedida se a KB descartar
+    -- o raw (não default — mantemos para reprocessamento futuro).
+    raw_content       BYTEA,
+    -- Output do Docling: markdown estruturado + JSONB com tabelas/seções.
+    markdown_extracted TEXT NOT NULL DEFAULT '',
+    structure_json    JSONB,
+    -- Pipeline: pending → processing → ready → failed
+    status            TEXT NOT NULL DEFAULT 'pending',
+    error             TEXT,
+    chunks_count      INTEGER NOT NULL DEFAULT 0,
+    uploaded_by_id    TEXT,
+    uploaded_by_username TEXT,
+    created_at        TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    processed_at      TIMESTAMPTZ
+);
+CREATE INDEX IF NOT EXISTS idx_knowledge_documents_kb
+    ON knowledge_documents(knowledge_base_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_knowledge_documents_status
+    ON knowledge_documents(status) WHERE status IN ('pending', 'processing');
+
+CREATE TABLE IF NOT EXISTS knowledge_chunks (
+    id                UUID PRIMARY KEY,
+    knowledge_base_id UUID NOT NULL REFERENCES knowledge_bases(id) ON DELETE CASCADE,
+    document_id       UUID NOT NULL REFERENCES knowledge_documents(id) ON DELETE CASCADE,
+    chunk_index       INTEGER NOT NULL,
+    content           TEXT NOT NULL,
+    -- Metadados úteis para retrieval contextual (headings da seção, página, etc).
+    metadata          JSONB NOT NULL DEFAULT '{}'::jsonb,
+    embedding         vector(1536),
+    tokens_estimated  INTEGER NOT NULL DEFAULT 0,
+    created_at        TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+-- Lookup do chunk por documento (para listagem/inspeção).
+CREATE INDEX IF NOT EXISTS idx_knowledge_chunks_doc
+    ON knowledge_chunks(document_id, chunk_index);
+-- Index ANN para busca vetorial. IVFFlat com cosine distance é o padrão
+-- recomendado pelo pgvector para corpora < 1M chunks (caso típico aqui).
+-- `lists` deve ser ajustado conforme volume: regra-de-bolso = sqrt(N).
+-- Para KBs pequenas (<1k chunks), o planner pode escolher seq scan — sem
+-- problema, o índice serve quando a KB cresce.
+CREATE INDEX IF NOT EXISTS idx_knowledge_chunks_embedding
+    ON knowledge_chunks USING ivfflat (embedding vector_cosine_ops)
+    WITH (lists = 100);
+
+-- FK opcional do módulo para uma KB. ON DELETE SET NULL: apagar a KB não
+-- apaga o módulo, só desassocia. Idempotente para upgrades de instalações
+-- existentes.
+ALTER TABLE modules
+    ADD COLUMN IF NOT EXISTS knowledge_base_id UUID
+    REFERENCES knowledge_bases(id) ON DELETE SET NULL;
+CREATE INDEX IF NOT EXISTS idx_modules_knowledge_base
+    ON modules(knowledge_base_id) WHERE knowledge_base_id IS NOT NULL;
+
 -- Failsafe inbox
 CREATE TABLE IF NOT EXISTS failsafe_actions (
     id           UUID PRIMARY KEY,

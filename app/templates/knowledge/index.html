@@ -1,0 +1,443 @@
+{% extends "base.html" %}
+{% block title %}Base Conhecimento — Vértice{% endblock %}
+
+{% block content %}
+<div x-data="knowledgeApp()" x-init="init()" class="px-6 py-5 pb-12 max-w-full">
+
+  <div class="flex items-end justify-between mb-5">
+    <div>
+      <h1 class="text-lg font-medium">Base de Conhecimento</h1>
+      <p class="text-xs text-neutral-500">Repositório de documentos vetorizado · extração via Docling · retrieval semântico para módulos</p>
+    </div>
+    <button @click="openCreateBase()" class="btn btn-primary text-xs h-9 px-3">
+      + nova base
+    </button>
+  </div>
+
+  <!-- Layout 2 colunas: lista de KBs (esquerda) | detalhe (direita) -->
+  <div class="grid grid-cols-[320px_1fr] gap-5">
+
+    <!-- Coluna 1: lista de KBs -->
+    <div class="section-card">
+      <header class="section-card-header">
+        <span class="section-card-title">bases cadastradas</span>
+        <span class="text-[10px] text-neutral-500" x-text="`${bases.length} base(s)`"></span>
+      </header>
+      <div class="divide-y divide-neutral-100">
+        <template x-for="kb in bases" :key="kb.id">
+          <button @click="selectBase(kb.id)"
+                  class="w-full text-left px-4 py-3 hover:bg-neutral-25"
+                  :class="selectedBaseId === kb.id ? 'bg-brand-50/30' : ''">
+            <div class="flex items-center justify-between gap-2">
+              <span class="text-sm font-medium truncate" x-text="kb.name"></span>
+              <span class="text-[10px] text-neutral-400 shrink-0" x-text="`${kb.stats.total} doc(s)`"></span>
+            </div>
+            <div x-show="kb.description" class="text-[11px] text-neutral-500 mt-0.5 line-clamp-2" x-text="kb.description"></div>
+            <div class="flex items-center gap-1.5 mt-1">
+              <template x-if="kb.stats.processing > 0">
+                <span class="pill" style="font-size:9px; background:#fef3c7; color:#92400e;" x-text="`${kb.stats.processing} processando`"></span>
+              </template>
+              <template x-if="kb.stats.failed > 0">
+                <span class="pill" style="font-size:9px; background:#fee2e2; color:#991b1b;" x-text="`${kb.stats.failed} falha`"></span>
+              </template>
+              <template x-if="kb.stats.ready > 0">
+                <span class="pill pill-success" style="font-size:9px;" x-text="`${kb.stats.ready} ok`"></span>
+              </template>
+            </div>
+          </button>
+        </template>
+        <div x-show="bases.length === 0" class="px-4 py-10 text-center text-xs text-neutral-400 italic">
+          nenhuma base · clique em <strong>+ nova base</strong>
+        </div>
+      </div>
+    </div>
+
+    <!-- Coluna 2: detalhe da KB selecionada -->
+    <div x-show="!selectedBase" class="section-card flex items-center justify-center" style="min-height: 400px;">
+      <p class="text-sm text-neutral-400 italic">selecione uma base à esquerda</p>
+    </div>
+
+    <div x-show="selectedBase" class="space-y-4">
+
+      <!-- Header da KB -->
+      <div class="section-card">
+        <div class="px-5 py-4 flex items-start justify-between gap-3">
+          <div class="flex-1 min-w-0">
+            <h2 class="text-base font-medium" x-text="selectedBase?.name"></h2>
+            <p x-show="selectedBase?.description" class="text-xs text-neutral-500 mt-0.5" x-text="selectedBase?.description"></p>
+            <div class="flex items-center gap-3 mt-2 text-[10px] text-neutral-400 font-mono">
+              <span x-text="`modelo: ${selectedBase?.embedding_model}`"></span>
+              <span x-text="`dim: ${selectedBase?.embedding_dims}`"></span>
+              <span x-text="`chunk: ${selectedBase?.chunk_size}/${selectedBase?.chunk_overlap}`"></span>
+            </div>
+          </div>
+          <div class="flex gap-1.5">
+            <button @click="openEditBase()" class="text-[11px] px-2 py-1 bg-brand-50 hover:bg-brand-50/70 text-brand-700 rounded">editar</button>
+            <button @click="deleteBase()" class="text-[11px] px-2 py-1 hover:bg-risk-50 text-risk-600 rounded">excluir</button>
+          </div>
+        </div>
+
+        <!-- Stats bar -->
+        <div class="border-t border-neutral-100 grid grid-cols-4 text-center">
+          <div class="px-3 py-2 border-r border-neutral-100">
+            <div class="text-base font-medium" x-text="selectedBase?.stats?.total || 0"></div>
+            <div class="text-[10px] text-neutral-500 uppercase tracking-wider">documentos</div>
+          </div>
+          <div class="px-3 py-2 border-r border-neutral-100">
+            <div class="text-base font-medium" x-text="selectedBase?.stats?.total_chunks || 0"></div>
+            <div class="text-[10px] text-neutral-500 uppercase tracking-wider">chunks</div>
+          </div>
+          <div class="px-3 py-2 border-r border-neutral-100">
+            <div class="text-base font-medium" x-text="formatBytes(selectedBase?.stats?.total_bytes || 0)"></div>
+            <div class="text-[10px] text-neutral-500 uppercase tracking-wider">tamanho</div>
+          </div>
+          <div class="px-3 py-2">
+            <div class="text-base font-medium text-amber-700" x-text="(selectedBase?.stats?.pending || 0) + (selectedBase?.stats?.processing || 0)"></div>
+            <div class="text-[10px] text-neutral-500 uppercase tracking-wider">em fila</div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Upload zone -->
+      <div class="section-card">
+        <header class="section-card-header">
+          <span class="section-card-title">enviar documento</span>
+          <span class="text-[10px] text-neutral-500">máx 25 MB · pdf, docx, pptx, html, md, txt, imagens (OCR)</span>
+        </header>
+        <div class="px-5 py-4">
+          <label class="block w-full border-2 border-dashed border-neutral-200 rounded-lg hover:border-brand-400 transition cursor-pointer p-6 text-center">
+            <input type="file" class="hidden" @change="uploadFile($event.target.files[0])" :disabled="uploading" />
+            <svg width="32" height="32" viewBox="0 0 24 24" fill="none" class="mx-auto text-neutral-300 mb-2">
+              <path d="M12 3 L12 15 M6 9 L12 3 L18 9 M5 20 H19" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+            </svg>
+            <p class="text-sm text-neutral-600" x-text="uploading ? 'enviando…' : 'clique ou arraste um arquivo'"></p>
+            <p class="text-[10px] text-neutral-400 mt-1">Docling fará a extração estruturada e o conteúdo será vetorizado automaticamente</p>
+          </label>
+        </div>
+      </div>
+
+      <!-- Lista de documentos -->
+      <div class="section-card">
+        <header class="section-card-header">
+          <span class="section-card-title">documentos</span>
+          <div class="flex items-center gap-2">
+            <button @click="refresh()" class="text-[10px] text-brand-700 hover:underline">↻ atualizar</button>
+            <span class="text-[10px] text-neutral-500" x-text="`${(selectedBase?.documents || []).length} item(s)`"></span>
+          </div>
+        </header>
+        <div class="divide-y divide-neutral-100">
+          <template x-for="d in selectedBase?.documents || []" :key="d.id">
+            <div class="px-4 py-3">
+              <div class="flex items-center gap-3">
+                <span class="shrink-0 w-2 h-2 rounded-full"
+                      :class="{
+                        'bg-neutral-300': d.status === 'pending',
+                        'bg-amber-400 animate-pulse': d.status === 'processing',
+                        'bg-brand-500': d.status === 'ready',
+                        'bg-risk-500': d.status === 'failed'
+                      }"></span>
+                <div class="flex-1 min-w-0">
+                  <div class="flex items-center gap-2">
+                    <span class="text-sm font-medium truncate" x-text="d.filename"></span>
+                    <span class="pill"
+                          :class="{
+                            'pill-warn': d.status === 'pending' || d.status === 'processing',
+                            'pill-success': d.status === 'ready',
+                            'pill-danger': d.status === 'failed'
+                          }"
+                          style="font-size:9px;" x-text="d.status"></span>
+                    <span x-show="d.chunks_count > 0" class="text-[10px] text-neutral-400" x-text="`${d.chunks_count} chunks`"></span>
+                  </div>
+                  <div class="text-[11px] text-neutral-400 mt-0.5">
+                    <span x-text="formatBytes(d.size_bytes)"></span>
+                    · <span x-text="d.mime_type"></span>
+                    · <span x-text="d.uploaded_by_username || '-'"></span>
+                    · <span x-text="formatDate(d.created_at)"></span>
+                  </div>
+                  <div x-show="d.error" class="text-[11px] text-risk-600 mt-1 font-mono" x-text="d.error"></div>
+                  <div x-show="d.markdown_preview && d.status === 'ready'" class="text-[10px] text-neutral-500 mt-1 line-clamp-2 italic" x-text="d.markdown_preview"></div>
+                </div>
+                <div class="flex gap-1 shrink-0">
+                  <button x-show="d.status === 'failed' || d.status === 'ready'"
+                          @click="reprocess(d)" class="text-[10px] px-2 py-1 hover:bg-neutral-100 text-neutral-600 rounded" title="re-processar com Docling">↻</button>
+                  <button @click="deleteDoc(d)" class="text-[10px] px-2 py-1 hover:bg-risk-50 text-risk-600 rounded">×</button>
+                </div>
+              </div>
+            </div>
+          </template>
+          <div x-show="(selectedBase?.documents || []).length === 0" class="px-4 py-8 text-center text-xs text-neutral-400 italic">
+            nenhum documento enviado ainda
+          </div>
+        </div>
+      </div>
+
+      <!-- Busca de teste -->
+      <div class="section-card">
+        <header class="section-card-header">
+          <span class="section-card-title">testar busca semântica</span>
+          <span class="text-[10px] text-neutral-500">valida o retrieval antes de associar a um módulo</span>
+        </header>
+        <div class="px-5 py-4">
+          <div class="flex gap-2">
+            <input x-model="searchQuery"
+                   @keydown.enter="runSearch()"
+                   placeholder="o que o usuário poderia perguntar?"
+                   class="flex-1 h-9 px-3 text-sm border border-neutral-200 rounded" />
+            <button @click="runSearch()" :disabled="searching || !searchQuery.trim()"
+                    class="btn btn-primary text-xs h-9 px-3 disabled:opacity-50" x-text="searching ? '…' : 'buscar'"></button>
+          </div>
+          <template x-if="searchResults !== null">
+            <div class="mt-3 space-y-2">
+              <div x-show="searchResults.length === 0" class="text-xs text-neutral-400 italic">
+                nenhum chunk retornado · KB pode estar vazia ou o modelo de embedding em modo mock
+              </div>
+              <template x-for="(r, i) in searchResults" :key="r.id">
+                <div class="border border-neutral-200 rounded p-3 bg-neutral-25">
+                  <div class="flex items-center justify-between gap-2 mb-1">
+                    <span class="text-[10px] text-neutral-500 font-mono" x-text="`#${i+1} · chunk ${r.chunk_index}`"></span>
+                    <span class="text-[10px] font-medium text-brand-700" x-text="`score ${(r.score * 100).toFixed(1)}%`"></span>
+                  </div>
+                  <div x-show="r.metadata?.section_path" class="text-[10px] text-neutral-500 mb-1" x-text="`Seção: ${r.metadata.section_path}`"></div>
+                  <div class="text-[11px] text-neutral-700 whitespace-pre-wrap line-clamp-5" x-text="r.content"></div>
+                </div>
+              </template>
+            </div>
+          </template>
+        </div>
+      </div>
+
+    </div>
+  </div>
+
+  <!-- Modal: criar/editar KB -->
+  <div x-show="form.open" x-cloak class="fixed inset-0 bg-black/40 flex items-center justify-center z-50 p-4">
+    <div @click.outside="form.open = false" class="bg-white rounded-xl w-[480px] max-w-full">
+      <header class="px-6 py-4 border-b border-neutral-100 flex items-center justify-between">
+        <h3 class="text-base font-medium" x-text="form.editingId ? 'Editar base' : 'Nova base de conhecimento'"></h3>
+        <button @click="form.open = false" class="text-neutral-400 hover:text-neutral-700 text-lg">×</button>
+      </header>
+      <div class="px-6 py-5 space-y-3">
+        <div>
+          <label class="field-label">nome</label>
+          <input x-model="form.data.name"
+                 :disabled="form.editingId !== null"
+                 placeholder="ex: politicas-rh"
+                 class="w-full h-9 px-3 text-sm font-mono border border-neutral-200 rounded disabled:bg-neutral-100" />
+          <p x-show="form.editingId" class="text-[10px] text-neutral-400 mt-1">o nome não pode ser alterado depois de criado</p>
+        </div>
+        <div>
+          <label class="field-label">descrição</label>
+          <textarea x-model="form.data.description" rows="3"
+                    placeholder="propósito da base · que tipo de conteúdo guarda"
+                    class="w-full px-3 py-2 text-sm border border-neutral-200 rounded resize-none"></textarea>
+        </div>
+        <template x-if="form.editingId">
+          <div class="grid grid-cols-2 gap-3">
+            <div>
+              <label class="field-label">chunk_size (tokens)</label>
+              <input type="number" x-model.number="form.data.chunk_size" min="200" max="4000"
+                     class="w-full h-9 px-3 text-sm border border-neutral-200 rounded" />
+            </div>
+            <div>
+              <label class="field-label">chunk_overlap (tokens)</label>
+              <input type="number" x-model.number="form.data.chunk_overlap" min="0" max="500"
+                     class="w-full h-9 px-3 text-sm border border-neutral-200 rounded" />
+            </div>
+          </div>
+        </template>
+      </div>
+      <footer class="px-6 py-4 border-t border-neutral-100 flex justify-end gap-2">
+        <button @click="form.open = false" class="text-sm px-3 py-1.5 text-neutral-600 hover:bg-neutral-100 rounded-md">cancelar</button>
+        <button @click="saveForm()" class="text-sm px-3 py-1.5 bg-brand-600 hover:bg-brand-800 text-white rounded-md font-medium"
+                x-text="form.editingId ? 'salvar' : 'criar'"></button>
+      </footer>
+    </div>
+  </div>
+
+</div>
+
+<script>
+function knowledgeApp() {
+  return {
+    bases: [],
+    selectedBaseId: null,
+    selectedBase: null,
+    uploading: false,
+    searchQuery: '',
+    searchResults: null,
+    searching: false,
+    pollTimer: null,
+    form: {
+      open: false,
+      editingId: null,
+      data: { name: '', description: '', chunk_size: 800, chunk_overlap: 80 },
+    },
+
+    async init() {
+      await this.loadBases();
+      // Polling leve enquanto houver doc em processamento — para a UI
+      // refletir status sem o usuário precisar clicar.
+      this.pollTimer = setInterval(() => {
+        if (this.selectedBase && this.hasPendingWork()) {
+          this.refresh();
+        }
+      }, 5000);
+    },
+
+    hasPendingWork() {
+      const docs = this.selectedBase?.documents || [];
+      return docs.some(d => d.status === 'pending' || d.status === 'processing');
+    },
+
+    async loadBases() {
+      try {
+        this.bases = await window.api('GET', '/api/knowledge/bases');
+      } catch (e) { toast(e.message, 'error'); }
+    },
+
+    async selectBase(id) {
+      this.selectedBaseId = id;
+      await this.refresh();
+    },
+
+    async refresh() {
+      if (!this.selectedBaseId) return;
+      try {
+        this.selectedBase = await window.api('GET', `/api/knowledge/bases/${this.selectedBaseId}`);
+        // Atualiza a stats da KB na lista também.
+        const idx = this.bases.findIndex(b => b.id === this.selectedBaseId);
+        if (idx >= 0) {
+          this.bases[idx] = { ...this.bases[idx], stats: this.selectedBase.stats };
+        }
+      } catch (e) {
+        if (e.status === 404) { this.selectedBase = null; this.selectedBaseId = null; }
+        else toast(e.message, 'error');
+      }
+    },
+
+    openCreateBase() {
+      this.form.editingId = null;
+      this.form.data = { name: '', description: '', chunk_size: 800, chunk_overlap: 80 };
+      this.form.open = true;
+    },
+
+    openEditBase() {
+      if (!this.selectedBase) return;
+      this.form.editingId = this.selectedBase.id;
+      this.form.data = {
+        name: this.selectedBase.name,
+        description: this.selectedBase.description || '',
+        chunk_size: this.selectedBase.chunk_size,
+        chunk_overlap: this.selectedBase.chunk_overlap,
+      };
+      this.form.open = true;
+    },
+
+    async saveForm() {
+      try {
+        if (this.form.editingId) {
+          await window.api('PATCH', `/api/knowledge/bases/${this.form.editingId}`, {
+            description: this.form.data.description,
+            chunk_size: this.form.data.chunk_size,
+            chunk_overlap: this.form.data.chunk_overlap,
+          });
+          toast('Base atualizada.', 'success');
+        } else {
+          if (!this.form.data.name.trim()) { toast('Informe o nome.', 'warn'); return; }
+          const created = await window.api('POST', '/api/knowledge/bases', {
+            name: this.form.data.name,
+            description: this.form.data.description,
+          });
+          toast(`Base "${created.name}" criada.`, 'success');
+          this.selectedBaseId = created.id;
+        }
+        this.form.open = false;
+        await this.loadBases();
+        await this.refresh();
+      } catch (e) { toast(e.message, 'error'); }
+    },
+
+    async deleteBase() {
+      if (!this.selectedBase) return;
+      if (!confirm(`Excluir a base "${this.selectedBase.name}"? Todos os documentos e chunks serão removidos permanentemente.`)) return;
+      try {
+        await window.api('DELETE', `/api/knowledge/bases/${this.selectedBase.id}`);
+        toast('Base excluída.', 'success');
+        this.selectedBase = null;
+        this.selectedBaseId = null;
+        await this.loadBases();
+      } catch (e) { toast(e.message, 'error'); }
+    },
+
+    async uploadFile(file) {
+      if (!file || !this.selectedBaseId) return;
+      const MAX = 25 * 1024 * 1024;
+      if (file.size > MAX) {
+        toast(`Arquivo excede o limite de 25 MB (${(file.size / 1024 / 1024).toFixed(1)} MB).`, 'error');
+        return;
+      }
+      this.uploading = true;
+      try {
+        const fd = new FormData();
+        fd.append('file', file);
+        // window.api não suporta FormData por padrão — usa fetch direto.
+        const resp = await fetch(`/api/knowledge/bases/${this.selectedBaseId}/documents`, {
+          method: 'POST',
+          body: fd,
+          credentials: 'same-origin',
+        });
+        if (!resp.ok) {
+          const err = await resp.json().catch(() => ({ detail: 'falha no upload' }));
+          throw new Error(err.detail || `HTTP ${resp.status}`);
+        }
+        toast(`"${file.name}" enviado · processamento em background`, 'success');
+        await this.refresh();
+      } catch (e) { toast(e.message, 'error'); }
+      finally { this.uploading = false; }
+    },
+
+    async reprocess(d) {
+      try {
+        await window.api('POST', `/api/knowledge/documents/${d.id}/reprocess`);
+        toast('Re-processamento agendado.', 'info');
+        await this.refresh();
+      } catch (e) { toast(e.message, 'error'); }
+    },
+
+    async deleteDoc(d) {
+      if (!confirm(`Remover "${d.filename}" da base?`)) return;
+      try {
+        await window.api('DELETE', `/api/knowledge/documents/${d.id}`);
+        toast('Documento removido.', 'success');
+        await this.refresh();
+      } catch (e) { toast(e.message, 'error'); }
+    },
+
+    async runSearch() {
+      if (!this.searchQuery.trim() || !this.selectedBaseId) return;
+      this.searching = true;
+      this.searchResults = null;
+      try {
+        this.searchResults = await window.api('POST', `/api/knowledge/bases/${this.selectedBaseId}/search`, {
+          query: this.searchQuery, top_k: 5,
+        });
+      } catch (e) { toast(e.message, 'error'); }
+      finally { this.searching = false; }
+    },
+
+    formatBytes(n) {
+      if (!n) return '0 B';
+      if (n < 1024) return `${n} B`;
+      if (n < 1024 * 1024) return `${(n / 1024).toFixed(1)} KB`;
+      return `${(n / 1024 / 1024).toFixed(2)} MB`;
+    },
+
+    formatDate(iso) {
+      if (!iso) return '-';
+      try { return new Date(iso).toLocaleString('pt-BR', { dateStyle: 'short', timeStyle: 'short' }); }
+      catch (_) { return iso; }
+    },
+  };
+}
+</script>
+{% endblock %}

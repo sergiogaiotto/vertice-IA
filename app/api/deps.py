@@ -227,6 +227,20 @@ def get_schema_service():
     return SchemaService()
 
 
+# ---------- Knowledge Base ----------
+
+def get_knowledge_service():
+    """Factory do KnowledgeService.
+
+    Não cacheado (lru_cache) porque o cliente de embeddings encapsula
+    referências ao client da Azure que devem ser recriadas em cada request
+    para honrar credentials rotacionadas em runtime. Cost-wise, criar o
+    service é barato (só inicializa repos asyncpg-backed).
+    """
+    from app.core.services.knowledge_service import KnowledgeService
+    return KnowledgeService()
+
+
 # ---------- Raio X Cliente ----------
 
 def get_raiox_board_repo():

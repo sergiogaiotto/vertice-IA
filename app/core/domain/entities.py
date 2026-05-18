@@ -54,6 +54,10 @@ class Module:
     skill_path: str | None = None
     response_type: str = "text"      # 'text' | 'api' | 'table'
     response_config: dict[str, Any] = field(default_factory=dict)
+    # FK opcional para Knowledge Base — quando set, retrieval semântico
+    # roda antes da execução do módulo e os top-K chunks são injetados
+    # no system prompt como contexto.
+    knowledge_base_id: UUID | None = None
 
 
 @dataclass
@@ -408,6 +412,80 @@ class RaioXRelationship:
     confidence: float = 0.0
     confirmed_by_user: str | None = None
     confirmed_at: datetime | None = None
+    created_at: datetime = field(default_factory=datetime.utcnow)
+
+
+# ===== Knowledge Base =====
+
+
+class KnowledgeDocumentStatus(str, Enum):
+    pending = "pending"
+    processing = "processing"
+    ready = "ready"
+    failed = "failed"
+
+
+@dataclass
+class KnowledgeBase:
+    """Coleção de documentos vetorizada para retrieval semântico.
+
+    Módulos podem opcionalmente referenciar uma KB via `modules.knowledge_base_id`.
+    Quando definido, o fluxo de execução do módulo recupera os top-K chunks
+    mais relevantes para a entrada do usuário e injeta no system prompt.
+    """
+    id: UUID
+    name: str
+    description: str = ""
+    embedding_model: str = "text-embedding-3-small"
+    embedding_dims: int = 1536
+    chunk_size: int = 800
+    chunk_overlap: int = 80
+    created_by_id: str | None = None
+    created_by_username: str | None = None
+    created_at: datetime = field(default_factory=datetime.utcnow)
+    updated_at: datetime = field(default_factory=datetime.utcnow)
+
+
+@dataclass
+class KnowledgeDocument:
+    """Documento bruto + sua extração Docling em markdown estruturado.
+
+    Pipeline de processamento (assíncrono via BackgroundTasks):
+      pending → processing → (ready | failed)
+    """
+    id: UUID
+    knowledge_base_id: UUID
+    filename: str
+    mime_type: str = "application/octet-stream"
+    size_bytes: int = 0
+    raw_content: bytes | None = None       # None se descartado pós-extração
+    markdown_extracted: str = ""
+    structure_json: dict[str, Any] = field(default_factory=dict)
+    status: KnowledgeDocumentStatus = KnowledgeDocumentStatus.pending
+    error: str | None = None
+    chunks_count: int = 0
+    uploaded_by_id: str | None = None
+    uploaded_by_username: str | None = None
+    created_at: datetime = field(default_factory=datetime.utcnow)
+    processed_at: datetime | None = None
+
+
+@dataclass
+class KnowledgeChunk:
+    """Pedaço vetorizado de um documento. Unidade atômica de retrieval.
+
+    `embedding` é o vetor produzido pelo modelo de embeddings da KB
+    (text-embedding-3-small por default, 1536 dims). O retrieval calcula
+    cosine distance via pgvector e devolve os top-K.
+    """
+    id: UUID
+    knowledge_base_id: UUID
+    document_id: UUID
+    chunk_index: int
+    content: str
+    metadata: dict[str, Any] = field(default_factory=dict)
+    embedding: list[float] | None = None
+    tokens_estimated: int = 0
     created_at: datetime = field(default_factory=datetime.utcnow)
 
 

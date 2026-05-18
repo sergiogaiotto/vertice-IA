@@ -119,6 +119,18 @@ async def _init_connection(conn: asyncpg.Connection) -> None:
     )
     # Define timezone consistente com o uso `datetime.utcnow()` no app.
     await conn.execute("SET TIME ZONE 'UTC'")
+    # Codec pgvector — só registra se a extensão estiver instalada.
+    # `pgvector.asyncpg.register_vector(conn)` faz a mágica: aceita
+    # list[float]/np.ndarray no envio e devolve list[float] na leitura.
+    # Em conexões onde a extensão não está instalada (testes antigos,
+    # banco sem `CREATE EXTENSION vector`), apenas pula sem falhar — KBs
+    # ficam indisponíveis nesses ambientes, mas o resto da app funciona.
+    try:
+        from pgvector.asyncpg import register_vector
+        await register_vector(conn)
+    except Exception:  # noqa: BLE001
+        # Extensão não instalada ou pgvector lib ausente — segue sem KB.
+        pass
 
 
 async def get_pool() -> asyncpg.Pool:

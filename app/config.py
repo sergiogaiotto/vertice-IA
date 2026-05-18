@@ -56,6 +56,10 @@ class Settings(BaseSettings):
     azure_openai_endpoint: str = ""           # ex: https://meu-recurso.openai.azure.com
     azure_openai_api_version: str = "2024-08-01-preview"
     azure_openai_deployment: str = "gpt-4o"   # nome do deployment no Azure (usado como model)
+    # Deployment do modelo de embeddings (Knowledge Base). Pode coexistir com
+    # o gpt-4o no mesmo recurso Azure — basta criar dois deployments distintos
+    # no portal e setar este nome aqui.
+    azure_openai_embedding_deployment: str = "text-embedding-3-small"
 
     maritaca_api_key: str = ""
     maritaca_model: str = "sabia-4"

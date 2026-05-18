@@ -35,6 +35,15 @@ python-pptx==1.0.2
 python-docx==1.1.2
 pandas==2.2.3
 
+# Knowledge Base — extração documental (Docling) + busca vetorial (pgvector).
+# docling: IBM/sergiogaiotto extractor para PDF/DOCX/PPTX/HTML/MD → markdown
+# estruturado preservando tabelas, hierarquia e metadados. Pesado em CPU
+# (5-20s por PDF), por isso a extração roda em BackgroundTasks no upload.
+# pgvector: bindings Python + codec asyncpg para a extensão `vector` do PG,
+# usada na busca semântica (cosine distance) sobre chunks da KB.
+docling>=2.0.0
+pgvector>=0.3.0
+
 # Raio X Cliente — Plotly server-side (fig.to_json()) + plotly.express
 plotly==5.24.1
 
