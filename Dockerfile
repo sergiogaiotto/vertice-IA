@@ -28,8 +28,20 @@ WORKDIR /build
 # código muda mas deps não.
 COPY requirements.txt .
 
+# Docling depende de PyTorch. A wheel padrão de torch no PyPI (Linux) traz
+# CUDA embutido e puxa ~2GB de pacotes nvidia-* como dependências transitivas
+# (nvidia-cublas, nvidia-cudnn, nvidia-cuda-runtime, triton, etc.). Como esta
+# imagem roda CPU-only, forçamos a wheel CPU do índice oficial do PyTorch
+# ANTES do `pip wheel -r requirements.txt`, satisfazendo a dependência sem
+# arrastar o stack CUDA. `--extra-index-url` no segundo comando permite que
+# outras libs ML eventuais também resolvam pelo índice CPU se precisarem.
 RUN pip install --upgrade pip \
- && pip wheel --wheel-dir /wheels -r requirements.txt
+ && pip wheel --wheel-dir /wheels \
+        --index-url https://download.pytorch.org/whl/cpu \
+        torch \
+ && pip wheel --wheel-dir /wheels \
+        --extra-index-url https://download.pytorch.org/whl/cpu \
+        -r requirements.txt
 
 
 # ---------- Stage 2: runtime ----------
