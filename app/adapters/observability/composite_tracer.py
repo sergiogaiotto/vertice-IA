@@ -69,7 +69,18 @@ class CompositeTracer(Tracer):
     def trace(self, name: str, input_data: Any, output_data: Any, metadata: dict | None = None) -> None:
         if self._langfuse:
             try:
-                self._langfuse.trace(name=name, input=input_data, output=output_data, metadata=metadata)
+                # SDK v3 (>=3.0): a API foi reescrita sobre OpenTelemetry e o
+                # método `.trace(name=...)` antigo foi removido. O padrão atual
+                # é context manager via `start_as_current_observation` (ou
+                # `start_as_current_span`). `as_type="span"` é o equivalente
+                # genérico ao trace v2; use `as_type="generation"` quando o
+                # caller for uma chamada LLM com tokens/custos a registrar.
+                with self._langfuse.start_as_current_observation(
+                    as_type="span",
+                    name=name,
+                    input=input_data,
+                ) as span:
+                    span.update(output=output_data, metadata=metadata or {})
             except Exception as e:  # noqa: BLE001
                 logger.debug("LangFuse trace falhou: %s", e)
 

@@ -65,7 +65,11 @@ sqlalchemy==2.0.36
 opentelemetry-api>=1.28.0
 opentelemetry-sdk>=1.28.0
 opentelemetry-instrumentation-fastapi>=0.49b1
-langfuse>=2.50.0,<4.0.0
+# langfuse v3.x é obrigatório — o composite_tracer e o @observe do model_router
+# usam a API OpenTelemetry-based (`start_as_current_observation`, etc.) que só
+# existe a partir do SDK 3.0. v2.x não tem esses métodos → AttributeError em
+# runtime. Validado com 3.14.6 em produção (Claro DataOps, mai/2026).
+langfuse>=3.0.0,<4.0.0
 mlflow>=2.17.0,<4.0.0
 
 # Tests
