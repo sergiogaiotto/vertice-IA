@@ -357,3 +357,74 @@ class PgRaioXRelationshipRepository(RaioXRelationshipRepository):
                 username, str(rel_id),
             )
             return result.endswith(" 1")
+
+
+# ============================================================
+# Origens de tabelas XLSX (raiox_xlsx_origins)
+# ============================================================
+#
+# Repositório dedicado — não implementa um port abstrato porque o consumidor
+# único é o `XlsxImportService`. Mantém a forma simples (sem entity intermediária):
+# os métodos devolvem `dict` direto para o caller decidir mapeamento.
+
+
+class PgRaioXXlsxOriginRepository:
+    """CRUD de metadados de origens de tabelas XLSX importadas no Raio X."""
+
+    async def upsert(
+        self,
+        *,
+        table_name: str,
+        original_filename: str,
+        sheet_name: str,
+        uploaded_by_id: str | None,
+        uploaded_by_username: str,
+        rows_count: int,
+        columns_count: int,
+    ) -> None:
+        """Cria ou atualiza a origem. Reimport do mesmo arquivo+aba sobrescreve
+        — o usuário viu o aviso na UI."""
+        async with connect() as db:
+            await db.execute(
+                """
+                INSERT INTO raiox_xlsx_origins
+                    (table_name, original_filename, sheet_name,
+                     uploaded_by_id, uploaded_by_username,
+                     rows_count, columns_count, uploaded_at)
+                VALUES ($1, $2, $3, $4, $5, $6, $7, NOW())
+                ON CONFLICT (table_name) DO UPDATE SET
+                    original_filename = EXCLUDED.original_filename,
+                    sheet_name = EXCLUDED.sheet_name,
+                    uploaded_by_id = EXCLUDED.uploaded_by_id,
+                    uploaded_by_username = EXCLUDED.uploaded_by_username,
+                    rows_count = EXCLUDED.rows_count,
+                    columns_count = EXCLUDED.columns_count,
+                    uploaded_at = NOW()
+                """,
+                table_name, original_filename, sheet_name,
+                uploaded_by_id, uploaded_by_username,
+                rows_count, columns_count,
+            )
+
+    async def get(self, table_name: str) -> dict | None:
+        async with connect() as db:
+            row = await db.fetchrow(
+                "SELECT * FROM raiox_xlsx_origins WHERE table_name = $1",
+                table_name,
+            )
+            return dict(row) if row else None
+
+    async def list_all(self) -> list[dict]:
+        async with connect() as db:
+            rows = await db.fetch(
+                "SELECT * FROM raiox_xlsx_origins ORDER BY uploaded_at DESC"
+            )
+            return [dict(r) for r in rows]
+
+    async def delete(self, table_name: str) -> bool:
+        async with connect() as db:
+            result = await db.execute(
+                "DELETE FROM raiox_xlsx_origins WHERE table_name = $1",
+                table_name,
+            )
+            return result.endswith(" 1")

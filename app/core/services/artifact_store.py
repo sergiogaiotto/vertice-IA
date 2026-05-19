@@ -27,6 +27,8 @@ class Artifact:
 
 # Hard cap defensivo. Mantém artefatos em torno do que faz sentido para
 # downloads de execução de módulo (CSV/MD/JSON), nunca vídeos/binários grandes.
+# Callers com necessidades específicas (upload de XLSX no Raio X, por ex.)
+# podem instanciar uma store dedicada com `max_bytes` maior.
 _MAX_BYTES = 10 * 1024 * 1024  # 10 MB
 _DEFAULT_TTL_SECONDS = 1800    # 30 min
 
@@ -36,18 +38,20 @@ class ArtifactStore:
         self,
         repo: PgArtifactRepository | None = None,
         ttl_seconds: int = _DEFAULT_TTL_SECONDS,
+        max_bytes: int = _MAX_BYTES,
     ):
         self._repo = repo or PgArtifactRepository()
         self._ttl = ttl_seconds
+        self._max_bytes = max_bytes
 
     async def put(
         self, content: bytes | str, filename: str, mime_type: str
     ) -> Artifact:
         if isinstance(content, str):
             content = content.encode("utf-8")
-        if len(content) > _MAX_BYTES:
+        if len(content) > self._max_bytes:
             raise ValueError(
-                f"artefato excede {_MAX_BYTES} bytes (recebido {len(content)})"
+                f"artefato excede {self._max_bytes} bytes (recebido {len(content)})"
             )
         row = await self._repo.put(
             content=content, filename=filename, mime_type=mime_type

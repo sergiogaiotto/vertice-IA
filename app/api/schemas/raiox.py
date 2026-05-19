@@ -163,3 +163,82 @@ class SeriesOut(BaseModel):
     value_column: str
     total_rows: int
     rows_returned: int
+
+
+# ---- XLSX Import ----
+
+class XlsxColumnPreview(BaseModel):
+    """Coluna detectada em uma aba durante o preview.
+
+    `original_name` é o cabeçalho como aparece na planilha; `sanitized_name`
+    é a versão para uso no Postgres (a-z, 0-9, _). `inferred_type` é o tipo
+    Postgres sugerido (TEXT/BIGINT/DOUBLE PRECISION/DATE/TIMESTAMPTZ/BOOLEAN).
+    O usuário pode sobrescrever o tipo via `XlsxSheetSpec.column_types_override`.
+    """
+    original_name: str
+    sanitized_name: str
+    inferred_type: str
+    sample_values: list[str] = Field(default_factory=list)  # até 3 amostras
+
+
+class XlsxSheetPreview(BaseModel):
+    """Preview de uma aba do XLSX antes do import.
+
+    `suggested_table_name` segue a convenção `raiox_xlsx__<file>__<sheet>`.
+    Editável pelo usuário no modal. `warnings` traz avisos soft-cap.
+    """
+    original_sheet_name: str
+    suggested_table_name: str
+    columns: list[XlsxColumnPreview]
+    rows_count: int
+    sample_rows: list[dict[str, Any]] = Field(default_factory=list)  # até 5
+    warnings: list[str] = Field(default_factory=list)
+
+
+class XlsxPreviewResponse(BaseModel):
+    """Resposta do `POST /api/raiox/xlsx/preview`.
+
+    `artifact_id` é o handle temporário (TTL 10min) para o arquivo guardado
+    no `artifact_store`. O front passa ele de volta no `import` — assim o
+    usuário não precisa fazer upload duas vezes.
+    """
+    artifact_id: str
+    original_filename: str
+    sheets: list[XlsxSheetPreview]
+
+
+class XlsxColumnSpec(BaseModel):
+    """Override do tipo de uma coluna no momento do import."""
+    sanitized_name: str
+    type: str  # TEXT | BIGINT | DOUBLE PRECISION | DATE | TIMESTAMPTZ | BOOLEAN
+
+
+class XlsxSheetSpec(BaseModel):
+    """Decisão do usuário para uma aba específica.
+
+    - `skip=True` ignora a aba (não cria tabela).
+    - `table_name` é o nome final (sanitizado pelo backend de qualquer forma).
+    - `column_types_override` permite forçar um tipo diferente do inferido.
+    """
+    original_sheet_name: str
+    table_name: str
+    skip: bool = False
+    column_types_override: list[XlsxColumnSpec] = Field(default_factory=list)
+
+
+class XlsxImportRequest(BaseModel):
+    """Payload do `POST /api/raiox/xlsx/import`."""
+    artifact_id: str
+    sheets: list[XlsxSheetSpec]
+
+
+class XlsxImportResult(BaseModel):
+    table_name: str
+    rows_inserted: int
+    columns_count: int
+    status: str  # 'created' | 'skipped' | 'failed'
+    error: str = ""
+
+
+class XlsxImportResponse(BaseModel):
+    results: list[XlsxImportResult]
