@@ -2646,15 +2646,43 @@ function radarApp() {
         diagramPromises.push(diagramTask);
       }
 
-      const totalExecuted = executedModules + executedCharts + regeneratedDiagrams + replayedSql;
+      // FASE 4: Base de Conhecimento — refresca input (campo do contexto ou
+      // output FRESCO de um módulo da FASE 1) e re-chama /api/radar/run-knowledge.
+      // Espera FASE 1 (modulePromises) para garantir que encadeamentos
+      // (input_field = '__module__:<uid>') leiam o `result` atualizado.
+      let regeneratedKnowledge = 0;
+      const knowledgeToRerun = [];
+      this.groups.forEach((group, gIdx) => {
+        group.cards.forEach((card, cIdx) => {
+          if (card.module_id === '__knowledge__') {
+            knowledgeToRerun.push([gIdx, cIdx]);
+            regeneratedKnowledge++;
+          }
+        });
+      });
+      const knowledgePromises = [];
+      if (knowledgeToRerun.length > 0) {
+        const knowledgeTask = (async () => {
+          // Aguarda FASE 1 terminar antes de processar — encadeamentos
+          // dependem do `result` fresco dos módulos cadastrados.
+          await Promise.all(modulePromises).catch(() => {});
+          await Promise.all(knowledgeToRerun.map(
+            ([gIdx, cIdx]) => this._rerunKnowledgeForContextChange(gIdx, cIdx)
+          ));
+        })();
+        knowledgePromises.push(knowledgeTask);
+      }
+
+      const totalExecuted = executedModules + executedCharts + regeneratedDiagrams + regeneratedKnowledge + replayedSql;
       const totalCleared = clearedChats + clearedSql;
 
-      // Computa `parts` (módulos/charts/diagrams/SQL) uma única vez — usado
+      // Computa `parts` (módulos/charts/diagrams/knowledge/SQL) uma única vez — usado
       // tanto no toast inicial quanto na mensagem do overlay.
       const parts = [];
       if (executedModules > 0)     parts.push(`${executedModules} módulo(s)`);
       if (executedCharts > 0)      parts.push(`${executedCharts} gráfico(s)`);
       if (regeneratedDiagrams > 0) parts.push(`${regeneratedDiagrams} diagrama(s)`);
+      if (regeneratedKnowledge > 0) parts.push(`${regeneratedKnowledge} análise(s) de base`);
       if (replayedSql > 0)         parts.push(`${replayedSql} SQL (auto-replay)`);
 
       const cleared = [];
@@ -2690,6 +2718,7 @@ function radarApp() {
         ...chartPromises,
         ...sqlReplayPromises,
         ...diagramPromises,
+        ...knowledgePromises,
       ];
       if (allPromises.length > 0) {
         this.reprocessingMessage = parts.length
@@ -2756,6 +2785,80 @@ function radarApp() {
         this.$nextTick(() => this._renderMermaidThumb(card.uid));
       } catch (e) {
         card.error = e.message || 'falha ao regenerar';
+        card.loading = false;
+        this.saveState();
+      }
+    },
+
+    /**
+     * Re-roda um card de Base de Conhecimento (__knowledge__) ao trocar de caso.
+     * Refresca o `input_value` conforme a fonte:
+     *   - input_field = '__custom__'    → preserva input_value (texto livre)
+     *   - input_field = '__module__:UID'→ usa o `result` ATUAL desse módulo
+     *     (FASE 1 já rodou, então o snapshot é fresco)
+     *   - input_field = <key>           → busca em availableFields
+     * Se a fonte sumiu / ficou vazia no novo contexto, NÃO chama a API e
+     * deixa o card com error informativo.
+     */
+    async _rerunKnowledgeForContextChange(gIdx, cIdx) {
+      const card = this.groups[gIdx].cards[cIdx];
+      if (!card || card.module_id !== '__knowledge__') return;
+
+      let freshInput = '';
+      let freshLabel = card.input_label || '';
+
+      if (card.input_field === '__custom__') {
+        freshInput = card.input_value || '';
+      } else if (typeof card.input_field === 'string' && card.input_field.startsWith('__module__:')) {
+        const uid = card.input_field.slice('__module__:'.length);
+        let sourceCard = null;
+        for (const g of this.groups) {
+          const found = g.cards.find(c => c.uid === uid);
+          if (found) { sourceCard = found; break; }
+        }
+        if (sourceCard && sourceCard.result) {
+          freshInput = sourceCard.result;
+          freshLabel = `← ${sourceCard.module_name}`;
+        }
+      } else if (card.input_field) {
+        const f = this.availableFields.find(x => x.key === card.input_field);
+        if (f && f.value) {
+          freshInput = f.value;
+          freshLabel = f.label;
+        }
+      }
+
+      if (!freshInput || !freshInput.trim()) {
+        card.result = '';
+        card.error = 'fonte indisponível no novo contexto · re-configure o card';
+        card.loading = false;
+        card.input_value = '';
+        this.saveState();
+        return;
+      }
+
+      card.input_value = freshInput;
+      card.input_label = freshLabel;
+      card.loading = true;
+      card.error = null;
+      try {
+        const r = await window.api('POST', '/api/radar/run-knowledge', {
+          kb_id: card.kb_id,
+          doc_ids: card.doc_ids || [],
+          input_text: freshInput,
+          input_label: freshLabel,
+          instruction: card.kb_instruction || '',
+        });
+        card.result = r.result;
+        card.chunks_used = r.chunks_used || [];
+        card.model_used = r.model_used;
+        card.tokens_input = r.tokens_input;
+        card.tokens_output = r.tokens_output;
+        card.cost_estimated = r.cost_estimated;
+        card.loading = false;
+        this.saveState();
+      } catch (e) {
+        card.error = e.message || 'falha na análise';
         card.loading = false;
         this.saveState();
       }
@@ -2859,12 +2962,13 @@ function radarApp() {
      * Cards que devem reprocessar ao trocar de caso, considerando o pedido
      * explícito de "todos os módulos cadastrados". Inclui contexto, custom
      * e schema-bound — exclui apenas virtuais sem semântica de re-run único:
-     *   - __chart__/__diagram__ → FASES 2/3 dedicadas
-     *   - __chat__/__sql__      → só limpam histórico (FASE 0)
-     *   - __present__           → gerada sob demanda pelo usuário
+     *   - __chart__/__diagram__  → FASES 2/3 dedicadas
+     *   - __chat__/__sql__       → só limpam histórico (FASE 0)
+     *   - __knowledge__          → FASE 4 dedicada (depende do output da FASE 1)
+     *   - __present__            → gerada sob demanda pelo usuário
      */
     cardShouldRerunOnCaseChange(card) {
-      if (['__chat__', '__chart__', '__diagram__', '__sql__', '__present__'].includes(card.module_id)) {
+      if (['__chat__', '__chart__', '__diagram__', '__sql__', '__knowledge__', '__present__'].includes(card.module_id)) {
         return false;
       }
       // qualquer card de módulo cadastrado (com module_id real) entra aqui
@@ -3638,7 +3742,9 @@ function radarApp() {
         const sourceCard = this.executedModuleCards.find(x => x.uid === uid);
         inputText = sourceCard.result || '';
         inputLabel = `← ${sourceCard.module_name}`;
-        inputField = c.source;
+        // Convenção do Radar para encadeamento: '__module__:<uid>' — usado
+        // pelo resolver de dependências do autoRunIfContextChanged.
+        inputField = `__module__:${uid}`;
       }
 
       const kb = c.kbsAvailable.find(x => x.id === c.kb_id);
