@@ -75,6 +75,18 @@ class Settings(BaseSettings):
     gaia_model: str = "gaia-4b"
     gaia_base_url: str = ""
 
+    # LLMs — gpt-oss-120b (OpenAI open-weights) via endpoint OpenAI-compatible.
+    # Provedores típicos: Groq (`https://api.groq.com/openai/v1`), Together AI,
+    # Fireworks, vLLM self-hosted, Ollama em modo OpenAI-compat. O modelo é de
+    # raciocínio (reasoning) e usa Harmony format — o adaptador `gpt_oss_adapter`
+    # trata as nuances (reasoning_effort, headroom de tokens, leakage Harmony).
+    gpt_oss_api_key: str = ""
+    gpt_oss_model: str = "gpt-oss-120b"
+    gpt_oss_base_url: str = ""
+    # "minimal" | "low" | "medium" | "high". Para tarefas com schema rígido (JSON,
+    # classificação), `"low"` é ótimo. Subir gasta mais tokens de raciocínio.
+    gpt_oss_reasoning_effort: str = "low"
+
     # Router
     router_default_model: str = "sabia-4"
     router_fallback_model: str = "gpt-4o"

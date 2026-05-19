@@ -35,7 +35,12 @@ COPY requirements.txt .
 # ANTES do `pip wheel -r requirements.txt`, satisfazendo a dependência sem
 # arrastar o stack CUDA. `--extra-index-url` no segundo comando permite que
 # outras libs ML eventuais também resolvam pelo índice CPU se precisarem.
-RUN pip install --upgrade pip \
+# `wheel` + `setuptools` são instalados antes do `pip wheel` porque alguns
+# pacotes transitivos (pylatexenc, antlr4-python3-runtime) não têm
+# pyproject.toml e dependem do método clássico `setup.py bdist_wheel` —
+# sem `wheel` no ambiente, pip cai no legado `setup.py install` (deprecado
+# e que será removido em pip ≥23.1).
+RUN pip install --upgrade pip setuptools wheel \
  && pip wheel --wheel-dir /wheels \
         --index-url https://download.pytorch.org/whl/cpu \
         torch \
