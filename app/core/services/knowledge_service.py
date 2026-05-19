@@ -262,14 +262,22 @@ class KnowledgeService:
         query: str,
         *,
         top_k: int = 5,
+        doc_ids: list[UUID] | None = None,
     ) -> list[dict]:
-        """Retorna os top-K chunks mais relevantes para a query."""
+        """Retorna os top-K chunks mais relevantes para a query.
+
+        Se `doc_ids` for passado, restringe a busca a esses documentos —
+        permite que o consumidor (ex.: módulo Radar 'Base de Conhecimento')
+        filtre por seleção do usuário.
+        """
         if not query.strip():
             return []
         vec = await self.embedder.embed_one(query)
         if not vec:
             return []
-        return await self.chunk_repo.search(kb_id, vec, top_k=top_k)
+        return await self.chunk_repo.search(
+            kb_id, vec, top_k=top_k, doc_ids=doc_ids
+        )
 
     async def build_context(
         self,
@@ -278,13 +286,14 @@ class KnowledgeService:
         *,
         top_k: int = 5,
         max_chars: int = 8000,
+        doc_ids: list[UUID] | None = None,
     ) -> str:
         """Constrói um bloco de contexto formatado para injeção em system prompt.
 
         Cada chunk vem precedido por seu `section_path` quando disponível.
         Trunca o agregado em `max_chars` para não estourar context window.
         """
-        hits = await self.search(kb_id, query, top_k=top_k)
+        hits = await self.search(kb_id, query, top_k=top_k, doc_ids=doc_ids)
         if not hits:
             return ""
         parts: list[str] = []

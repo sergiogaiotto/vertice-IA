@@ -772,6 +772,7 @@
                   <option value="__chart__">📊 Gráficos — visualização de dados (tabelas e séries)</option>
                   <option value="__diagram__">🧩 Diagrama — Mermaid a partir de outro módulo</option>
                   <option value="__sql__">🔍 SQL — explorar dados em linguagem natural (Deep Agent)</option>
+                  <option value="__knowledge__">🧠 Base de Conhecimento — análise profunda com retrieval semântico</option>
                   <option value="__present__">✨ Apresentação VIP — sintetiza insights de todos os cards</option>
                 </optgroup>
                 <optgroup label="módulos cadastrados">
@@ -782,7 +783,7 @@
               </select>
               <button @click="openFieldPicker(gIdx)" :disabled="!group._newModuleId"
                       class="text-[11px] px-2.5 py-1.5 bg-brand-600 hover:bg-brand-800 text-white rounded font-medium disabled:opacity-50 disabled:cursor-not-allowed">
-                <span x-text="group._newModuleId === '__chat__' ? 'escolher contexto →' : (group._newModuleId === '__chart__' ? 'configurar gráfico →' : (group._newModuleId === '__diagram__' ? 'configurar diagrama →' : (group._newModuleId === '__sql__' ? 'escolher tabelas →' : (group._newModuleId === '__present__' ? 'gerar apresentação →' : 'escolher campo →'))))"></span>
+                <span x-text="group._newModuleId === '__chat__' ? 'escolher contexto →' : (group._newModuleId === '__chart__' ? 'configurar gráfico →' : (group._newModuleId === '__diagram__' ? 'configurar diagrama →' : (group._newModuleId === '__sql__' ? 'escolher tabelas →' : (group._newModuleId === '__knowledge__' ? 'configurar base →' : (group._newModuleId === '__present__' ? 'gerar apresentação →' : 'escolher campo →')))))"></span>
               </button>
               <button @click="startNewRow(group)" x-show="canStartNewRow(group)"
                       :title="'próximo módulo entra numa linha nova abaixo'"
@@ -1353,6 +1354,116 @@
         <button @click="addDiagramCard()" :disabled="!diagramConfig.sourceUid"
                 class="text-sm px-3 py-1.5 bg-ai-600 hover:bg-ai-800 text-white rounded-md font-medium disabled:opacity-50 disabled:cursor-not-allowed">
           <span x-text="diagramConfig.editingCardUid ? '🧩 regenerar diagrama' : '🧩 gerar diagrama'"></span>
+        </button>
+      </footer>
+    </div>
+  </div>
+
+  <!-- ============================================================ -->
+  <!-- Modal: Base de Conhecimento (módulo virtual __knowledge__)   -->
+  <!-- ============================================================ -->
+  <div x-show="knowledgeConfig.open" x-cloak class="fixed inset-0 bg-black/40 flex items-center justify-center z-50 p-4">
+    <div @click.outside="knowledgeConfig.open = false" class="bg-white rounded-xl w-[760px] max-w-full max-h-[88vh] overflow-hidden flex flex-col">
+
+      <header class="px-6 py-4 border-b border-neutral-100 flex items-start justify-between gap-3">
+        <div class="flex items-start gap-3">
+          <div class="w-10 h-10 rounded-lg bg-ai-50 flex items-center justify-center text-ai-600 shrink-0 text-lg">🧠</div>
+          <div>
+            <h3 class="text-base font-medium">Análise com Base de Conhecimento</h3>
+            <p class="text-xs text-neutral-500 mt-0.5">a IA confronta o texto-alvo com trechos vetorizados da base · cita fontes</p>
+          </div>
+        </div>
+        <button @click="knowledgeConfig.open = false" class="text-neutral-400 hover:text-neutral-700 text-lg leading-none">×</button>
+      </header>
+
+      <div class="flex-1 overflow-y-auto px-6 py-5 space-y-4">
+
+        <!-- Step 1: KB -->
+        <div>
+          <label class="field-label">base de conhecimento</label>
+          <select x-model="knowledgeConfig.kb_id" @change="loadKnowledgeDocs()"
+                  :disabled="knowledgeConfig.loadingKbs"
+                  class="w-full h-9 px-2 text-xs border border-neutral-200 rounded bg-white">
+            <option value="">— selecione uma base —</option>
+            <template x-for="kb in knowledgeConfig.kbsAvailable" :key="kb.id">
+              <option :value="kb.id" x-text="kb.name + (kb.description ? ' · ' + kb.description : '')"></option>
+            </template>
+          </select>
+          <p x-show="knowledgeConfig.loadingKbs" class="text-[10px] text-neutral-400 mt-1">carregando bases…</p>
+          <p x-show="!knowledgeConfig.loadingKbs && knowledgeConfig.kbsAvailable.length === 0" class="text-[10px] text-amber-600 mt-1">
+            ⚠ nenhuma base cadastrada · vá em <a href="/knowledge" target="_blank" class="underline">/knowledge</a> para criar
+          </p>
+        </div>
+
+        <!-- Step 2: documentos -->
+        <div x-show="knowledgeConfig.kb_id">
+          <label class="field-label flex items-center gap-2">
+            <span>documentos a consultar</span>
+            <span class="text-[10px] text-neutral-400 font-normal" x-text="`${knowledgeConfig.doc_ids.length || knowledgeConfig.docsAvailable.length} de ${knowledgeConfig.docsAvailable.length} ready`"></span>
+            <button type="button" @click="knowledgeConfig.doc_ids = []" x-show="knowledgeConfig.doc_ids.length > 0"
+                    class="text-[10px] text-brand-700 hover:underline ml-auto font-normal">usar todos</button>
+          </label>
+          <div x-show="knowledgeConfig.loadingDocs" class="text-[10px] text-neutral-400 italic py-2">carregando documentos…</div>
+          <div x-show="!knowledgeConfig.loadingDocs && knowledgeConfig.docsAvailable.length === 0"
+               class="text-[10px] text-amber-600 italic py-2">
+            ⚠ nenhum doc <code>ready</code> nesta base · faça upload e aguarde processamento
+          </div>
+          <div x-show="!knowledgeConfig.loadingDocs && knowledgeConfig.docsAvailable.length > 0"
+               class="max-h-40 overflow-y-auto border border-neutral-200 rounded divide-y divide-neutral-100">
+            <template x-for="d in knowledgeConfig.docsAvailable" :key="d.id">
+              <label class="flex items-center gap-2 px-3 py-1.5 hover:bg-neutral-50 cursor-pointer">
+                <input type="checkbox" :value="d.id"
+                       :checked="knowledgeConfig.doc_ids.includes(d.id)"
+                       @change="toggleKnowledgeDoc(d.id)"
+                       class="text-brand-600 focus:ring-brand-600 rounded" />
+                <span class="text-xs flex-1 truncate" x-text="d.filename"></span>
+                <span class="text-[9px] text-neutral-400 shrink-0" x-text="`${d.chunks_count} chunks`"></span>
+              </label>
+            </template>
+          </div>
+          <p class="text-[10px] text-neutral-400 mt-1">marque para restringir · vazio = todos os documentos ready</p>
+        </div>
+
+        <!-- Step 3: fonte do texto-alvo -->
+        <div x-show="knowledgeConfig.kb_id">
+          <label class="field-label">texto-alvo (o que será analisado)</label>
+          <select x-model="knowledgeConfig.source" class="w-full h-9 px-2 text-xs border border-neutral-200 rounded bg-white">
+            <option value="">— selecione a fonte —</option>
+            <optgroup label="campos do contexto atual" x-show="availableFields.filter(f => f.value).length > 0">
+              <template x-for="f in availableFields.filter(f => f.value)" :key="f.key">
+                <option :value="'field:' + f.key" x-text="`${f.label} (${f.value.length} chars)`"></option>
+              </template>
+            </optgroup>
+            <optgroup label="saídas de módulos já executados" x-show="executedModuleCards.length > 0">
+              <template x-for="c in executedModuleCards" :key="c.uid">
+                <option :value="'module:' + c.uid" x-text="`${c.module_name} · ${c._groupTitle}`"></option>
+              </template>
+            </optgroup>
+            <optgroup label="outras opções">
+              <option value="custom">✎ texto livre (digitar abaixo)</option>
+            </optgroup>
+          </select>
+          <textarea x-show="knowledgeConfig.source === 'custom'"
+                    x-model="knowledgeConfig.custom_input" rows="4"
+                    placeholder="cole ou digite o texto que deve ser analisado contra a base"
+                    class="mt-2 w-full px-3 py-2 text-xs border border-neutral-200 rounded outline-none resize-none focus:border-ai-600"></textarea>
+        </div>
+
+        <!-- Step 4: instrução -->
+        <div x-show="knowledgeConfig.kb_id">
+          <label class="field-label">instrução adicional (opcional)</label>
+          <textarea x-model="knowledgeConfig.instruction" rows="2"
+                    placeholder="ex: foque em divergências de procedimento · liste apenas itens não-cobertos · verifique conformidade SLA"
+                    class="w-full px-3 py-2 text-xs border border-neutral-200 rounded outline-none resize-none focus:border-ai-600"></textarea>
+          <p class="text-[10px] text-neutral-400 mt-1">se vazio, a IA faz análise generalista de conformidade/insights</p>
+        </div>
+      </div>
+
+      <footer class="px-6 py-3 border-t border-neutral-100 flex justify-end gap-2 bg-white">
+        <button @click="knowledgeConfig.open = false" class="text-sm px-3 py-1.5 text-neutral-600 hover:bg-neutral-100 rounded-md">cancelar</button>
+        <button @click="addKnowledgeCard()" :disabled="!canExecuteKnowledge()"
+                class="text-sm px-3 py-1.5 bg-ai-600 hover:bg-ai-800 text-white rounded-md font-medium disabled:opacity-50 disabled:cursor-not-allowed">
+          🧠 analisar
         </button>
       </footer>
     </div>
@@ -2052,6 +2163,20 @@ function radarApp() {
       type: 'flowchart',
       instruction: '',
       editingCardUid: null,  // se preenchido, edição em vez de criação
+    },
+    knowledgeConfig: {
+      open: false,
+      groupIdx: null,
+      kb_id: '',
+      doc_ids: [],           // [] = todos os docs ready da KB
+      source: '',             // 'field:KEY' | 'module:UID' | 'custom'
+      custom_input: '',
+      instruction: '',
+      // populadas dinamicamente quando o modal abre
+      kbsAvailable: [],       // [{id, name, description}]
+      docsAvailable: [],      // [{id, filename, chunks_count}] da kb_id selecionada
+      loadingKbs: false,
+      loadingDocs: false,
     },
     diagramTypes: [
       { id: 'flowchart', label: 'Fluxograma', desc: 'fluxo de processos' },
@@ -3412,6 +3537,175 @@ function radarApp() {
       }
     },
 
+    // ===== Base de Conhecimento (__knowledge__) =====
+
+    async openKnowledgeConfig(gIdx) {
+      // Reset
+      this.knowledgeConfig.open = true;
+      this.knowledgeConfig.groupIdx = gIdx;
+      this.knowledgeConfig.kb_id = '';
+      this.knowledgeConfig.doc_ids = [];
+      this.knowledgeConfig.source = '';
+      this.knowledgeConfig.custom_input = '';
+      this.knowledgeConfig.instruction = '';
+      this.knowledgeConfig.docsAvailable = [];
+
+      // Pré-seleciona o primeiro field/módulo com conteúdo, se houver
+      const firstField = this.availableFields.find(f => f.value);
+      if (firstField) {
+        this.knowledgeConfig.source = `field:${firstField.key}`;
+      } else if (this.executedModuleCards.length > 0) {
+        this.knowledgeConfig.source = `module:${this.executedModuleCards[0].uid}`;
+      }
+
+      // Busca KBs disponíveis
+      this.knowledgeConfig.loadingKbs = true;
+      try {
+        this.knowledgeConfig.kbsAvailable = await window.api('GET', '/api/knowledge/options');
+      } catch (e) {
+        toast(`Falha ao carregar bases: ${e.message}`, 'error');
+        this.knowledgeConfig.kbsAvailable = [];
+      } finally {
+        this.knowledgeConfig.loadingKbs = false;
+      }
+    },
+
+    async loadKnowledgeDocs() {
+      const kb = this.knowledgeConfig.kb_id;
+      this.knowledgeConfig.doc_ids = [];
+      this.knowledgeConfig.docsAvailable = [];
+      if (!kb) return;
+      this.knowledgeConfig.loadingDocs = true;
+      try {
+        this.knowledgeConfig.docsAvailable = await window.api(
+          'GET', `/api/knowledge/bases/${kb}/documents/options`
+        );
+      } catch (e) {
+        toast(`Falha ao carregar documentos: ${e.message}`, 'error');
+        this.knowledgeConfig.docsAvailable = [];
+      } finally {
+        this.knowledgeConfig.loadingDocs = false;
+      }
+    },
+
+    toggleKnowledgeDoc(docId) {
+      const i = this.knowledgeConfig.doc_ids.indexOf(docId);
+      if (i >= 0) this.knowledgeConfig.doc_ids.splice(i, 1);
+      else this.knowledgeConfig.doc_ids.push(docId);
+    },
+
+    canExecuteKnowledge() {
+      const c = this.knowledgeConfig;
+      if (!c.kb_id) return false;
+      if (!c.source) return false;
+      if (c.source === 'custom') return (c.custom_input || '').trim().length > 0;
+      if (c.source.startsWith('field:')) {
+        const key = c.source.slice('field:'.length);
+        const f = this.availableFields.find(x => x.key === key);
+        return !!(f && f.value);
+      }
+      if (c.source.startsWith('module:')) {
+        const uid = c.source.slice('module:'.length);
+        const card = this.executedModuleCards.find(x => x.uid === uid);
+        return !!(card && card.result);
+      }
+      return false;
+    },
+
+    async addKnowledgeCard() {
+      const c = this.knowledgeConfig;
+      if (!this.canExecuteKnowledge()) {
+        toast('Configuração incompleta.', 'warn');
+        return;
+      }
+
+      // Resolve texto-alvo + label da fonte
+      let inputText = '';
+      let inputLabel = '';
+      let inputField = '';
+      if (c.source === 'custom') {
+        inputText = c.custom_input;
+        inputLabel = 'input livre';
+        inputField = '__custom__';
+      } else if (c.source.startsWith('field:')) {
+        const key = c.source.slice('field:'.length);
+        const f = this.availableFields.find(x => x.key === key);
+        inputText = f.value;
+        inputLabel = f.label;
+        inputField = key;
+      } else if (c.source.startsWith('module:')) {
+        const uid = c.source.slice('module:'.length);
+        const sourceCard = this.executedModuleCards.find(x => x.uid === uid);
+        inputText = sourceCard.result || '';
+        inputLabel = `← ${sourceCard.module_name}`;
+        inputField = c.source;
+      }
+
+      const kb = c.kbsAvailable.find(x => x.id === c.kb_id);
+      const docsLabel = c.doc_ids.length === 0
+        ? `todos (${c.docsAvailable.length})`
+        : `${c.doc_ids.length} doc${c.doc_ids.length === 1 ? '' : 's'}`;
+
+      const group = this.groups[c.groupIdx];
+      const newRow = this.nextRowForNewCard(group);
+      group.cards.push({
+        uid: genUUID(),
+        module_id: '__knowledge__',
+        module_name: 'Base de Conhecimento',
+        module_description: `🧠 ${kb?.name || 'KB'} · ${docsLabel}`,
+        input_field: inputField,
+        input_label: inputLabel,
+        input_value: inputText,
+        row: newRow,
+        // knowledge-specific
+        kb_id: c.kb_id,
+        kb_name: kb?.name || '',
+        doc_ids: [...c.doc_ids],
+        kb_instruction: c.instruction,
+        chunks_used: [],
+        // padrão dos cards normais
+        result: '',
+        model_used: '',
+        tokens_input: 0,
+        tokens_output: 0,
+        cost_estimated: 0,
+        output_format: 'markdown',
+        loading: true,
+        error: null,
+      });
+      const cIdx = group.cards.length - 1;
+      const cardUid = group.cards[cIdx].uid;
+      group._newModuleId = '';
+      group.startNewRowFlag = false;
+      this.knowledgeConfig.open = false;
+      this.saveState();
+
+      try {
+        const r = await window.api('POST', '/api/radar/run-knowledge', {
+          kb_id: c.kb_id,
+          doc_ids: c.doc_ids,
+          input_text: inputText,
+          input_label: inputLabel,
+          instruction: c.instruction,
+        });
+        const card = this._findCard(cardUid);
+        if (card) {
+          card.result = r.result;
+          card.chunks_used = r.chunks_used || [];
+          card.model_used = r.model_used;
+          card.tokens_input = r.tokens_input;
+          card.tokens_output = r.tokens_output;
+          card.cost_estimated = r.cost_estimated;
+          card.loading = false;
+        }
+        this.saveState();
+      } catch (e) {
+        const card = this._findCard(cardUid);
+        if (card) { card.error = e.message || 'falha na análise'; card.loading = false; }
+        this.saveState();
+      }
+    },
+
     /** Renderiza Mermaid em SVG dentro do thumb do card, escalado para caber. */
     async _renderMermaidThumb(uid) {
       if (typeof mermaid === 'undefined') {
@@ -4697,6 +4991,12 @@ function radarApp() {
         return;
       }
 
+      // Caso especial: módulo virtual Base de Conhecimento — usa modal próprio
+      if (moduleId === '__knowledge__') {
+        this.openKnowledgeConfig(gIdx);
+        return;
+      }
+
       // Caso especial: módulo virtual Chat
       if (moduleId === '__chat__') {
         this.fieldPickerGroupIdx = gIdx;
@@ -5242,6 +5542,32 @@ function radarApp() {
           card.cost_estimated = r.cost_estimated;
           card.loading = false;
           this.$nextTick(() => this._renderMermaidThumb(card.uid));
+        } catch (e) {
+          card.error = e.message;
+          card.loading = false;
+        }
+        this.saveState();
+        return;
+      }
+      if (card && card.module_id === '__knowledge__') {
+        // re-roda análise com mesma KB/docs/fonte/instrução
+        card.loading = true;
+        card.error = null;
+        try {
+          const r = await window.api('POST', '/api/radar/run-knowledge', {
+            kb_id: card.kb_id,
+            doc_ids: card.doc_ids || [],
+            input_text: card.input_value,
+            input_label: card.input_label,
+            instruction: card.kb_instruction || '',
+          });
+          card.result = r.result;
+          card.chunks_used = r.chunks_used || [];
+          card.model_used = r.model_used;
+          card.tokens_input = r.tokens_input;
+          card.tokens_output = r.tokens_output;
+          card.cost_estimated = r.cost_estimated;
+          card.loading = false;
         } catch (e) {
           card.error = e.message;
           card.loading = false;
