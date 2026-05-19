@@ -63,6 +63,21 @@ settings = get_settings()
 BASE_DIR = Path(__file__).resolve().parent
 
 
+# Bridge Langfuse credentials de `Settings` → `os.environ`. O SDK Langfuse v3
+# (>=3.0) lê as credenciais do ambiente do processo, não da nossa Settings.
+# Sem este bridge, o `@observe` em `model_router.complete()` cai em no-op
+# silencioso mesmo com chaves preenchidas no `.env`. `setdefault` respeita
+# vars já presentes (systemd, docker-compose, k8s) sem sobrescrever.
+import os as _os  # noqa: E402
+for _k, _v in (
+    ("LANGFUSE_PUBLIC_KEY", settings.langfuse_public_key),
+    ("LANGFUSE_SECRET_KEY", settings.langfuse_secret_key),
+    ("LANGFUSE_HOST", settings.langfuse_host),
+):
+    if _v:
+        _os.environ.setdefault(_k, _v)
+
+
 _ARTIFACT_GC_INTERVAL_SECONDS = 600  # 10 min
 
 

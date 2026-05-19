@@ -5,6 +5,22 @@ from __future__ import annotations
 from app.config import get_settings
 from app.core.ports.llm import LLMClient, LLMResponse
 
+# Langfuse v3 expõe um decorator `@observe` que instrumenta chamadas como
+# spans/generations no trace. Quando o SDK não está instalado (ou o env não tem
+# credenciais), `observe` vira no-op — preserva a aplicação rodando offline.
+# As credenciais do Langfuse são lidas do `os.environ` pelo SDK; o bridge
+# Settings→env é feito em `app/main.py` no startup, garantindo que os env vars
+# estejam presentes ANTES do primeiro `@observe` rodar.
+try:
+    from langfuse import observe
+except Exception:  # noqa: BLE001
+    def observe(func=None, **kwargs):  # type: ignore[no-redef]
+        if func is not None:
+            return func
+        def decorator(f):
+            return f
+        return decorator
+
 
 class ModelRouter:
     """Roteia chamadas para o LLM mais adequado dado o tipo de tarefa.
@@ -40,6 +56,7 @@ class ModelRouter:
             return settings.router_fallback_model
         return settings.router_default_model
 
+    @observe(name="llm-complete")
     async def complete(
         self,
         system_prompt: str,

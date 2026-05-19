@@ -103,6 +103,13 @@ class Settings(BaseSettings):
     # Policy
     opa_url: str = ""
 
+    # Proxy HTTP/HTTPS — usado por adapters que precisam alcançar endpoints
+    # externos através de um proxy corporativo (ex.: ClaroHubAdapter para o
+    # Hub GPU interno da Claro). Os adapters relevantes leem essas settings
+    # e propagam para `httpx.AsyncClient(proxies=...)`. Vazio = sem proxy.
+    http_proxy: str = ""
+    https_proxy: str = ""
+
     # Guardrails
     guardrail_input_max_chars: int = 20000
     guardrail_injection_block: bool = True
