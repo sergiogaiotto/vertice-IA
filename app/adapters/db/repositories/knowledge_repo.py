@@ -36,8 +36,8 @@ _KB_COLS = (
 _DOC_COLS = (
     "id::text AS id, knowledge_base_id::text AS knowledge_base_id, filename, "
     "mime_type, size_bytes, markdown_extracted, structure_json, status, "
-    "error, chunks_count, uploaded_by_id, uploaded_by_username, "
-    "created_at, processed_at"
+    "error, chunks_count, progress_message, processing_started_at, "
+    "uploaded_by_id, uploaded_by_username, created_at, processed_at"
 )
 _DOC_COLS_WITH_RAW = _DOC_COLS + ", raw_content"
 
@@ -71,6 +71,8 @@ def _row_to_doc(row, include_raw: bool = False) -> KnowledgeDocument:
         status=KnowledgeDocumentStatus(row["status"]),
         error=row["error"],
         chunks_count=row["chunks_count"] or 0,
+        progress_message=row["progress_message"],
+        processing_started_at=row["processing_started_at"],
         uploaded_by_id=row["uploaded_by_id"],
         uploaded_by_username=row["uploaded_by_username"],
         created_at=row["created_at"],
@@ -224,11 +226,31 @@ class PgKnowledgeDocumentRepository:
             return doc
 
     async def mark_processing(self, doc_id: UUID) -> None:
+        # Reset processing_started_at a CADA kickoff (cobre reprocessamentos)
+        # e limpa progress_message anterior — UI mostra do zero.
         async with connect() as db:
             await db.execute(
-                "UPDATE knowledge_documents SET status = 'processing' "
+                "UPDATE knowledge_documents SET "
+                "  status = 'processing', "
+                "  processing_started_at = NOW(), "
+                "  progress_message = 'aguardando início', "
+                "  error = NULL "
                 "WHERE id = $1::uuid",
                 str(doc_id),
+            )
+
+    async def update_progress(self, doc_id: UUID, message: str) -> None:
+        """Atualiza o `progress_message` durante o pipeline async.
+
+        Chamado pelo `KnowledgeService.process_document` entre as etapas
+        (extract → chunk → embed → insert) — a UI faz polling do GET de
+        documentos e renderiza a mensagem no card.
+        """
+        async with connect() as db:
+            await db.execute(
+                "UPDATE knowledge_documents SET progress_message = $2 "
+                "WHERE id = $1::uuid AND status = 'processing'",
+                str(doc_id), message[:500],
             )
 
     async def mark_ready(
@@ -248,6 +270,7 @@ class PgKnowledgeDocumentRepository:
                     structure_json = $3::jsonb,
                     chunks_count = $4,
                     processed_at = NOW(),
+                    progress_message = NULL,
                     error = NULL
                 WHERE id = $1::uuid
                 """,
@@ -259,7 +282,10 @@ class PgKnowledgeDocumentRepository:
             await db.execute(
                 """
                 UPDATE knowledge_documents SET
-                    status = 'failed', error = $2, processed_at = NOW()
+                    status = 'failed',
+                    error = $2,
+                    processed_at = NOW(),
+                    progress_message = NULL
                 WHERE id = $1::uuid
                 """,
                 str(doc_id), error[:2000],

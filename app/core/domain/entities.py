@@ -452,6 +452,12 @@ class KnowledgeDocument:
 
     Pipeline de processamento (assíncrono via BackgroundTasks):
       pending → processing → (ready | failed)
+
+    Telemetria do pipeline (para a UI acompanhar o progresso):
+    - `progress_message`: texto humano da etapa corrente — atualizado pelo
+      KnowledgeService a cada passo (extração / chunking / embeddings / save).
+    - `processing_started_at`: marco do início; junto com `processed_at`
+      permite calcular duração total na UI.
     """
     id: UUID
     knowledge_base_id: UUID
@@ -464,6 +470,8 @@ class KnowledgeDocument:
     status: KnowledgeDocumentStatus = KnowledgeDocumentStatus.pending
     error: str | None = None
     chunks_count: int = 0
+    progress_message: str | None = None
+    processing_started_at: datetime | None = None
     uploaded_by_id: str | None = None
     uploaded_by_username: str | None = None
     created_at: datetime = field(default_factory=datetime.utcnow)

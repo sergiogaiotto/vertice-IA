@@ -154,6 +154,18 @@
                     · <span x-text="d.uploaded_by_username || '-'"></span>
                     · <span x-text="formatDate(d.created_at)"></span>
                   </div>
+                  <!-- Progresso ao vivo durante processing -->
+                  <div x-show="d.status === 'processing'" class="mt-1.5 flex items-center gap-2">
+                    <span class="w-2.5 h-2.5 border-2 border-amber-200 border-t-amber-600 rounded-full animate-spin shrink-0"></span>
+                    <span class="text-[11px] text-amber-700 font-mono truncate"
+                          x-text="d.progress_message || 'iniciando…'"></span>
+                    <span class="text-[10px] text-neutral-400 ml-auto shrink-0"
+                          x-text="elapsedSince(d.processing_started_at || d.created_at, now)"></span>
+                  </div>
+                  <!-- Tempo total quando concluído -->
+                  <div x-show="d.status === 'ready' && d.processing_started_at && d.processed_at" class="text-[10px] text-neutral-400 mt-0.5">
+                    processou em <span x-text="duration(d.processing_started_at, d.processed_at)"></span>
+                  </div>
                   <div x-show="d.error" class="text-[11px] text-risk-600 mt-1 font-mono" x-text="d.error"></div>
                   <div x-show="d.markdown_preview && d.status === 'ready'" class="text-[10px] text-neutral-500 mt-1 line-clamp-2 italic" x-text="d.markdown_preview"></div>
                 </div>
@@ -270,6 +282,11 @@ function knowledgeApp() {
     searchResults: null,
     searching: false,
     pollTimer: null,
+    // `now` é reativo: atualizado a cada segundo enquanto há docs em
+    // processamento. O contador de elapsed na UI é binded em `now` + no
+    // `processing_started_at` do doc, então rerenderiza sozinho.
+    now: Date.now(),
+    tickTimer: null,
     form: {
       open: false,
       editingId: null,
@@ -285,6 +302,14 @@ function knowledgeApp() {
           this.refresh();
         }
       }, 5000);
+      // Ticker do "now" para o contador de elapsed time atualizar de
+      // segundo em segundo (apenas quando há docs processando, pra não
+      // gastar render à toa).
+      this.tickTimer = setInterval(() => {
+        if (this.selectedBase && this.hasPendingWork()) {
+          this.now = Date.now();
+        }
+      }, 1000);
     },
 
     hasPendingWork() {
@@ -439,6 +464,35 @@ function knowledgeApp() {
       if (!iso) return '-';
       try { return new Date(iso).toLocaleString('pt-BR', { dateStyle: 'short', timeStyle: 'short' }); }
       catch (_) { return iso; }
+    },
+
+    /** Formata "elapsed desde X" usando `nowMs` como referência reativa (faz
+     * a UI re-render). Devolve "Ns", "Nm Ns" ou "Nm". */
+    elapsedSince(iso, nowMs) {
+      if (!iso) return '';
+      const start = new Date(iso).getTime();
+      if (isNaN(start)) return '';
+      const ms = Math.max(0, (nowMs || Date.now()) - start);
+      return this._fmtDuration(ms);
+    },
+
+    /** Duração entre dois timestamps ISO — usado para mostrar tempo total
+     * de processamento em docs `ready`. */
+    duration(startIso, endIso) {
+      if (!startIso || !endIso) return '';
+      const ms = Math.max(0, new Date(endIso).getTime() - new Date(startIso).getTime());
+      return this._fmtDuration(ms);
+    },
+
+    _fmtDuration(ms) {
+      const s = Math.floor(ms / 1000);
+      if (s < 60) return `${s}s`;
+      const m = Math.floor(s / 60);
+      const rs = s % 60;
+      if (m < 60) return rs ? `${m}m ${rs}s` : `${m}m`;
+      const h = Math.floor(m / 60);
+      const rm = m % 60;
+      return rm ? `${h}h ${rm}m` : `${h}h`;
     },
   };
 }
