@@ -97,7 +97,20 @@ services:
     # --reload sobrescreve o entrypoint padrão (uvicorn --workers N). O seed
     # de skills do entrypoint não precisa rodar aqui porque o bind-mount já
     # traz os skills do repo.
-    command: uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
+    #
+    # --reload-exclude *.html/*.css/*.js: mudanças em assets não precisam
+    # reiniciar o worker Python (Jinja2 re-lê templates a cada request).
+    # Sem isso, qualquer edit de template matava `BackgroundTasks` em vôo
+    # (ex.: pipeline da Knowledge Base), deixando docs em 'processing' até
+    # alguém reprocessar manualmente.
+    command: >-
+      uvicorn app.main:app
+      --host 0.0.0.0
+      --port 8000
+      --reload
+      --reload-exclude '*.html'
+      --reload-exclude '*.css'
+      --reload-exclude '*.js'
 
 volumes:
   vertice_pgdata_dev:
