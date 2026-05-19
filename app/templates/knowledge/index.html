@@ -158,8 +158,11 @@
                   <div x-show="d.markdown_preview && d.status === 'ready'" class="text-[10px] text-neutral-500 mt-1 line-clamp-2 italic" x-text="d.markdown_preview"></div>
                 </div>
                 <div class="flex gap-1 shrink-0">
-                  <button x-show="d.status === 'failed' || d.status === 'ready'"
-                          @click="reprocess(d)" class="text-[10px] px-2 py-1 hover:bg-neutral-100 text-neutral-600 rounded" title="re-processar com Docling">↻</button>
+                  <button x-show="d.status === 'failed' || d.status === 'ready' || d.status === 'processing'"
+                          @click="reprocess(d)"
+                          class="text-[10px] px-2 py-1 hover:bg-neutral-100 text-neutral-600 rounded"
+                          :title="d.status === 'processing' ? 'forçar reprocessamento (use se o doc travou)' : 'reprocessar com Docling'"
+                          x-text="d.status === 'processing' ? '⟲' : '↻'"></button>
                   <button @click="deleteDoc(d)" class="text-[10px] px-2 py-1 hover:bg-risk-50 text-risk-600 rounded">×</button>
                 </div>
               </div>

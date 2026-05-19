@@ -172,7 +172,9 @@ services:
 
   # ----------------------------------------------------------------- Postgres
   postgres:
-    image: postgres:16-alpine
+    # pgvector/pgvector:pg16 = Postgres 16 oficial + extensão pgvector pré-instalada.
+    # Necessário porque o schema (Knowledge Base) faz `CREATE EXTENSION vector`.
+    image: pgvector/pgvector:pg16
     container_name: vertice-postgres
     restart: unless-stopped
     # SEM publicar 5432 — apenas a network interna acessa.
