@@ -276,6 +276,15 @@ class PgKnowledgeDocumentRepository:
 class PgKnowledgeChunkRepository:
     """Bulk insert + busca vetorial."""
 
+    async def delete_for_document(self, doc_id: UUID) -> int:
+        async with connect() as db:
+            row = await db.fetchrow(
+                "WITH d AS (DELETE FROM knowledge_chunks WHERE document_id = $1::uuid RETURNING 1) "
+                "SELECT COUNT(*)::int AS n FROM d",
+                str(doc_id),
+            )
+            return int(row["n"]) if row else 0
+
     async def bulk_insert(self, chunks: list[KnowledgeChunk]) -> int:
         if not chunks:
             return 0

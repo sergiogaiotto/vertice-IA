@@ -179,6 +179,11 @@ class KnowledgeService:
 
         await self.doc_repo.mark_processing(doc_id)
 
+        # Idempotência: reprocessar um doc não pode acumular chunks duplicados.
+        # Apaga chunks anteriores ANTES de extrair (se a extração falhar, o
+        # doc fica sem chunks, alinhado com status=failed).
+        await self.chunk_repo.delete_for_document(doc_id)
+
         # Docling roda em thread separada — é CPU-bound e bloqueia o loop.
         try:
             result = await asyncio.to_thread(extract, doc.raw_content, doc.filename)

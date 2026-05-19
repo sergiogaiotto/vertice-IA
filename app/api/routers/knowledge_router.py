@@ -235,13 +235,12 @@ async def reprocess_document(
 ):
     """Re-roda o pipeline (extract → chunk → embed) num documento existente.
 
-    Útil quando: o Docling/embeddings falharam e foi corrigida a config;
-    o chunker mudou; o modelo de embedding foi atualizado (raro).
+    Útil quando: o doc travou em 'processing' (BackgroundTask sumiu);
+    o Docling/embeddings falharam e foi corrigida a config; o chunker mudou;
+    o modelo de embedding foi atualizado (raro).
 
-    Importante: NÃO removemos os chunks antigos automaticamente — eles
-    coexistem até o pipeline persistir os novos, e o app sempre lê os
-    chunks mais recentes via document_id. Para limpeza, deletar o doc e
-    re-upload é o caminho.
+    `process_document` é idempotente — chunks antigos são apagados ANTES da
+    nova extração. Chamar reprocess em um doc 'ready' não acumula duplicatas.
     """
     doc = await svc.doc_repo.get(doc_id)
     if not doc:
