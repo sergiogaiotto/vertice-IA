@@ -63,6 +63,27 @@ async def list_options(
     ]
 
 
+@router.get("/bases/{kb_id}/documents/options")
+async def list_document_options(
+    kb_id: UUID,
+    svc: KnowledgeService = Depends(get_knowledge_service),
+    user: User = Depends(require_user),
+):
+    """Lista (id, filename) dos documentos `ready` de uma KB — usado pelo
+    módulo 'Base de Conhecimento' do Radar para o usuário escolher quais
+    docs entram na análise. Filtra docs em processing/failed/pending porque
+    eles não têm chunks vetorizados utilizáveis."""
+    kb = await svc.get_base(kb_id)
+    if not kb:
+        raise HTTPException(404, "base de conhecimento não encontrada")
+    docs = await svc.list_documents(kb_id)
+    return [
+        {"id": d["id"], "filename": d["filename"], "chunks_count": d["chunks_count"]}
+        for d in docs
+        if d["status"] == "ready" and (d["chunks_count"] or 0) > 0
+    ]
+
+
 # ============================================================
 # Schemas
 # ============================================================

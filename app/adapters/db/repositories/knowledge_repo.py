@@ -324,6 +324,7 @@ class PgKnowledgeChunkRepository:
         query_embedding: list[float],
         *,
         top_k: int = 5,
+        doc_ids: list[UUID] | None = None,
     ) -> list[dict]:
         """Top-K chunks mais próximos da query, ordenados por cosine distance.
 
@@ -333,10 +334,20 @@ class PgKnowledgeChunkRepository:
 
         `score` = 1 - distance (mais alto = mais similar; ∈ [0, 2]
         considerando cosine; tipicamente ∈ [0, 1]).
+
+        Se `doc_ids` for fornecido (lista não-vazia), restringe a busca aos
+        chunks daqueles documentos — usado pelo módulo "Base de Conhecimento"
+        do Radar, que deixa o usuário escolher quais docs entram na análise.
         """
+        filter_clause = ""
+        args: list = [str(kb_id), query_embedding]
+        if doc_ids:
+            args.append([str(d) for d in doc_ids])
+            filter_clause = f"AND document_id = ANY(${len(args)}::uuid[])"
+        args.append(top_k)
         async with connect() as db:
             rows = await db.fetch(
-                """
+                f"""
                 SELECT
                     id::text AS id,
                     document_id::text AS document_id,
@@ -347,10 +358,11 @@ class PgKnowledgeChunkRepository:
                 FROM knowledge_chunks
                 WHERE knowledge_base_id = $1::uuid
                   AND embedding IS NOT NULL
+                  {filter_clause}
                 ORDER BY embedding <=> $2
-                LIMIT $3
+                LIMIT ${len(args)}
                 """,
-                str(kb_id), query_embedding, top_k,
+                *args,
             )
             return [
                 {

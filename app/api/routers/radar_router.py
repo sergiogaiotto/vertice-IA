@@ -9,6 +9,7 @@ from pydantic import BaseModel, ConfigDict
 
 from app.api.deps import (
     get_bko_service,
+    get_knowledge_service,
     get_prompt_service,
     get_radar_card_visibility_repo,
     get_radar_service,
@@ -1170,6 +1171,150 @@ async def chat(
 
     return ChatResponse(
         answer=llm.text,
+        model_used=llm.model,
+        tokens_input=llm.tokens_input,
+        tokens_output=llm.tokens_output,
+        cost_estimated=llm.cost_estimated,
+    )
+
+
+# ============================================================
+# Knowledge Base — módulo virtual __knowledge__ do Radar
+# ============================================================
+
+
+class KnowledgeAnalyzeRequest(BaseModel):
+    kb_id: UUID
+    doc_ids: list[UUID] = []          # vazio = todos os docs ready da KB
+    input_text: str                    # conteúdo a ser analisado
+    input_label: str = ""              # rótulo do campo/módulo-fonte (para o prompt)
+    instruction: str = ""              # diretriz opcional do usuário
+    top_k: int = 8                     # quantos chunks recuperar
+
+
+class KnowledgeChunkUsed(BaseModel):
+    document_id: str
+    chunk_index: int
+    score: float
+    preview: str                       # primeiros 200 chars do chunk
+
+
+class KnowledgeAnalyzeResponse(BaseModel):
+    model_config = ConfigDict(protected_namespaces=())
+
+    result: str                        # markdown da análise
+    chunks_used: list[KnowledgeChunkUsed]
+    kb_name: str
+    model_used: str
+    tokens_input: int
+    tokens_output: int
+    cost_estimated: float
+
+
+_KNOWLEDGE_SYSTEM_PROMPT = """Você é um analista da plataforma Vértice especializado em síntese contextual com base documental.
+
+Você recebe:
+1. Um TEXTO-ALVO (saída de um campo ou módulo do Radar) que precisa ser analisado em profundidade.
+2. Trechos RECUPERADOS de uma Base de Conhecimento documental (manuais, procedimentos, políticas).
+3. Opcionalmente, uma INSTRUÇÃO específica do analista sobre o que ele quer extrair.
+
+Sua tarefa: produzir uma análise profunda do TEXTO-ALVO confrontando-o com o CONTEXTO da base. Aponte:
+- Conformidades e divergências com o que está documentado.
+- Lacunas no texto-alvo que a base poderia preencher.
+- Recomendações concretas baseadas exclusivamente nos trechos recuperados.
+
+Regras rígidas:
+- Use APENAS o que está nos trechos recuperados. Se a base não cobre algo, diga "não consta na base" — não invente.
+- Cite a fonte indicando o trecho (#1, #2…) quando fizer uma afirmação derivada do contexto.
+- Responda em PT-BR, markdown estruturado (## seções), conciso e direto.
+- Se a INSTRUÇÃO do usuário existir, ela direciona o foco — caso contrário, faça análise generalista de conformidade/insights."""
+
+
+@router.post("/run-knowledge", response_model=KnowledgeAnalyzeResponse)
+async def run_knowledge(
+    body: KnowledgeAnalyzeRequest,
+    radar: RadarService = Depends(get_radar_service),
+    knowledge=Depends(get_knowledge_service),
+    user: User = Depends(require_user),
+):
+    """Endpoint do módulo virtual `__knowledge__`.
+
+    Faz retrieval semântico nos chunks dos `doc_ids` selecionados (ou em
+    toda a KB se vazio) usando o `input_text` como query, e pede ao LLM
+    uma análise profunda do texto-alvo contra o contexto recuperado.
+    """
+    if not body.input_text or not body.input_text.strip():
+        raise HTTPException(400, "input_text vazio — nada para analisar")
+
+    kb = await knowledge.get_base(body.kb_id)
+    if not kb:
+        raise HTTPException(404, "base de conhecimento não encontrada")
+
+    # Retrieval. doc_ids vazio = busca em toda a KB.
+    hits = await knowledge.search(
+        body.kb_id,
+        body.input_text,
+        top_k=max(1, min(body.top_k, 20)),
+        doc_ids=body.doc_ids or None,
+    )
+
+    if not hits:
+        # Sem chunks: ainda assim chamamos o LLM, mas com aviso explícito —
+        # melhor que devolver erro porque o usuário pelo menos vê a análise
+        # do texto-alvo "standalone" e percebe que a KB não cobriu.
+        context_block = "_Nenhum trecho relevante encontrado na base selecionada._"
+    else:
+        parts: list[str] = []
+        for i, h in enumerate(hits, 1):
+            meta = h.get("metadata") or {}
+            section = meta.get("section_path") or ""
+            header = f"### Trecho #{i}"
+            if section:
+                header += f" — {section}"
+            header += f" (score {h['score']:.2f})"
+            parts.append(f"{header}\n{h['content']}")
+        context_block = "\n\n".join(parts)
+
+    user_prompt_parts = [
+        f"# Texto-alvo ({body.input_label or 'sem rótulo'})",
+        body.input_text[:8000],  # cap defensivo
+        "",
+        "# Trechos recuperados da base de conhecimento",
+        context_block,
+    ]
+    if body.instruction and body.instruction.strip():
+        user_prompt_parts.extend(["", "# Instrução do analista", body.instruction.strip()])
+    user_prompt = "\n\n".join(user_prompt_parts)
+
+    llm = await radar.router.complete(
+        system_prompt=_KNOWLEDGE_SYSTEM_PROMPT,
+        user_prompt=user_prompt,
+        output_type="SUMARIO",
+    )
+
+    from app.core.services.finops_service import FinOpsService  # noqa: E402
+    await FinOpsService(radar.finops).record(
+        user_id=user.id,
+        module_id=None,
+        model_name=llm.model,
+        tokens_input=llm.tokens_input,
+        tokens_output=llm.tokens_output,
+        cost_estimated=llm.cost_estimated,
+        context_tag=f"knowledge/{kb.name}",
+    )
+
+    return KnowledgeAnalyzeResponse(
+        result=llm.text,
+        chunks_used=[
+            KnowledgeChunkUsed(
+                document_id=h["document_id"],
+                chunk_index=h["chunk_index"],
+                score=h["score"],
+                preview=(h["content"] or "")[:200],
+            )
+            for h in hits
+        ],
+        kb_name=kb.name,
         model_used=llm.model,
         tokens_input=llm.tokens_input,
         tokens_output=llm.tokens_output,
