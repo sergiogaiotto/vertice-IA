@@ -27,7 +27,7 @@ from app.adapters.db.repositories.knowledge_repo import (
     PgKnowledgeChunkRepository,
     PgKnowledgeDocumentRepository,
 )
-from app.adapters.llm.azure_embeddings_adapter import AzureOpenAIEmbeddingClient
+from app.adapters.llm.factory import build_embedding_client
 from app.core.domain.entities import (
     KnowledgeBase,
     KnowledgeChunk,
@@ -58,7 +58,7 @@ class KnowledgeService:
         self.kb_repo = kb_repo or PgKnowledgeBaseRepository()
         self.doc_repo = doc_repo or PgKnowledgeDocumentRepository()
         self.chunk_repo = chunk_repo or PgKnowledgeChunkRepository()
-        self.embedder = embedder or AzureOpenAIEmbeddingClient()
+        self.embedder = embedder or build_embedding_client()
 
     # ===== Knowledge Bases =====
 

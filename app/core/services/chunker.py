@@ -35,6 +35,12 @@ def _approx_tokens(text: str) -> int:
 
 
 _HEADING_RE = re.compile(r"^(#{1,6})\s+(.+?)\s*$", re.MULTILINE)
+# Pseudo-heading: linha contendo APENAS `**texto**` (com possíveis emojis/
+# números dentro), sem conteúdo adicional na mesma linha. Cobertura para
+# docx exportado pelo Docling, que tipicamente converte headings nativos
+# do Word em **negrito** ao invés de `# heading`. Sem isso, o chunker
+# perde todas as fronteiras hierárquicas em documentos office.
+_BOLD_LINE_RE = re.compile(r"^\s*\*\*([^*\n]+?)\*\*\s*$")
 
 
 def chunk_markdown(
@@ -52,28 +58,39 @@ def chunk_markdown(
 
     Returns:
         Lista de Chunk com `metadata['section_path']` populado quando o
-        chunk começa abaixo de um heading.
+        chunk começa abaixo de um heading (real `#` ou pseudo `**bold**`).
     """
     if not markdown or not markdown.strip():
         return []
 
     # Passo 1: segmenta por headings, preservando a posição do heading
-    # em cada segmento subsequente.
+    # em cada segmento subsequente. Considera dois tipos:
+    #   - heading real: `#`/`##`/.../`######` → nível 1-6
+    #   - pseudo-heading: linha-só-bold (`**texto**`) → tratada como
+    #     nível 2 para gerar boundaries de segmentação sem desconstruir
+    #     a hierarquia real (caso o doc misture os dois estilos).
     segments: list[tuple[list[str], str]] = []
     current_path: list[str] = []
     buf: list[str] = []
     for line in markdown.splitlines(keepends=True):
-        m = _HEADING_RE.match(line)
-        if m:
+        h = _HEADING_RE.match(line)
+        b = None if h else _BOLD_LINE_RE.match(line)
+        if h or b:
             # Flush do buffer atual com o path corrente.
             if buf:
                 text = "".join(buf).strip()
                 if text:
                     segments.append((list(current_path), text))
                 buf = []
-            # Atualiza o path. Profundidade = número de # (1..6).
-            level = len(m.group(1))
-            title = m.group(2).strip()
+            if h:
+                level = len(h.group(1))
+                title = h.group(1)  # placeholder, sobrescrito abaixo
+                title = h.group(2).strip()
+            else:
+                # Pseudo-heading sempre como nível 2 — mantém hierarquia
+                # plana mas gera segmentação.
+                level = 2
+                title = b.group(1).strip()
             # Trunca o path para o nível atual e adiciona o novo.
             current_path = current_path[: max(0, level - 1)] + [title]
             # Mantém o próprio heading no buffer — útil para o chunk
