@@ -631,11 +631,21 @@ CREATE TABLE IF NOT EXISTS knowledge_documents (
     status            TEXT NOT NULL DEFAULT 'pending',
     error             TEXT,
     chunks_count      INTEGER NOT NULL DEFAULT 0,
+    -- Telemetria do pipeline assíncrono. `progress_message` recebe updates
+    -- humanos a cada etapa ("extraindo Docling…", "5/12 chunks embedados…")
+    -- para o usuário acompanhar na UI. `processing_started_at` mede o tempo
+    -- entre kickoff e ready/failed.
+    progress_message  TEXT,
+    processing_started_at TIMESTAMPTZ,
     uploaded_by_id    TEXT,
     uploaded_by_username TEXT,
     created_at        TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     processed_at      TIMESTAMPTZ
 );
+-- Migração para DBs já criados antes destas colunas existirem.
+ALTER TABLE knowledge_documents
+    ADD COLUMN IF NOT EXISTS progress_message TEXT,
+    ADD COLUMN IF NOT EXISTS processing_started_at TIMESTAMPTZ;
 CREATE INDEX IF NOT EXISTS idx_knowledge_documents_kb
     ON knowledge_documents(knowledge_base_id, created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_knowledge_documents_status

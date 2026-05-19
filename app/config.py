@@ -61,6 +61,12 @@ class Settings(BaseSettings):
     # no portal e setar este nome aqui.
     azure_openai_embedding_deployment: str = "text-embedding-3-small"
 
+    # LLMs — OpenAI direto (api.openai.com). Usado quando o usuário tem chave
+    # OpenAI mas não tem recurso Azure. A factory de embeddings prefere OpenAI
+    # quando `openai_api_key` está setado; senão Azure; senão mock.
+    openai_api_key: str = ""
+    openai_embedding_model: str = "text-embedding-3-small"
+
     maritaca_api_key: str = ""
     maritaca_model: str = "sabia-4"
     maritaca_base_url: str = "https://chat.maritaca.ai/api"

@@ -27,7 +27,7 @@ from app.adapters.db.repositories.knowledge_repo import (
     PgKnowledgeChunkRepository,
     PgKnowledgeDocumentRepository,
 )
-from app.adapters.llm.azure_embeddings_adapter import AzureOpenAIEmbeddingClient
+from app.adapters.llm.factory import build_embedding_client
 from app.core.domain.entities import (
     KnowledgeBase,
     KnowledgeChunk,
@@ -58,7 +58,7 @@ class KnowledgeService:
         self.kb_repo = kb_repo or PgKnowledgeBaseRepository()
         self.doc_repo = doc_repo or PgKnowledgeDocumentRepository()
         self.chunk_repo = chunk_repo or PgKnowledgeChunkRepository()
-        self.embedder = embedder or AzureOpenAIEmbeddingClient()
+        self.embedder = embedder or build_embedding_client()
 
     # ===== Knowledge Bases =====
 
@@ -185,6 +185,9 @@ class KnowledgeService:
         await self.chunk_repo.delete_for_document(doc_id)
 
         # Docling roda em thread separada — é CPU-bound e bloqueia o loop.
+        await self.doc_repo.update_progress(
+            doc_id, f"extraindo markdown com Docling ({doc.size_bytes} bytes)"
+        )
         try:
             result = await asyncio.to_thread(extract, doc.raw_content, doc.filename)
         except Exception as e:  # noqa: BLE001
@@ -203,6 +206,11 @@ class KnowledgeService:
             return
 
         # Chunking — markdown-aware com params da KB.
+        await self.doc_repo.update_progress(
+            doc_id,
+            f"chunking (markdown={len(result.markdown)} chars · "
+            f"size={kb.chunk_size}/{kb.chunk_overlap})",
+        )
         chunks_data = chunk_markdown(
             result.markdown,
             chunk_size=kb.chunk_size,
@@ -216,6 +224,11 @@ class KnowledgeService:
 
         # Embeddings em batch — falha aqui não é fatal pra extração, mas
         # marca o doc como failed (sem embeddings, retrieval não funciona).
+        await self.doc_repo.update_progress(
+            doc_id,
+            f"gerando embeddings de {len(chunks_data)} chunks "
+            f"({'mock' if getattr(self.embedder, 'is_mock', False) else self.embedder.model_name})",
+        )
         try:
             texts = [c.content for c in chunks_data]
             vectors = await self.embedder.embed(texts)
@@ -232,6 +245,9 @@ class KnowledgeService:
             )
             return
 
+        await self.doc_repo.update_progress(
+            doc_id, f"salvando {len(chunks_data)} chunks vetorizados no Postgres"
+        )
         chunks_to_save = [
             KnowledgeChunk(
                 id=new_uuid(),
@@ -343,6 +359,10 @@ class KnowledgeService:
             "status": d.status.value,
             "error": d.error,
             "chunks_count": d.chunks_count,
+            "progress_message": d.progress_message,
+            "processing_started_at": (
+                d.processing_started_at.isoformat() if d.processing_started_at else None
+            ),
             "uploaded_by_username": d.uploaded_by_username,
             "created_at": d.created_at.isoformat() if d.created_at else None,
             "processed_at": d.processed_at.isoformat() if d.processed_at else None,
