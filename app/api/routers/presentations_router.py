@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import logging
 
 from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import Response
@@ -17,6 +18,15 @@ from app.core.services.presentation_service import (
 from app.core.services.radar_service import RadarService
 
 router = APIRouter()
+logger = logging.getLogger(__name__)
+
+# Orçamento de completion para JSON com 3-6 insights + 4-6 seções markdown
+# (até 1500 chars cada). 800 (default do port) causava truncamento sistemático
+# → o LLM cortava no meio do JSON, gerando string vazia/parcial. 4000 cobre
+# o pior caso (6 seções × ~650 tokens + insights + overhead JSON).
+_MAX_COMPLETION_TOKENS = 4000
+# Teto do retry compensatório quando o primeiro chama foi truncado/inválido.
+_MAX_COMPLETION_TOKENS_RETRY = 6000
 
 
 # ===================== Schemas =====================
@@ -73,6 +83,10 @@ class GeneratePreviewResponse(BaseModel):
     tokens_input: int
     tokens_output: int
     cost_estimated: float
+    # Sinalizam que o servidor entrou em modo compensatório (retry ou esboço
+    # automático). Front-end usa para avisar o usuário que precisa revisar.
+    degraded: bool = False
+    degraded_reason: str = ""
 
 
 class SaveRequest(BaseModel):
@@ -292,13 +306,120 @@ def _try_close_json(text: str) -> str | None:
     return repair if repair != text else None
 
 
+def _strip_code_fences(text: str) -> str:
+    """Remove cercas ```json … ``` e tenta isolar o primeiro objeto."""
+    text = (text or "").strip()
+    if text.startswith("```"):
+        lines = text.split("\n")
+        if lines and lines[-1].strip().startswith("```"):
+            text = "\n".join(lines[1:-1]).strip()
+    if not text.startswith("{"):
+        first = text.find("{")
+        last = text.rfind("}")
+        if first >= 0 and last > first:
+            text = text[first:last + 1]
+    return text
+
+
+def _build_user_prompt(body: GeneratePreviewRequest, cards_text: list[str], visuals_text: str) -> str:
+    return (
+        f"# Funcionalidade: {body.feature}\n"
+        f"# Caso (se houver): {body.case_number or 'N/A'}\n"
+        f"# Audiência: {body.audience}\n"
+        f"# Tom: {body.tone}\n"
+        + (f"# Sugestão de título: {body.title_hint}\n" if body.title_hint else "")
+        + "\n# Cards a sintetizar:\n\n"
+        + "\n\n---\n\n".join(cards_text)
+        + visuals_text
+    )
+
+
+def _skeleton_preview(
+    body: GeneratePreviewRequest,
+    cards_text: list[str],
+    reason: str,
+) -> dict:
+    """Esboço determinístico (sem LLM) quando todas as tentativas falham.
+
+    Garante que o usuário sempre receba *algo* editável — preferível a 502
+    para um fluxo de geração de apresentação onde re-rodar custa créditos.
+    Usa o conteúdo bruto dos cards como bodies, claramente marcado para
+    revisão manual.
+    """
+    # title_hint vence; senão usa o caso ou um placeholder
+    title = (body.title_hint or f"Apresentação · {body.case_number or body.feature}")[:80]
+    subtitle = "Esboço automático — revise antes de exportar"[:140]
+    insights = [
+        {"type": "ATENÇÃO", "content": f"Conteúdo gerado em modo degradado ({reason}). Revise insights e seções."}
+    ]
+    sections = []
+    for c in body.cards[:6]:
+        snippet = (c.content or "").strip()
+        if not snippet:
+            continue
+        body_md = f"## {c.input_label or c.module_name}\n\n{snippet[:1200]}"
+        sections.append({
+            "title": c.input_label or c.module_name or "Seção",
+            "body": body_md,
+            "source_card_uid": c.uid,
+        })
+    if not sections:
+        sections = [{
+            "title": "Conteúdo",
+            "body": "Nenhum card com texto. Edite manualmente.",
+            "source_card_uid": None,
+        }]
+    return {"title": title, "subtitle": subtitle, "insights": insights, "sections": sections}
+
+
+async def _llm_to_json(
+    radar: RadarService,
+    system_prompt: str,
+    user_prompt: str,
+    max_tokens: int,
+) -> tuple[dict | None, "LLMResponse | None", str]:
+    """Chama o LLM e tenta parsear JSON. Retorna (data|None, llm|None, raw_text).
+
+    Não levanta — devolve `None` em data se algo deu errado, para o caller
+    decidir entre retry e fallback. raw_text é útil para log/diagnóstico.
+    """
+    try:
+        llm = await radar.router.complete(
+            system_prompt=system_prompt,
+            user_prompt=user_prompt,
+            output_type="SUMARIO",
+            max_tokens=max_tokens,
+            force_json=True,
+        )
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("presentations.preview: router.complete falhou: %s", exc)
+        return None, None, ""
+
+    text = _strip_code_fences(llm.text or "")
+    if not text:
+        return None, llm, ""
+    try:
+        return _robust_json_parse(text), llm, text
+    except json.JSONDecodeError:
+        return None, llm, text
+
+
 @router.post("/preview", response_model=GeneratePreviewResponse)
 async def generate_preview(
     body: GeneratePreviewRequest,
     radar: RadarService = Depends(get_radar_service),
     user: User = Depends(require_user),
 ):
-    """Gera preview da apresentação via LLM. Não persiste."""
+    """Gera preview da apresentação via LLM. Não persiste.
+
+    Cadeia de controles compensatórios (em camadas):
+      1. force_json=True + max_tokens=4000 → reduz drasticamente truncamento e
+         saídas com texto livre fora do JSON.
+      2. Se vazio/inválido, retry com max_tokens=6000 + prompt encurtado
+         (schema reduzido para 3 insights + 4 seções, bodies < 800 chars).
+      3. Se retry também falhar, devolve esboço determinístico com `degraded=True`
+         para o usuário editar — preferível a 502 num fluxo que custa tokens.
+    """
     if not body.cards:
         raise HTTPException(400, "envie pelo menos 1 card como insumo")
 
@@ -329,67 +450,80 @@ async def generate_preview(
             visuals_lines.append(f"{i}. **{v.type}** — {v.title}" + (f" · {v.caption}" if v.caption else ""))
         visuals_text = "\n".join(visuals_lines)
 
-    user_prompt = (
-        f"# Funcionalidade: {body.feature}\n"
-        f"# Caso (se houver): {body.case_number or 'N/A'}\n"
-        f"# Audiência: {body.audience}\n"
-        f"# Tom: {body.tone}\n"
-        + (f"# Sugestão de título: {body.title_hint}\n" if body.title_hint else "")
-        + "\n# Cards a sintetizar:\n\n"
-        + "\n\n---\n\n".join(cards_text)
-        + visuals_text
+    user_prompt = _build_user_prompt(body, cards_text, visuals_text)
+
+    # --- Tentativa 1: parâmetros otimizados (JSON-mode + tokens generosos) ---
+    data, llm, raw1 = await _llm_to_json(
+        radar, _SYSTEM_PROMPT, user_prompt, _MAX_COMPLETION_TOKENS
     )
 
-    llm = await radar.router.complete(
-        system_prompt=_SYSTEM_PROMPT,
-        user_prompt=user_prompt,
-        output_type="SUMARIO",
-    )
+    degraded = False
+    degraded_reason = ""
 
-    text = (llm.text or "").strip()
-    # tira ```json ``` se LLM enfiou
-    if text.startswith("```"):
-        lines = text.split("\n")
-        if lines and lines[-1].strip().startswith("```"):
-            text = "\n".join(lines[1:-1]).strip()
-    # se não começou com {, tenta extrair primeiro objeto
-    if not text.startswith("{"):
-        first = text.find("{"); last = text.rfind("}")
-        if first >= 0 and last > first:
-            text = text[first:last + 1]
+    # --- Tentativa 2: retry com schema reduzido se a primeira falhou ---
+    if data is None:
+        reason1 = "resposta vazia" if (llm and not (llm.text or "").strip()) else "JSON inválido"
+        logger.warning(
+            "presentations.preview: tentativa 1 falhou (%s) — model=%s, raw_head=%r",
+            reason1, getattr(llm, "model", "?"), (raw1 or "")[:200],
+        )
+        retry_system = _SYSTEM_PROMPT + (
+            "\n\nATENÇÃO — TENTATIVA DE RECUPERAÇÃO:\n"
+            "- MÁXIMO 3 insights e 4 seções\n"
+            "- Cada body com NO MÁXIMO 800 caracteres\n"
+            "- Devolva EXCLUSIVAMENTE o JSON, sem markdown ao redor"
+        )
+        data2, llm2, raw2 = await _llm_to_json(
+            radar, retry_system, user_prompt, _MAX_COMPLETION_TOKENS_RETRY
+        )
+        if data2 is not None:
+            data, llm = data2, llm2
+            degraded = True
+            degraded_reason = f"primeira tentativa falhou ({reason1}); usado prompt simplificado"
+        else:
+            # --- Tentativa 3: esboço determinístico (sem LLM extra) ---
+            reason2 = "resposta vazia" if (llm2 and not (llm2.text or "").strip()) else "JSON inválido"
+            logger.error(
+                "presentations.preview: tentativa 2 também falhou (%s) — caindo em esboço determinístico",
+                reason2,
+            )
+            data = _skeleton_preview(body, cards_text, reason=reason2)
+            degraded = True
+            degraded_reason = (
+                "LLM não devolveu JSON válido após 2 tentativas — "
+                "exibindo esboço automático para edição manual"
+            )
+            # Sem llm/llm2 utilizáveis: usa o último (para registrar tokens parciais
+            # no FinOps quando houver) ou zera.
+            llm = llm2 or llm
 
-    try:
-        data = _robust_json_parse(text)
-    except json.JSONDecodeError as e:
-        raise HTTPException(
-            502,
-            f"LLM devolveu JSON inválido: {e}. "
-            "Tente regenerar — o conteúdo pode estar muito longo. "
-            "Reduza o número de cards-fonte se persistir."
+    # registra no FinOps (mesmo quando degradado, contabilizamos a chamada que aconteceu)
+    from app.core.services.finops_service import FinOpsService
+    if llm is not None:
+        await FinOpsService(radar.finops).record(
+            user_id=user.id, module_id=None, model_name=llm.model,
+            tokens_input=llm.tokens_input, tokens_output=llm.tokens_output,
+            cost_estimated=llm.cost_estimated,
+            context_tag=f"presentation/{body.feature}/preview"
+            + ("/degraded" if degraded else ""),
         )
 
-    # registra no FinOps
-    from app.core.services.finops_service import FinOpsService
-    await FinOpsService(radar.finops).record(
-        user_id=user.id, module_id=None, model_name=llm.model,
-        tokens_input=llm.tokens_input, tokens_output=llm.tokens_output,
-        cost_estimated=llm.cost_estimated, context_tag=f"presentation/{body.feature}/preview",
-    )
-
     return GeneratePreviewResponse(
-        title=data.get("title", "Apresentação")[:80],
-        subtitle=data.get("subtitle", "")[:140],
-        insights=[InsightOut(type=i.get("type", "INSIGHT"), content=i.get("content", "")) for i in data.get("insights", [])][:8],
+        title=(data.get("title") or "Apresentação")[:80],
+        subtitle=(data.get("subtitle") or "")[:140],
+        insights=[InsightOut(type=i.get("type", "INSIGHT"), content=i.get("content", "")) for i in (data.get("insights") or [])][:8],
         sections=[SectionOut(
             title=s.get("title", ""),
             body=s.get("body", ""),
             source_card_uid=s.get("source_card_uid"),
-        ) for s in data.get("sections", [])][:12],
+        ) for s in (data.get("sections") or [])][:12],
         visuals=body.visuals,  # ecoa as imagens recebidas — front mostra preview
-        model_used=llm.model,
-        tokens_input=llm.tokens_input,
-        tokens_output=llm.tokens_output,
-        cost_estimated=llm.cost_estimated,
+        model_used=(llm.model if llm else ""),
+        tokens_input=(llm.tokens_input if llm else 0),
+        tokens_output=(llm.tokens_output if llm else 0),
+        cost_estimated=(llm.cost_estimated if llm else 0.0),
+        degraded=degraded,
+        degraded_reason=degraded_reason,
     )
 
 

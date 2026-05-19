@@ -9,6 +9,7 @@ from __future__ import annotations
 from app.adapters.llm.azure_embeddings_adapter import AzureOpenAIEmbeddingClient
 from app.adapters.llm.azure_openai_adapter import AzureOpenAIClient
 from app.adapters.llm.gaia_adapter import GaiaClient
+from app.adapters.llm.gpt_oss_adapter import GptOssClient
 from app.adapters.llm.maritaca_adapter import MaritacaClient
 from app.adapters.llm.mock_adapter import MockLLMClient
 from app.adapters.llm.openai_embeddings_adapter import OpenAIEmbeddingClient
@@ -48,6 +49,19 @@ def build_clients() -> dict[str, LLMClient]:
             name=settings.gaia_model,
             cost_per_1k_input=0.0001,
             cost_per_1k_output=0.0003,
+        )
+
+    # gpt-oss-120b — registrado apenas se houver API key + base URL configuradas.
+    # Quando ausente, registra um MockLLMClient com o mesmo `name` para que o
+    # router consiga resolver o slot caso alguém aponte `ROUTER_*_MODEL` para ele
+    # sem ter as credenciais (modo dev).
+    if settings.gpt_oss_api_key and settings.gpt_oss_base_url:
+        clients[settings.gpt_oss_model] = GptOssClient()
+    else:
+        clients[settings.gpt_oss_model] = MockLLMClient(
+            name=settings.gpt_oss_model,
+            cost_per_1k_input=0.00015,
+            cost_per_1k_output=0.00075,
         )
 
     return clients

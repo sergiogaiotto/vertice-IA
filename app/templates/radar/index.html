@@ -4448,9 +4448,17 @@ function radarApp() {
           visuals: r?.visuals || [],
           model_used: r?.model_used || '',
           cost_estimated: r?.cost_estimated || 0,
+          degraded: !!r?.degraded,
+          degraded_reason: r?.degraded_reason || '',
         };
         m.previewReady = true;
         m.step = 2;
+        // Sinaliza ao usuário quando o servidor entrou em modo compensatório
+        // (retry com prompt simplificado ou esboço determinístico). O preview
+        // chegou — mas precisa de revisão atenta.
+        if (r?.degraded) {
+          toast('Conteúdo gerado em modo degradado — revise antes de exportar. ' + (r.degraded_reason || ''), 'warn', 8000);
+        }
       } catch (e) {
         toast('Falha ao gerar: ' + e.message, 'error');
       } finally {
