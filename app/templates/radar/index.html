@@ -334,6 +334,14 @@
                         </div>
                         <template x-if="canEdit">
                           <div class="flex items-center gap-0.5 shrink-0">
+                            <!-- Editar: hoje só faz sentido para o módulo virtual __knowledge__,
+                                 cuja config (KB + docs + instrução) é toda persistida no card
+                                 e pode ser alterada sem precisar recriar o card. Outros módulos
+                                 virtuais (__diagram__) têm o próprio botão no header específico. -->
+                            <button x-show="card.module_id === '__knowledge__'"
+                                    @click="editKnowledgeCard(card.uid)"
+                                    title="editar base, documentos e instrução"
+                                    class="text-[10px] px-1 h-5 hover:bg-ai-50 text-ai-700 rounded">✎ editar</button>
                             <button @click="moveCardUp(gIdx, card.uid)"
                                     :title="'mover para linha de cima'"
                                     class="text-[10px] w-5 h-5 hover:bg-neutral-100 rounded text-neutral-600">↑</button>
@@ -1369,8 +1377,8 @@
         <div class="flex items-start gap-3">
           <div class="w-10 h-10 rounded-lg bg-ai-50 flex items-center justify-center text-ai-600 shrink-0 text-lg">🧠</div>
           <div>
-            <h3 class="text-base font-medium">Análise com Base de Conhecimento</h3>
-            <p class="text-xs text-neutral-500 mt-0.5">a IA confronta o texto-alvo com trechos vetorizados da base · cita fontes</p>
+            <h3 class="text-base font-medium" x-text="knowledgeConfig.editingCardUid ? 'Editar análise — base e documentos' : 'Análise com Base de Conhecimento'"></h3>
+            <p class="text-xs text-neutral-500 mt-0.5" x-text="knowledgeConfig.editingCardUid ? 'altere a base, os documentos ou a instrução · o card será regenerado' : 'a IA confronta o texto-alvo com trechos vetorizados da base · cita fontes'"></p>
           </div>
         </div>
         <button @click="knowledgeConfig.open = false" class="text-neutral-400 hover:text-neutral-700 text-lg leading-none">×</button>
@@ -1424,8 +1432,10 @@
           <p class="text-[10px] text-neutral-400 mt-1">marque para restringir · vazio = todos os documentos ready</p>
         </div>
 
-        <!-- Step 3: fonte do texto-alvo -->
-        <div x-show="knowledgeConfig.kb_id">
+        <!-- Step 3: fonte do texto-alvo (oculto em modo edição — texto-alvo é
+             imutável; usuário só edita KB/docs/instrução pra re-analisar o
+             mesmo input) -->
+        <div x-show="knowledgeConfig.kb_id && !knowledgeConfig.editingCardUid">
           <label class="field-label">texto-alvo (o que será analisado)</label>
           <select x-model="knowledgeConfig.source" class="w-full h-9 px-2 text-xs border border-neutral-200 rounded bg-white">
             <option value="">— selecione a fonte —</option>
@@ -1449,6 +1459,13 @@
                     class="mt-2 w-full px-3 py-2 text-xs border border-neutral-200 rounded outline-none resize-none focus:border-ai-600"></textarea>
         </div>
 
+        <!-- Step 3-alt: em modo edição, mostra a fonte atual (read-only) -->
+        <div x-show="knowledgeConfig.kb_id && knowledgeConfig.editingCardUid" x-cloak
+             class="text-[11px] text-neutral-500 bg-neutral-50 border border-neutral-200 rounded px-3 py-2">
+          texto-alvo: <span class="text-neutral-700" x-text="knowledgeConfig._editSourceLabel || '(mantido do card original)'"></span>
+          <span class="text-[9.5px] text-neutral-400 ml-1">· para trocar a fonte, crie um novo card</span>
+        </div>
+
         <!-- Step 4: instrução -->
         <div x-show="knowledgeConfig.kb_id">
           <label class="field-label">instrução adicional (opcional)</label>
@@ -1463,7 +1480,7 @@
         <button @click="knowledgeConfig.open = false" class="text-sm px-3 py-1.5 text-neutral-600 hover:bg-neutral-100 rounded-md">cancelar</button>
         <button @click="addKnowledgeCard()" :disabled="!canExecuteKnowledge()"
                 class="text-sm px-3 py-1.5 bg-ai-600 hover:bg-ai-800 text-white rounded-md font-medium disabled:opacity-50 disabled:cursor-not-allowed">
-          🧠 analisar
+          <span x-text="knowledgeConfig.editingCardUid ? '🧠 re-analisar' : '🧠 analisar'"></span>
         </button>
       </footer>
     </div>
@@ -2177,6 +2194,7 @@ function radarApp() {
       docsAvailable: [],      // [{id, filename, chunks_count}] da kb_id selecionada
       loadingKbs: false,
       loadingDocs: false,
+      editingCardUid: null,   // se preenchido, modal opera em modo edição
     },
     diagramTypes: [
       { id: 'flowchart', label: 'Fluxograma', desc: 'fluxo de processos' },
@@ -3653,6 +3671,8 @@ function radarApp() {
       this.knowledgeConfig.custom_input = '';
       this.knowledgeConfig.instruction = '';
       this.knowledgeConfig.docsAvailable = [];
+      this.knowledgeConfig.editingCardUid = null;  // novo card
+      this.knowledgeConfig._editSourceLabel = '';
 
       // Pré-seleciona o primeiro field/módulo com conteúdo, se houver
       const firstField = this.availableFields.find(f => f.value);
@@ -3671,6 +3691,51 @@ function radarApp() {
         this.knowledgeConfig.kbsAvailable = [];
       } finally {
         this.knowledgeConfig.loadingKbs = false;
+      }
+    },
+
+    /**
+     * Abre o modal de configuração com os valores do card existente para
+     * permitir alterar KB / documentos / instrução. Texto-alvo permanece
+     * imutável (decisão de UX: para trocar a fonte, usuário cria card novo).
+     * Ao confirmar, `addKnowledgeCard()` re-executa e substitui o card in-place.
+     */
+    async editKnowledgeCard(uid) {
+      const card = this._findCard(uid);
+      if (!card || card.module_id !== '__knowledge__') return;
+      const gIdx = this.groups.findIndex(g => g.cards.some(c => c.uid === uid));
+      if (gIdx < 0) return;
+
+      this.knowledgeConfig.open = true;
+      this.knowledgeConfig.groupIdx = gIdx;
+      this.knowledgeConfig.editingCardUid = uid;
+      // Carrega valores do card original
+      this.knowledgeConfig.kb_id = card.kb_id || '';
+      this.knowledgeConfig.doc_ids = [...(card.doc_ids || [])];
+      this.knowledgeConfig.instruction = card.kb_instruction || '';
+      this.knowledgeConfig.source = '';            // não usado no modo edit
+      this.knowledgeConfig.custom_input = '';
+      this.knowledgeConfig._editSourceLabel = card.input_label || '';
+
+      // Carrega KBs em paralelo com docs da KB do card — assim os checkboxes
+      // de documentos aparecem pre-marcados quando o modal abre.
+      this.knowledgeConfig.loadingKbs = true;
+      this.knowledgeConfig.loadingDocs = !!card.kb_id;
+      this.knowledgeConfig.docsAvailable = [];
+      try {
+        const [kbs, docs] = await Promise.all([
+          window.api('GET', '/api/knowledge/options'),
+          card.kb_id
+            ? window.api('GET', `/api/knowledge/bases/${card.kb_id}/documents/options`)
+            : Promise.resolve([]),
+        ]);
+        this.knowledgeConfig.kbsAvailable = kbs;
+        this.knowledgeConfig.docsAvailable = docs;
+      } catch (e) {
+        toast(`Falha ao carregar base/documentos: ${e.message}`, 'error');
+      } finally {
+        this.knowledgeConfig.loadingKbs = false;
+        this.knowledgeConfig.loadingDocs = false;
       }
     },
 
@@ -3701,6 +3766,8 @@ function radarApp() {
     canExecuteKnowledge() {
       const c = this.knowledgeConfig;
       if (!c.kb_id) return false;
+      // Em modo edição, texto-alvo já está no card — só validamos KB.
+      if (c.editingCardUid) return true;
       if (!c.source) return false;
       if (c.source === 'custom') return (c.custom_input || '').trim().length > 0;
       if (c.source.startsWith('field:')) {
@@ -3723,67 +3790,94 @@ function radarApp() {
         return;
       }
 
-      // Resolve texto-alvo + label da fonte
-      let inputText = '';
-      let inputLabel = '';
-      let inputField = '';
-      if (c.source === 'custom') {
-        inputText = c.custom_input;
-        inputLabel = 'input livre';
-        inputField = '__custom__';
-      } else if (c.source.startsWith('field:')) {
-        const key = c.source.slice('field:'.length);
-        const f = this.availableFields.find(x => x.key === key);
-        inputText = f.value;
-        inputLabel = f.label;
-        inputField = key;
-      } else if (c.source.startsWith('module:')) {
-        const uid = c.source.slice('module:'.length);
-        const sourceCard = this.executedModuleCards.find(x => x.uid === uid);
-        inputText = sourceCard.result || '';
-        inputLabel = `← ${sourceCard.module_name}`;
-        // Convenção do Radar para encadeamento: '__module__:<uid>' — usado
-        // pelo resolver de dependências do autoRunIfContextChanged.
-        inputField = `__module__:${uid}`;
-      }
-
+      const isEditing = !!c.editingCardUid;
       const kb = c.kbsAvailable.find(x => x.id === c.kb_id);
       const docsLabel = c.doc_ids.length === 0
         ? `todos (${c.docsAvailable.length})`
         : `${c.doc_ids.length} doc${c.doc_ids.length === 1 ? '' : 's'}`;
 
-      const group = this.groups[c.groupIdx];
-      const newRow = this.nextRowForNewCard(group);
-      group.cards.push({
-        uid: genUUID(),
-        module_id: '__knowledge__',
-        module_name: 'Base de Conhecimento',
-        module_description: `🧠 ${kb?.name || 'KB'} · ${docsLabel}`,
-        input_field: inputField,
-        input_label: inputLabel,
-        input_value: inputText,
-        row: newRow,
-        // knowledge-specific
-        kb_id: c.kb_id,
-        kb_name: kb?.name || '',
-        doc_ids: [...c.doc_ids],
-        kb_instruction: c.instruction,
-        chunks_used: [],
-        // padrão dos cards normais
-        result: '',
-        model_used: '',
-        tokens_input: 0,
-        tokens_output: 0,
-        cost_estimated: 0,
-        output_format: 'markdown',
-        loading: true,
-        error: null,
-      });
-      const cIdx = group.cards.length - 1;
-      const cardUid = group.cards[cIdx].uid;
-      group._newModuleId = '';
-      group.startNewRowFlag = false;
+      let cardUid;
+      let inputText = '';
+      let inputLabel = '';
+
+      if (isEditing) {
+        // MODO EDIÇÃO: card existente — texto-alvo permanece intacto, só
+        // atualizamos KB/docs/instrução e re-executamos.
+        const card = this._findCard(c.editingCardUid);
+        if (!card) { toast('Card a editar não encontrado.', 'error'); return; }
+        cardUid = card.uid;
+        inputText = card.input_value || '';
+        inputLabel = card.input_label || '';
+        card.kb_id = c.kb_id;
+        card.kb_name = kb?.name || card.kb_name || '';
+        card.doc_ids = [...c.doc_ids];
+        card.kb_instruction = c.instruction;
+        card.module_description = `🧠 ${kb?.name || 'KB'} · ${docsLabel}`;
+        card.chunks_used = [];
+        card.result = '';
+        card.model_used = '';
+        card.tokens_input = 0;
+        card.tokens_output = 0;
+        card.cost_estimated = 0;
+        card.error = null;
+        card.loading = true;
+      } else {
+        // MODO CRIAÇÃO: resolve texto-alvo + cria card novo.
+        let inputField = '';
+        if (c.source === 'custom') {
+          inputText = c.custom_input;
+          inputLabel = 'input livre';
+          inputField = '__custom__';
+        } else if (c.source.startsWith('field:')) {
+          const key = c.source.slice('field:'.length);
+          const f = this.availableFields.find(x => x.key === key);
+          inputText = f.value;
+          inputLabel = f.label;
+          inputField = key;
+        } else if (c.source.startsWith('module:')) {
+          const uid = c.source.slice('module:'.length);
+          const sourceCard = this.executedModuleCards.find(x => x.uid === uid);
+          inputText = sourceCard.result || '';
+          inputLabel = `← ${sourceCard.module_name}`;
+          // Convenção do Radar para encadeamento: '__module__:<uid>' — usado
+          // pelo resolver de dependências do autoRunIfContextChanged.
+          inputField = `__module__:${uid}`;
+        }
+
+        const group = this.groups[c.groupIdx];
+        const newRow = this.nextRowForNewCard(group);
+        group.cards.push({
+          uid: genUUID(),
+          module_id: '__knowledge__',
+          module_name: 'Base de Conhecimento',
+          module_description: `🧠 ${kb?.name || 'KB'} · ${docsLabel}`,
+          input_field: inputField,
+          input_label: inputLabel,
+          input_value: inputText,
+          row: newRow,
+          // knowledge-specific
+          kb_id: c.kb_id,
+          kb_name: kb?.name || '',
+          doc_ids: [...c.doc_ids],
+          kb_instruction: c.instruction,
+          chunks_used: [],
+          // padrão dos cards normais
+          result: '',
+          model_used: '',
+          tokens_input: 0,
+          tokens_output: 0,
+          cost_estimated: 0,
+          output_format: 'markdown',
+          loading: true,
+          error: null,
+        });
+        cardUid = group.cards[group.cards.length - 1].uid;
+        group._newModuleId = '';
+        group.startNewRowFlag = false;
+      }
+
       this.knowledgeConfig.open = false;
+      this.knowledgeConfig.editingCardUid = null;
       this.saveState();
 
       try {
