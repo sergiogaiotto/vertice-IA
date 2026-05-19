@@ -720,10 +720,18 @@ function modulesApp() {
       } catch (_) { this.availableApiEndpoints = []; }
     },
 
-    openEdit(m) {
+    async openEdit(m) {
       this.formMode = 'edit';
       this.editingId = m.id;
       this.originalSkillPath = m.skill_path || '';
+
+      // CRÍTICO: carrega a lista de KBs ANTES de setar form.knowledge_base_id.
+      // Se o <select> renderiza com x-model apontando para um id que ainda
+      // não existe como <option>, o browser força value="" (placeholder) e
+      // o x-model escreve "" de volta no model — sobrescreve a seleção real
+      // do módulo. Mesma lógica aplicada ao prompts/skills loads abaixo.
+      await this.loadKnowledgeBases();
+
       const cfg = m.config_params || {};
       this.form = {
         name: m.name,
@@ -744,7 +752,6 @@ function modulesApp() {
       this.selectedPromptId = '';
       this.loadPrompts();
       this.loadApiEndpoints();
-      this.loadKnowledgeBases();
       this.formOpen = true;
     },
 
