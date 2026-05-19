@@ -506,6 +506,12 @@ async def modules_page(
             "skill_path": m.skill_path,
             "response_type": getattr(m, "response_type", "text") or "text",
             "response_config": getattr(m, "response_config", {}) or {},
+            # Sem este campo, o frontend abre o modal de edição com
+            # `form.knowledge_base_id = ''` mesmo quando o módulo está
+            # associado a uma KB no banco — combo aparece em "— sem base —".
+            "knowledge_base_id": (
+                str(m.knowledge_base_id) if getattr(m, "knowledge_base_id", None) else None
+            ),
         }
         for m in raw
     ]
