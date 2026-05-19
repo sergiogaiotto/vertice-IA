@@ -697,3 +697,35 @@ CREATE TABLE IF NOT EXISTS failsafe_actions (
     created_at   TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 CREATE INDEX IF NOT EXISTS idx_failsafe_status ON failsafe_actions(status);
+
+
+-- ============================================================
+-- Raio X — Origens de tabelas importadas de XLSX
+-- ============================================================
+--
+-- Toda tabela com prefixo `raiox_xlsx__` é uma tabela importada pelo usuário
+-- via upload XLSX (Raio X > Importar XLSX). Esta tabela rastreia a *origem*
+-- de cada uma: arquivo de origem, aba, quem subiu, quando, contagem.
+--
+-- A tabela de dados em si é criada pelo `DynamicTableService.ensure_table()`
+-- com schema evolutivo. Esta `raiox_xlsx_origins` apenas registra os metadados
+-- humanos (filename + sheet + uploader + timestamp) que o `SchemaService` usa
+-- para mostrar o badge "XLSX" + tooltip no seletor do Raio X.
+--
+-- ON DELETE: a entry aqui NÃO é referenciada por FK pelas tabelas dinâmicas
+-- (Postgres não suporta FK para nomes de tabela). Quando o usuário deleta uma
+-- tabela xlsx via UI, o endpoint roda `DROP TABLE` + `DELETE FROM raiox_xlsx_origins`
+-- atomicamente. Órfãos (tabela existe mas origin não, ou vice-versa) são
+-- tolerados — o list-tables faz LEFT JOIN.
+CREATE TABLE IF NOT EXISTS raiox_xlsx_origins (
+    table_name        TEXT PRIMARY KEY,            -- ex: raiox_xlsx__vendas_q1__regiao_sul
+    original_filename TEXT NOT NULL,               -- vendas_q1_2026.xlsx
+    sheet_name        TEXT NOT NULL,               -- "Região Sul" (original, não sanitizado)
+    uploaded_by_id    TEXT,
+    uploaded_by_username TEXT NOT NULL DEFAULT '',
+    rows_count        INTEGER NOT NULL DEFAULT 0,
+    columns_count     INTEGER NOT NULL DEFAULT 0,
+    uploaded_at       TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+CREATE INDEX IF NOT EXISTS idx_raiox_xlsx_origins_uploaded_at
+    ON raiox_xlsx_origins(uploaded_at DESC);

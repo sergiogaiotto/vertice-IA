@@ -173,6 +173,17 @@
       <span>novo dashboard</span>
     </button>
 
+    <!-- Importar XLSX -->
+    <button @click="openXlsxModal()"
+            class="text-xs px-3 py-1.5 border border-neutral-200 rounded-md hover:bg-neutral-50 flex items-center gap-1.5"
+            title="cada aba do XLSX vira uma tabela aqui no Raio X">
+      <svg width="11" height="11" viewBox="0 0 12 12" fill="none">
+        <path d="M2 1 H7 L10 4 V11 H2 Z" stroke="currentColor" stroke-width="1.2" fill="none"/>
+        <path d="M4 6 H8 M4 8 H8" stroke="currentColor" stroke-width="1.2"/>
+      </svg>
+      <span>importar XLSX</span>
+    </button>
+
     <!-- Add chart -->
     <button @click="ncOpenModal()" :disabled="!currentBoard"
             class="text-xs px-3 py-1.5 border border-neutral-200 rounded-md hover:bg-neutral-50 flex items-center gap-1.5 disabled:opacity-50">
@@ -537,10 +548,21 @@
               <path d="M4 2 L8 6 L4 10" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
             </svg>
             <div class="flex-1 min-w-0">
-              <div class="text-[12px] font-medium truncate" x-text="t.label"></div>
+              <div class="text-[12px] font-medium truncate flex items-center gap-1.5">
+                <span x-text="t.label"></span>
+                <span x-show="t.origin && t.origin.kind === 'xlsx'"
+                      class="text-[9px] text-emerald-700 bg-emerald-50 px-1 py-0 rounded font-normal"
+                      :title="t.origin ? `arquivo: ${t.origin.filename} · aba: ${t.origin.sheet} · por ${t.origin.uploaded_by} em ${(t.origin.uploaded_at || '').slice(0,10)}` : ''">XLSX</span>
+              </div>
               <div class="text-[10px] text-neutral-400 truncate" x-text="`${t.name} · ${t.row_count} linhas · ${t.columns.length} colunas`"></div>
             </div>
-            <span x-show="t.is_dynamic" class="text-[9px] text-ai-800 bg-ai-50 px-1 py-0 rounded">dinâmica</span>
+            <span x-show="t.is_dynamic && !(t.origin && t.origin.kind === 'xlsx')" class="text-[9px] text-ai-800 bg-ai-50 px-1 py-0 rounded">dinâmica</span>
+            {% if can_edit %}
+            <span x-show="t.origin && t.origin.kind === 'xlsx'"
+                  @click.stop="deleteXlsxTable(t)"
+                  class="text-[10px] text-neutral-400 hover:text-risk-600 px-1 cursor-pointer"
+                  title="excluir tabela importada">🗑</span>
+            {% endif %}
           </button>
           <div x-show="expandedTables[t.name]" x-cloak>
             <template x-for="col in t.columns" :key="col.name">
@@ -1019,6 +1041,173 @@
                 :disabled="!newChart.query_spec.table || !newChart.query_spec.label_column"
                 class="text-xs px-3 py-1.5 bg-brand-600 text-white rounded hover:bg-brand-800 disabled:opacity-50"
                 x-text="editingChartId ? 'salvar alterações' : 'adicionar card'"></button>
+      </footer>
+    </div>
+  </div>
+
+  <!-- ============================================================ -->
+  <!-- Modal: Importar XLSX                                          -->
+  <!-- ============================================================ -->
+  <!--
+    Dois estados visuais controlados por `xlsx.step`:
+      - 'upload'  → input de arquivo + drag/drop
+      - 'preview' → cada aba detectada com edição de nome, sample de 5 linhas,
+                    tipos inferidos editáveis, warnings de soft-cap
+  -->
+  <div x-show="xlsx.modalOpen" x-cloak
+       class="fixed inset-0 bg-black/40 flex items-center justify-center z-50 p-4">
+    <div @click.outside="xlsx.loading || closeXlsxModal()"
+         class="bg-white rounded-xl w-[920px] max-w-full max-h-[90vh] overflow-hidden flex flex-col">
+      <header class="px-5 py-3 border-b border-neutral-100 flex items-center justify-between">
+        <div>
+          <h2 class="text-sm font-medium">Importar planilha XLSX</h2>
+          <p class="text-[10px] text-neutral-500">
+            cada aba vira uma tabela disponível somente no Raio X
+          </p>
+        </div>
+        <button @click="closeXlsxModal()" :disabled="xlsx.loading"
+                class="text-neutral-400 hover:text-neutral-700 disabled:opacity-30">×</button>
+      </header>
+
+      <!-- ETAPA 1: upload -->
+      <div x-show="xlsx.step === 'upload'" class="p-6 flex-1 overflow-y-auto">
+        <label class="block">
+          <div class="border-2 border-dashed border-neutral-300 rounded-lg p-10 text-center hover:border-brand-400 hover:bg-neutral-50 cursor-pointer transition">
+            <div class="text-3xl mb-2">📊</div>
+            <div class="text-sm font-medium mb-1">Escolha o arquivo</div>
+            <p class="text-[11px] text-neutral-500 mb-3">
+              .xlsx ou .xls — até 50MB, 100 colunas e 100 mil linhas por aba
+            </p>
+            <p class="text-[10px] text-neutral-400">
+              dica: o nome do arquivo e da aba viram parte do nome da tabela
+              (ex: <span class="font-mono">vendas_q1.xlsx → regiao_sul</span>
+              vira <span class="font-mono">raiox_xlsx__vendas_q1__regiao_sul</span>)
+            </p>
+            <input type="file" accept=".xlsx,.xls"
+                   @change="submitXlsxFile($event.target.files[0])"
+                   :disabled="xlsx.loading"
+                   class="hidden" />
+          </div>
+        </label>
+        <div x-show="xlsx.loading" class="mt-4 text-center text-xs text-neutral-500">
+          <span class="inline-block w-3 h-3 border-2 border-brand-200 border-t-brand-600 rounded-full animate-spin mr-2"></span>
+          parseando planilha…
+        </div>
+        <div x-show="xlsx.error" x-cloak class="mt-4 text-xs text-risk-700 bg-risk-50 px-3 py-2 rounded" x-text="xlsx.error"></div>
+      </div>
+
+      <!-- ETAPA 2: preview por aba -->
+      <div x-show="xlsx.step === 'preview' && xlsx.preview" x-cloak class="flex-1 overflow-y-auto">
+        <div class="px-5 py-3 border-b border-neutral-100 bg-neutral-50 text-[11px] flex items-center gap-3">
+          <span class="text-neutral-600">📄</span>
+          <span class="font-medium" x-text="xlsx.preview?.original_filename"></span>
+          <span class="text-neutral-400">·</span>
+          <span class="text-neutral-500" x-text="`${xlsx.preview?.sheets?.length || 0} aba(s) detectada(s)`"></span>
+          <button @click="resetXlsxUpload()"
+                  class="ml-auto text-[10px] text-neutral-500 hover:text-brand-700 underline">
+            trocar arquivo
+          </button>
+        </div>
+
+        <template x-for="(sheet, sIdx) in xlsx.preview?.sheets || []" :key="sheet.original_sheet_name">
+          <div class="border-b border-neutral-200">
+            <!-- Header da aba: checkbox + nome editável + warnings -->
+            <div class="px-5 py-3 bg-white flex items-center gap-3">
+              <input type="checkbox"
+                     :checked="!xlsx.sheetDecisions[sheet.original_sheet_name]?.skip"
+                     @change="toggleXlsxSheet(sheet.original_sheet_name)"
+                     class="w-4 h-4" />
+              <div class="flex-1 min-w-0">
+                <div class="flex items-center gap-2 mb-1">
+                  <span class="text-[10px] text-neutral-500 uppercase tracking-wider">aba:</span>
+                  <span class="text-sm font-medium" x-text="sheet.original_sheet_name"></span>
+                  <span class="text-[10px] text-neutral-400" x-text="`${sheet.rows_count} linhas · ${sheet.columns.length} colunas`"></span>
+                </div>
+                <div class="flex items-center gap-1">
+                  <span class="text-[10px] text-neutral-500 font-mono">nome da tabela:</span>
+                  <input type="text"
+                         :value="xlsx.sheetDecisions[sheet.original_sheet_name]?.table_name || sheet.suggested_table_name"
+                         @input="setXlsxTableName(sheet.original_sheet_name, $event.target.value)"
+                         :disabled="xlsx.sheetDecisions[sheet.original_sheet_name]?.skip"
+                         class="flex-1 h-7 px-2 text-[11px] font-mono border border-neutral-200 rounded outline-none focus:border-brand-600 disabled:bg-neutral-50 disabled:text-neutral-400" />
+                </div>
+              </div>
+            </div>
+            <template x-for="w in sheet.warnings || []" :key="w">
+              <div class="px-5 py-1.5 bg-amber-50 text-[10px] text-amber-800 border-t border-amber-100">⚠ <span x-text="w"></span></div>
+            </template>
+            <!-- Tabela de preview: colunas (nome/tipo) + 5 sample rows -->
+            <div class="overflow-x-auto"
+                 :class="xlsx.sheetDecisions[sheet.original_sheet_name]?.skip ? 'opacity-40' : ''">
+              <table class="text-[11px] w-full">
+                <thead class="bg-neutral-50">
+                  <tr>
+                    <template x-for="col in sheet.columns" :key="col.sanitized_name">
+                      <th class="px-2 py-1.5 text-left border-r border-neutral-100 align-top">
+                        <div class="font-mono font-medium truncate max-w-[140px]" :title="col.original_name" x-text="col.sanitized_name"></div>
+                        <select :value="getXlsxColType(sheet.original_sheet_name, col.sanitized_name, col.inferred_type)"
+                                @change="setXlsxColType(sheet.original_sheet_name, col.sanitized_name, $event.target.value)"
+                                :disabled="xlsx.sheetDecisions[sheet.original_sheet_name]?.skip"
+                                class="mt-1 w-full h-6 px-1 text-[10px] border border-neutral-200 rounded bg-white">
+                          <option value="TEXT">TEXT</option>
+                          <option value="BIGINT">BIGINT</option>
+                          <option value="DOUBLE PRECISION">DOUBLE PRECISION</option>
+                          <option value="DATE">DATE</option>
+                          <option value="TIMESTAMPTZ">TIMESTAMPTZ</option>
+                          <option value="BOOLEAN">BOOLEAN</option>
+                        </select>
+                      </th>
+                    </template>
+                  </tr>
+                </thead>
+                <tbody>
+                  <template x-for="(row, rIdx) in sheet.sample_rows" :key="rIdx">
+                    <tr class="border-t border-neutral-100">
+                      <template x-for="col in sheet.columns" :key="col.sanitized_name">
+                        <td class="px-2 py-1 border-r border-neutral-50 truncate max-w-[140px]"
+                            x-text="row[col.sanitized_name] === null || row[col.sanitized_name] === undefined ? '—' : String(row[col.sanitized_name])"></td>
+                      </template>
+                    </tr>
+                  </template>
+                  <tr x-show="!sheet.sample_rows?.length">
+                    <td :colspan="sheet.columns.length" class="px-3 py-3 text-center text-neutral-400 italic">aba vazia (sem dados)</td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </template>
+      </div>
+
+      <!-- Resultados após import -->
+      <div x-show="xlsx.step === 'done' && xlsx.results" x-cloak class="p-6">
+        <div class="text-sm font-medium mb-3">Importação concluída</div>
+        <template x-for="r in xlsx.results || []" :key="r.table_name + r.status">
+          <div class="flex items-center gap-2 text-[12px] py-1.5 border-b border-neutral-100">
+            <span x-show="r.status === 'created'" class="text-emerald-600">✓</span>
+            <span x-show="r.status === 'skipped'" class="text-neutral-400">○</span>
+            <span x-show="r.status === 'failed'" class="text-risk-600">✗</span>
+            <span class="font-mono" x-text="r.table_name"></span>
+            <span class="text-neutral-500" x-show="r.status === 'created'"
+                  x-text="`· ${r.rows_inserted} linhas · ${r.columns_count} colunas`"></span>
+            <span class="text-risk-600 truncate" x-show="r.status === 'failed'" x-text="`erro: ${r.error}`"></span>
+          </div>
+        </template>
+      </div>
+
+      <footer class="px-5 py-3 border-t border-neutral-100 flex items-center justify-end gap-2">
+        <span x-show="xlsx.step === 'preview'" class="text-[10px] text-neutral-500 mr-auto"
+              x-text="`${xlsxSelectedCount()} aba(s) selecionada(s) para importar`"></span>
+        <button @click="closeXlsxModal()" :disabled="xlsx.loading"
+                class="text-xs px-3 py-1.5 hover:bg-neutral-50 rounded disabled:opacity-30"
+                x-text="xlsx.step === 'done' ? 'fechar' : 'cancelar'"></button>
+        <button x-show="xlsx.step === 'preview'"
+                @click="confirmXlsxImport()"
+                :disabled="xlsx.loading || xlsxSelectedCount() === 0"
+                class="text-xs px-3 py-1.5 bg-brand-600 text-white rounded hover:bg-brand-800 disabled:opacity-50">
+          <span x-show="!xlsx.loading" x-text="`importar ${xlsxSelectedCount()} aba(s)`"></span>
+          <span x-show="xlsx.loading">importando…</span>
+        </button>
       </footer>
     </div>
   </div>

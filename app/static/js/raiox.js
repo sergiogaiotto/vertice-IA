@@ -269,6 +269,19 @@ window.raioxApp = function (canEdit, initialBoardId) {
     // do board. Cada item: {column, value, sourceChartId, sourceChartTitle}.
     crossfilters: [],
 
+    // Estado do modal de importação XLSX (Funcionalidade > Raio X > "importar XLSX").
+    // step: 'upload' → 'preview' → 'done'. Reset em closeXlsxModal().
+    xlsx: {
+      modalOpen: false,
+      step: 'upload',         // 'upload' | 'preview' | 'done'
+      loading: false,
+      error: '',
+      preview: null,          // {artifact_id, original_filename, sheets:[...]}
+      // sheetDecisions[original_sheet_name] = {table_name, skip, column_types_override: [{sanitized_name, type}]}
+      sheetDecisions: {},
+      results: null,          // resposta de /xlsx/import
+    },
+
     async loadScopeOptions() {
       try {
         this.scopeOptions = await apiFetch('/api/raiox/scope-options');
@@ -1151,6 +1164,147 @@ window.raioxApp = function (canEdit, initialBoardId) {
         chart.title = newTitle;
       } catch (e) {
         if (window.toast) toast(`Erro: ${e.message}`, 'error');
+      }
+    },
+
+    // ============================================================
+    // XLSX import (Importar planilha como tabelas do Raio X)
+    // ============================================================
+
+    openXlsxModal() {
+      this.xlsx.modalOpen = true;
+      this.xlsx.step = 'upload';
+      this.xlsx.loading = false;
+      this.xlsx.error = '';
+      this.xlsx.preview = null;
+      this.xlsx.sheetDecisions = {};
+      this.xlsx.results = null;
+    },
+
+    closeXlsxModal() {
+      this.xlsx.modalOpen = false;
+    },
+
+    resetXlsxUpload() {
+      // Volta da preview pro upload — usuário trocou de ideia sobre o arquivo
+      this.xlsx.step = 'upload';
+      this.xlsx.preview = null;
+      this.xlsx.sheetDecisions = {};
+      this.xlsx.error = '';
+    },
+
+    async submitXlsxFile(file) {
+      if (!file) return;
+      this.xlsx.loading = true;
+      this.xlsx.error = '';
+      try {
+        // multipart/form-data — apiFetch é JSON-only, vamos manual
+        const form = new FormData();
+        form.append('file', file);
+        const r = await fetch('/api/raiox/xlsx/preview', {
+          method: 'POST',
+          credentials: 'same-origin',
+          body: form,
+        });
+        if (!r.ok) {
+          const detail = await r.json().catch(() => ({ detail: r.statusText }));
+          throw new Error(detail.detail || `HTTP ${r.status}`);
+        }
+        const data = await r.json();
+        this.xlsx.preview = data;
+        // Inicializa decisões: todas as abas selecionadas por padrão, nomes sugeridos
+        const decisions = {};
+        for (const s of data.sheets || []) {
+          decisions[s.original_sheet_name] = {
+            table_name: s.suggested_table_name,
+            skip: false,
+            column_types_override: [],
+          };
+        }
+        this.xlsx.sheetDecisions = decisions;
+        this.xlsx.step = 'preview';
+      } catch (e) {
+        this.xlsx.error = e.message || String(e);
+      } finally {
+        this.xlsx.loading = false;
+      }
+    },
+
+    toggleXlsxSheet(sheetName) {
+      const d = this.xlsx.sheetDecisions[sheetName];
+      if (d) d.skip = !d.skip;
+    },
+
+    setXlsxTableName(sheetName, newName) {
+      const d = this.xlsx.sheetDecisions[sheetName];
+      if (d) d.table_name = newName;
+    },
+
+    getXlsxColType(sheetName, columnName, inferredType) {
+      const d = this.xlsx.sheetDecisions[sheetName];
+      if (!d) return inferredType;
+      const override = (d.column_types_override || []).find(c => c.sanitized_name === columnName);
+      return override ? override.type : inferredType;
+    },
+
+    setXlsxColType(sheetName, columnName, newType) {
+      const d = this.xlsx.sheetDecisions[sheetName];
+      if (!d) return;
+      d.column_types_override = (d.column_types_override || []).filter(c => c.sanitized_name !== columnName);
+      d.column_types_override.push({ sanitized_name: columnName, type: newType });
+    },
+
+    xlsxSelectedCount() {
+      return Object.values(this.xlsx.sheetDecisions || {}).filter(d => !d.skip).length;
+    },
+
+    async confirmXlsxImport() {
+      if (this.xlsx.loading) return;
+      if (this.xlsxSelectedCount() === 0) return;
+      this.xlsx.loading = true;
+      this.xlsx.error = '';
+      try {
+        const payload = {
+          artifact_id: this.xlsx.preview.artifact_id,
+          sheets: Object.entries(this.xlsx.sheetDecisions).map(([sheet, d]) => ({
+            original_sheet_name: sheet,
+            table_name: d.table_name,
+            skip: !!d.skip,
+            column_types_override: d.column_types_override || [],
+          })),
+        };
+        const r = await apiFetch('/api/raiox/xlsx/import', {
+          method: 'POST',
+          body: JSON.stringify(payload),
+        });
+        this.xlsx.results = r.results || [];
+        this.xlsx.step = 'done';
+        // Recarrega a lista de tabelas para as novas aparecerem no Mapa + selects
+        await this.loadTables();
+        const ok = (r.results || []).filter(x => x.status === 'created').length;
+        const fail = (r.results || []).filter(x => x.status === 'failed').length;
+        if (window.toast) {
+          if (fail > 0) toast(`${ok} tabela(s) importada(s), ${fail} falhou`, 'warn');
+          else if (ok > 0) toast(`${ok} tabela(s) importada(s) com sucesso`, 'success');
+        }
+      } catch (e) {
+        this.xlsx.error = e.message || String(e);
+      } finally {
+        this.xlsx.loading = false;
+      }
+    },
+
+    async deleteXlsxTable(table) {
+      if (!table || !table.name) return;
+      const origin = table.origin || {};
+      const label = origin.filename ? `${origin.filename} / ${origin.sheet}` : table.name;
+      if (!confirm(`Excluir tabela importada "${label}"?\n\nCharts que usam essa tabela vão quebrar.`)) return;
+      try {
+        await apiFetch(`/api/raiox/tables/${encodeURIComponent(table.name)}`, { method: 'DELETE' });
+        await this.loadTables();
+        if (window.toast) toast(`Tabela "${table.name}" excluída`, 'success');
+      } catch (e) {
+        if (window.toast) toast(`Erro ao excluir: ${e.message}`, 'error');
       }
     },
   };

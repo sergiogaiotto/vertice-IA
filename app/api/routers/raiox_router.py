@@ -4,15 +4,17 @@ from __future__ import annotations
 
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
 from pydantic import BaseModel
 
 from app.api.deps import (
     get_finops_service,
     get_raiox_analysis_repo,
     get_raiox_service,
+    get_raiox_xlsx_origin_repo,
     get_router_clients,
     get_schema_service,
+    get_xlsx_import_service,
     require_user,
 )
 from app.api.schemas.raiox import (
@@ -26,6 +28,12 @@ from app.api.schemas.raiox import (
     RelationshipIn,
     RelationshipOut,
     SeriesOut,
+    XlsxImportRequest,
+    XlsxImportResponse,
+    XlsxImportResult,
+    XlsxPreviewResponse,
+    XlsxSheetPreview,
+    XlsxColumnPreview,
 )
 from app.core.domain.entities import RaioXBoard, RaioXChart, RaioXRelationship, User
 from app.core.services.raiox_service import RaioXService, SUPPORTED_CHART_TYPES
@@ -287,16 +295,133 @@ async def query_series(
 @router.get("/tables")
 async def list_tables(
     schema=Depends(get_schema_service),
+    origins_repo=Depends(get_raiox_xlsx_origin_repo),
     user: User = Depends(require_user),
 ):
     """Lista tabelas das Funcionalidades (radar, churn, ...) + dinâmicas geradas
-    por Módulos. Tabelas de aplicação (admin/usuários/finops/etc) ficam fora —
-    o Raio X opera apenas sobre dados de Funcionalidade."""
+    por Módulos + XLSX importadas pelo Raio X. Tabelas de aplicação
+    (admin/usuários/finops/etc) ficam fora — o Raio X opera apenas sobre
+    dados de Funcionalidade.
+
+    Tabelas xlsx (prefixo `raiox_xlsx__`) ganham `origin` enriquecido com
+    arquivo + aba + uploader + timestamp para a UI mostrar tooltip e botão delete.
+    """
     all_tables = await schema.list_tables(feature=None)
-    return [
+    visible = [
         t for t in all_tables
         if t.get("is_dynamic") or any(f != "admin" for f in t.get("features", []))
     ]
+    # Hidrata com origens xlsx (LEFT JOIN em Python — N pequeno)
+    origins = {o["table_name"]: o for o in await origins_repo.list_all()}
+    for t in visible:
+        o = origins.get(t["name"])
+        if o:
+            t["origin"] = {
+                "kind": "xlsx",
+                "filename": o["original_filename"],
+                "sheet": o["sheet_name"],
+                "uploaded_by": o["uploaded_by_username"],
+                "uploaded_at": o["uploaded_at"].isoformat() if o["uploaded_at"] else "",
+                "rows_count": o["rows_count"],
+                "columns_count": o["columns_count"],
+            }
+    return visible
+
+
+# ============================================================
+# XLSX Import — upload de planilha, 1 aba = 1 tabela no Raio X
+# ============================================================
+
+
+@router.post("/xlsx/preview", response_model=XlsxPreviewResponse)
+async def xlsx_preview(
+    file: UploadFile = File(...),
+    svc=Depends(get_xlsx_import_service),
+    user: User = Depends(require_user),
+):
+    """Parse o XLSX, infere tipos por coluna, devolve preview editável.
+
+    O arquivo é cacheado no artifact_store (TTL 30min). O `artifact_id` da
+    resposta deve ser passado para `/xlsx/import` — o usuário não precisa
+    reenviar o arquivo, evita banda e a janela de edição é menor que o TTL.
+    """
+    _require_edit(user)
+    if not file.filename or not file.filename.lower().endswith((".xlsx", ".xls")):
+        raise HTTPException(400, "envie um arquivo .xlsx ou .xls")
+    content = await file.read()
+    if not content:
+        raise HTTPException(400, "arquivo vazio")
+    try:
+        result = await svc.preview(content=content, filename=file.filename)
+    except ValueError as exc:
+        raise HTTPException(400, str(exc))
+    except Exception as exc:  # noqa: BLE001
+        raise HTTPException(500, f"falha ao parsear XLSX: {exc}")
+    return XlsxPreviewResponse(
+        artifact_id=result["artifact_id"],
+        original_filename=result["original_filename"],
+        sheets=[
+            XlsxSheetPreview(
+                original_sheet_name=s["original_sheet_name"],
+                suggested_table_name=s["suggested_table_name"],
+                columns=[
+                    XlsxColumnPreview(
+                        original_name=c["original_name"],
+                        sanitized_name=c["sanitized_name"],
+                        inferred_type=c["inferred_type"],
+                        sample_values=c["sample_values"],
+                    )
+                    for c in s["columns"]
+                ],
+                rows_count=s["rows_count"],
+                sample_rows=s["sample_rows"],
+                warnings=s["warnings"],
+            )
+            for s in result["sheets"]
+        ],
+    )
+
+
+@router.post("/xlsx/import", response_model=XlsxImportResponse)
+async def xlsx_import(
+    body: XlsxImportRequest,
+    svc=Depends(get_xlsx_import_service),
+    user: User = Depends(require_user),
+):
+    """Importa as abas confirmadas pelo usuário. Reimport (mesmo nome de
+    tabela) substitui a tabela anterior — o front avisa antes."""
+    _require_edit(user)
+    if not body.sheets:
+        raise HTTPException(400, "envie ao menos uma aba")
+    try:
+        results = await svc.import_sheets(
+            artifact_id=body.artifact_id,
+            sheet_specs=[s.model_dump() for s in body.sheets],
+            user_id=str(user.id) if user.id else None,
+            username=user.username,
+        )
+    except ValueError as exc:
+        raise HTTPException(400, str(exc))
+    return XlsxImportResponse(
+        results=[XlsxImportResult(**r) for r in results]
+    )
+
+
+@router.delete("/tables/{table_name}", status_code=204)
+async def delete_xlsx_table(
+    table_name: str,
+    svc=Depends(get_xlsx_import_service),
+    user: User = Depends(require_user),
+):
+    """Remove uma tabela importada do Raio X. Só funciona com prefixo
+    `raiox_xlsx__` — tabelas de Funcionalidade (radar, churn) e dinâmicas
+    de Módulos não podem ser deletadas por aqui (gerenciadas em outros lugares)."""
+    _require_edit(user)
+    try:
+        await svc.delete_table(table_name)
+    except ValueError as exc:
+        raise HTTPException(400, str(exc))
+    return None
 
 
 # ============================================================

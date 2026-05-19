@@ -273,6 +273,37 @@ def get_raiox_service(
     return RaioXService(boards=boards, charts=charts, rels=rels, schema=schema)
 
 
+# ArtifactStore dedicado para uploads XLSX no Raio X. Cap maior (50MB) que
+# o store global (10MB) — XLSX corporativo facilmente passa de 10MB. TTL
+# default (30min) é suficiente: usuário sobe, vê preview, confirma em <5min.
+_xlsx_upload_store = None
+
+
+def get_xlsx_upload_store():
+    """Singleton lazy — ArtifactStore com cap de 50MB para suportar XLSX grandes."""
+    global _xlsx_upload_store
+    if _xlsx_upload_store is None:
+        from app.core.services.artifact_store import ArtifactStore
+        _xlsx_upload_store = ArtifactStore(max_bytes=50 * 1024 * 1024)
+    return _xlsx_upload_store
+
+
+def get_raiox_xlsx_origin_repo():
+    from app.adapters.db.repositories.raiox_repo import PgRaioXXlsxOriginRepository
+    return PgRaioXXlsxOriginRepository()
+
+
+def get_xlsx_import_service(
+    artifact_store=Depends(get_xlsx_upload_store),
+    origin_repo=Depends(get_raiox_xlsx_origin_repo),
+):
+    from app.core.services.xlsx_import_service import XlsxImportService
+    return XlsxImportService(
+        artifact_store=artifact_store,
+        origin_repo=origin_repo,
+    )
+
+
 # ---------- auth helpers ----------
 
 async def current_user_optional(
