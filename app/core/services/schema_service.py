@@ -16,6 +16,8 @@ _HIDDEN_TABLES = {
 _HIDDEN_COLUMNS = {
     "hashed_password", "salt", "password",
     "raw_json",         # transcripts.raw_json é gigante e duplica os outros campos
+    "_raw",             # payload JSONB original das tabelas dinâmicas de módulo —
+                        # opaco p/ gráficos (CAST falharia) e duplica as colunas TEXT
 }
 
 # Tabelas que devem aparecer com label amigável + escopo de funcionalidade
